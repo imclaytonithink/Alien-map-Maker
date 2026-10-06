@@ -99,8 +99,8 @@ class AssetList(QListWidget):
             return
         if self._pop is None:
             self._pop = QLabel(self.window())
+            self._pop.setObjectName("AssetPreviewPopout")
             self._pop.setWindowFlags(Qt.WindowType.ToolTip)
-            self._pop.setStyleSheet("border:1px solid #2e6fdf; background:#0d1219;")
         self._pop.setPixmap(pm.scaled(160, 160, Qt.AspectRatioMode.KeepAspectRatio,
                                       Qt.TransformationMode.SmoothTransformation))
         self._pop.adjustSize()

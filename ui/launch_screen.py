@@ -6,6 +6,8 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QIcon, QColor
+from ui.branding import APP_NAME, APP_DESCRIPTOR, APP_TAGLINE
+from ui import theme as thememod
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget,
     QListWidgetItem, QFrame, QSlider, QCheckBox,
@@ -15,7 +17,7 @@ from PyQt6.QtWidgets import (
 class LaunchScreen(QDialog):
     def __init__(self, recent: list[str], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("MU-TH-UR 6000 — Battlemap Builder")
+        self.setWindowTitle(APP_NAME)
         self.setMinimumSize(520, 460)
         self.result_action = None     # ("new"|"open"|"template", path_or_None)
         self.recent = recent
@@ -23,23 +25,25 @@ class LaunchScreen(QDialog):
         self._apply_style()
 
     def _apply_style(self):
-        self.setStyleSheet("""
-            QDialog{background:#080b10; color:#9bff9b; font-family:'Consolas','Courier New',monospace;}
-            QPushButton{background:#111824; border:1px solid #2e6fdf; padding:8px; color:#9bff9b;}
-            QPushButton:hover{background:#1b2a3a;}
-            QLabel{color:#9bff9b;}
-            QListWidget{background:#0d1219; border:1px solid #2e6fdf;}
-            QListWidget::item:selected{background:#1b2a3a;}
-            QSlider::groove:horizontal{background:#111824;} QSlider::handle:horizontal{background:#9bff9b;}
+        colors = thememod.theme_colors("dark")
+        self.setStyleSheet(f"""
+            QDialog{{background:{colors['bg']}; color:{colors['text']}; font-family:'Consolas','Courier New',monospace;}}
+            QPushButton{{background:{colors['panel2']}; border:1px solid {colors['border']}; padding:8px; color:{colors['text']};}}
+            QPushButton:hover{{background:{colors['hover']};}}
+            QLabel{{color:{colors['text']};}}
+            QListWidget{{background:{colors['panel']}; border:1px solid {colors['border']};}}
+            QListWidget::item:selected{{background:{colors['selection']};}}
+            QSlider::groove:horizontal{{background:{colors['panel2']};}} QSlider::handle:horizontal{{background:{colors['accent']};}}
         """)
 
     def _build(self):
         root = QVBoxLayout(self)
-        title = QLabel("MU-TH-UR 6000")
-        title.setStyleSheet("font-size:26px; font-weight:bold; color:#9bff9b;")
+        title = QLabel(APP_NAME)
+        title.setStyleSheet("font-size:26px; font-weight:bold;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub = QLabel("> SHIP SYSTEMS ONLINE — SELECT OPERATION")
+        sub = QLabel(f"{APP_DESCRIPTOR}\n{APP_TAGLINE}")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setStyleSheet("font-size:11px; padding-bottom:6px;")
         root.addWidget(title)
         root.addWidget(sub)
 
@@ -80,18 +84,30 @@ class LaunchScreen(QDialog):
         # theme picker
         root.addWidget(QLabel("THEME"))
         th = QHBoxLayout()
-        self.accent = "green"
-        for name, hexc in (("Green", "#9bff9b"), ("Amber", "#ffb000"), ("Red", "#ff5a5a")):
-            b = QPushButton(name)
-            b.setStyleSheet(f"color:{hexc}; border:1px solid {hexc};")
-            b.clicked.connect(lambda _, c=hexc, n=name: self._set_accent(c, n))
+        self.theme_mode = "dark"
+        self.accent = thememod.DEFAULT_ACCENT
+        for mode, label in (("dark", "Dark"), ("light", "Light"),
+                            ("alien", "Alien / MU-TH-UR")):
+            b = QPushButton(label)
+            b.clicked.connect(lambda _, value=mode: self._set_mode(value))
             th.addWidget(b)
         root.addLayout(th)
 
+        accent_row = QHBoxLayout()
+        for name, hexc in (("Green", "#9bff9b"), ("Amber", "#ffb000"), ("Red", "#ff5a5a")):
+            b = QPushButton(f"Alien {name}")
+            b.setStyleSheet(f"color:{hexc}; border:1px solid {hexc};")
+            b.clicked.connect(lambda _, c=hexc, n=name: self._set_accent(c, n))
+            accent_row.addWidget(b)
+        root.addLayout(accent_row)
+
         tog = QHBoxLayout()
-        self.cb_scan = QCheckBox("Scanlines"); self.cb_scan.setChecked(True)
-        self.cb_boot = QCheckBox("Boot text"); self.cb_boot.setChecked(True)
-        self.cb_cur = QCheckBox("Blink cursor"); self.cb_cur.setChecked(True)
+        self.cb_scan = QCheckBox("Scanlines")
+        self.cb_boot = QCheckBox("Boot text")
+        self.cb_cur = QCheckBox("Blink cursor")
+        self.cb_scan.setChecked(False)
+        self.cb_boot.setChecked(False)
+        self.cb_cur.setChecked(False)
         tog.addWidget(self.cb_scan); tog.addWidget(self.cb_boot); tog.addWidget(self.cb_cur)
         root.addLayout(tog)
 
@@ -101,8 +117,12 @@ class LaunchScreen(QDialog):
         ts.addWidget(self.sl_ts, 1)
         root.addLayout(ts)
 
+    def _set_mode(self, mode):
+        self.theme_mode = mode
+
     def _set_accent(self, hexc, name):
         self.accent = hexc
+        self.theme_mode = "alien"
 
     def _open_dialog(self):
         from PyQt6.QtWidgets import QFileDialog
@@ -116,7 +136,9 @@ class LaunchScreen(QDialog):
         self.accept()
 
     def theme_opts(self) -> dict:
-        return {"accent": self.accent, "text_scale": self.sl_ts.value() / 11.0,
-                "scanlines": self.cb_scan.isChecked(),
-                "boot": self.cb_boot.isChecked(),
-                "cursor": self.cb_cur.isChecked()}
+        alien = self.theme_mode == "alien"
+        return {"theme_mode": self.theme_mode,
+                "accent": self.accent, "text_scale": self.sl_ts.value() / 11.0,
+                "scanlines": alien and self.cb_scan.isChecked(),
+                "boot": alien and self.cb_boot.isChecked(),
+                "cursor": alien and self.cb_cur.isChecked()}

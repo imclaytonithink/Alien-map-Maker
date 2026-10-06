@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint, QEvent
-from PyQt6.QtGui import QAction, QKeySequence, QColor, QPixmap, QPainter, QPen, QCursor
+from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint, QEvent, QSettings, QStandardPaths
+from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QColor, QPixmap, QPainter, QPen, QCursor
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTabBar, QPushButton,
     QFileDialog, QInputDialog, QMessageBox, QLabel, QStatusBar, QToolBar,
@@ -18,15 +19,18 @@ from PyQt6.QtWidgets import (
 
 from core.project import Project, Level, Piece, new_project, uuid
 from core.history import History
-from core import exporter
+from core import exporter, bundle
 from ui.canvas import CanvasView
 from ui.library import LibraryPanel
 from ui.properties import PropertiesPanel
 from ui.layers_panel import LayersPanel
+from ui.zones_panel import ZonesPanel
 from ui.launch_screen import LaunchScreen
 from ui.menu_overlay import MenuOverlay
 from ui.generator_dialog import GeneratorDialog
 from ui import theme as thememod
+from ui.branding import APP_NAME, ALIEN_NAME, SETTINGS_ID
+from ui.custom_toolbar import CustomizableToolBar, CustomizeToolbarDialog
 from core import generator as gen
 
 RECENT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recent.json")
@@ -54,9 +58,16 @@ class Minimap(QWidget):
         super().__init__(parent)
         self.canvas = canvas
         self.setFixedSize(170, 170)
-        self.setStyleSheet("background:#0d1219; border:1px solid #2e6fdf;")
+        self.set_theme("dark", "#69b7f5")
         canvas.dirty.connect(self.update)
         canvas.selectionChanged.connect(lambda _: self.update())
+
+    def set_theme(self, mode: str, accent: str):
+        colors = thememod.theme_colors(mode, accent)
+        self._theme_colors = colors
+        self.setStyleSheet(
+            f"background:{colors['panel']}; border:1px solid {colors['border_hot']};")
+        self.update()
 
     def _world_from_pos(self, px, py):
         sx = self.width() / max(self.canvas.project.canvas_w, 1)
@@ -87,8 +98,10 @@ class Minimap(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#0d1219"))
+        colors = getattr(self, "_theme_colors", thememod.theme_colors("dark"))
+        p.fillRect(self.rect(), QColor(colors["panel"]))
         if not self.canvas.project:
+            p.end()
             return
         proj = self.canvas.project
         sx = self.width() / proj.canvas_w
@@ -96,10 +109,10 @@ class Minimap(QWidget):
         s = min(sx, sy)
         ox = (self.width() - proj.canvas_w * s) / 2
         oy = (self.height() - proj.canvas_h * s) / 2
-        p.setPen(QColor(proj.accent))
+        p.setPen(QColor(colors["accent"]))
         p.drawRect(int(ox), int(oy), int(proj.canvas_w * s), int(proj.canvas_h * s))
         for pc in self.canvas.level.paint_order():
-            p.setBrush(QColor(proj.accent))
+            p.setBrush(QColor(colors["accent"]))
             p.setPen(Qt.PenStyle.NoPen)
             p.drawRect(int(ox + pc.x * s), int(oy + pc.y * s),
                        max(1, int(pc.w * s)), max(1, int(pc.h * s)))
@@ -201,10 +214,12 @@ class LevelBar(QWidget):
             QMessageBox.information(self, "Levels", "At least one level is required.")
             return
         idx = self.tabs.currentIndex()
-        if self.project.levels[idx].pieces:
-            ok = QMessageBox.question(self, "Remove level",
-                                      f"Remove '{self.project.levels[idx].name}' and its "
-                                      f"{len(self.project.levels[idx].pieces)} piece(s)?")
+        level = self.project.levels[idx]
+        if level.pieces or level.zones:
+            ok = QMessageBox.question(
+                self, "Remove level",
+                f"Remove '{level.name}' and its {len(level.pieces)} node(s) and "
+                f"{len(level.zones)} gameplay zone(s)?")
             if ok != QMessageBox.StandardButton.Yes:
                 return
         self.project.remove_level(idx)
@@ -230,8 +245,44 @@ class LevelBar(QWidget):
 
 
 class MainWindow(QMainWindow):
+    AUTOSAVE_CHOICES = (0, 1, 5, 10)
+
     def __init__(self):
         super().__init__()
+        self.settings = QSettings("ArenaMaps", SETTINGS_ID)
+        self.theme_mode = str(self.settings.value("appearance/theme", "dark")).lower()
+        if self.theme_mode not in thememod.THEME_MODES:
+            self.theme_mode = "dark"
+        self.theme_accent = str(self.settings.value("appearance/alien_accent",
+                                                     thememod.DEFAULT_ACCENT))
+        if not QColor(self.theme_accent).isValid():
+            self.theme_accent = thememod.DEFAULT_ACCENT
+        self.alien_scanlines = self.settings.value(
+            "appearance/alien_scanlines", True, type=bool)
+        self.alien_boot_text = self.settings.value(
+            "appearance/alien_boot_text", True, type=bool)
+        try:
+            self.autosave_interval_minutes = int(
+                self.settings.value("autosave/interval_minutes", 5))
+        except (TypeError, ValueError):
+            self.autosave_interval_minutes = 5
+        if self.autosave_interval_minutes not in self.AUTOSAVE_CHOICES:
+            self.autosave_interval_minutes = 5
+
+        app_data = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppDataLocation)
+        if not app_data:
+            app_data = os.path.join(os.path.expanduser("~"), ".map-studio")
+        self._app_data_dir = app_data
+        self._bundle_extract_root = os.path.join(app_data, "bundles")
+        self._autosave_dir = os.path.join(app_data, "autosave")
+        self._recovery_file = os.path.join(self._autosave_dir, "recovery.bmap")
+        self._recovery_meta = os.path.join(self._autosave_dir, "recovery.json")
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._autosave_tick)
+        if self.autosave_interval_minutes:
+            self._autosave_timer.start(self.autosave_interval_minutes * 60 * 1000)
+
         self.project = new_project()
         self.history = History()
         self.recent = load_recent()
@@ -243,7 +294,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _build_ui(self):
-        self.setWindowTitle("MU-TH-UR 6000 — Battlemap Builder")
+        self.setWindowTitle(APP_NAME)
         self.resize(1360, 820)
         central = QWidget()
         self.setCentralWidget(central)
@@ -291,9 +342,13 @@ class MainWindow(QMainWindow):
         right = QTabWidget()
         self.props = PropertiesPanel(self.canvas)
         self.layers = LayersPanel(self.canvas)
+        self.zones = ZonesPanel(self.canvas)
+        self.zones.defaultsChanged.connect(
+            lambda: self.props.load_selection(self.canvas.selected_pieces()))
         self.hist = HistoryPanel(self)
-        right.addTab(self.props, "Piece")
+        right.addTab(self.props, "Node")
         right.addTab(self.layers, "Layers")
+        right.addTab(self.zones, "Zones")
         right.addTab(self.hist, "History")
         right.setMinimumWidth(260)
         right.setMaximumWidth(340)
@@ -303,8 +358,8 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_status()
 
-        self.scanlines = thememod.ScanlineOverlay(self, self.project.accent)
-        self.boot = thememod.BootOverlay(self, self.project.accent)
+        self.scanlines = thememod.ScanlineOverlay(self, self.theme_accent)
+        self.boot = thememod.BootOverlay(self, self.theme_accent)
         # in-window system menu (ESC) — created last so it stacks on top
         self.overlay = MenuOverlay(self)
 
@@ -326,6 +381,22 @@ class MainWindow(QMainWindow):
         f.addSeparator()
         f.addAction("Export PNG…", self._export)
         f.addAction("Export PDF…", self._export_pdf)
+        f.addAction("Export for Tabletop Simulator…", self._export_tts)
+        f.addAction("Export project bundle / PNG pack…", self._export_bundle)
+        autosave_menu = f.addMenu("Auto-save")
+        self.autosave_actions = {}
+        autosave_group = QActionGroup(self)
+        autosave_group.setExclusive(True)
+        for minutes, label in ((0, "Off"), (1, "Every minute"),
+                               (5, "Every 5 minutes"), (10, "Every 10 minutes")):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(minutes == self.autosave_interval_minutes)
+            action.triggered.connect(
+                lambda checked=False, value=minutes: self._set_autosave_interval(value))
+            autosave_group.addAction(action)
+            autosave_menu.addAction(action)
+            self.autosave_actions[minutes] = action
         f.addSeparator()
         f.addAction("System menu (Esc)", lambda: self.overlay.open_menu())
         f.addAction("Exit", self.close)
@@ -338,6 +409,9 @@ class MainWindow(QMainWindow):
         e.addAction("Paste", self.canvas.paste)
         e.addAction("Duplicate", self.canvas.duplicate)
         e.addAction("Delete", self.canvas.delete_selected)
+        e.addAction("Select similar", self._select_similar)
+        e.addAction("Copy style…", self._start_copy_style)
+        e.addAction("Replace selected image…", self._replace_selected_image)
         e.addAction("Rotate 90°", lambda: self._rotate_sel(90))
         e.addAction("Group rotate…", self._toggle_group_rotate)
 
@@ -346,31 +420,131 @@ class MainWindow(QMainWindow):
         v.addAction("Zoom 100%", lambda: self.canvas.set_zoom(1.0))
         v.addAction("Zoom 200%", lambda: self.canvas.set_zoom(2.0))
         v.addAction("Fit", self.canvas.fit_to_view)
+        v.addSeparator()
+        v.addAction("Customize toolbar…", self._customize_toolbar)
+        v.addAction("Reset toolbar", self._reset_toolbar)
 
         t = mb.addMenu("&Theme")
-        for name, hexc in (("Green", "#9bff9b"), ("Amber", "#ffb000"), ("Red", "#ff5a5a")):
-            t.addAction(name, lambda h=hexc: self._set_accent(h))
+        self.theme_actions = {}
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for mode, label in (("dark", "Dark"), ("light", "Light"),
+                            ("alien", "Alien / MU-TH-UR")):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(mode == self.theme_mode)
+            action.triggered.connect(
+                lambda checked=False, value=mode: self._set_theme_mode(value))
+            theme_group.addAction(action)
+            t.addAction(action)
+            self.theme_actions[mode] = action
+        alien_menu = t.addMenu("Alien accent")
+        self.alien_accent_actions = {}
+        alien_accent_group = QActionGroup(self)
+        alien_accent_group.setExclusive(True)
+        for name, hexc in (("Green", "#9bff9b"), ("Amber", "#ffb000"),
+                           ("Red", "#ff5a5a")):
+            action = QAction(name, self)
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked=False, color=hexc: self._set_accent(color))
+            alien_accent_group.addAction(action)
+            alien_menu.addAction(action)
+            self.alien_accent_actions[hexc] = action
         t.addSeparator()
-        t.addAction("Toggle scanlines", lambda: self._toggle_flourish("flourish_scanlines"))
-        t.addAction("Toggle boot text", lambda: self._toggle_flourish("flourish_boot"))
-        t.addAction("Toggle blink cursor", lambda: self._toggle_flourish("flourish_cursor"))
+        self.flourish_actions = {}
+        for label, attr in (("Scanlines", "flourish_scanlines"),
+                            ("Boot text", "flourish_boot")):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked=False, key=attr: self._toggle_flourish(key))
+            t.addAction(action)
+            self.flourish_actions[attr] = action
 
         t = mb.addMenu("&Tools")
         t.addAction("Generate Map…", self._open_generator)
+        t.addAction("Ruler / measure", self._start_ruler_tool)
+        t.addAction("Add static scale bar", self._start_scale_tool)
+        t.addAction("Add connection / transition marker", self._start_connector_tool)
+        t.addAction("Lasso select", self._start_lasso_tool)
+        t.addAction("Stamp selected node", self._start_stamp_tool)
+        t.addAction("Crop selected image…", self._start_crop_tool)
+        t.addSeparator()
+        t.addAction("Draw rectangle gameplay zone",
+                    lambda: self.canvas.set_zone_tool("rectangle"))
+        t.addAction("Draw polygon gameplay zone",
+                    lambda: self.canvas.set_zone_tool("polygon"))
+        t.addAction("Finish polygon zone", self.canvas.finish_zone_polygon)
+        t.addAction("Draw raster-label patch",
+                    lambda: self.canvas.set_patch_tool(True))
 
         hm = mb.addMenu("&Help")
         hm.addAction("About", self._about)
 
     def _build_toolbar(self):
-        tb = QToolBar()
-        self.addToolBar(tb)
-        for name, fn in [("New", self._new_project), ("Open", self._open),
-                         ("Save", self._save), ("Export", self._export),
-                         ("Undo", self.undo), ("Redo", self.redo),
-                         ("Text", self._add_text), ("Group Rot", self._toggle_group_rotate),
-                         ("Gen", self._open_generator),
-                         ("Import", self.library._import_folder)]:
-            b = QPushButton(name); b.clicked.connect(fn); tb.addWidget(b)
+        specs = [
+            ("new", "New", self._new_project, "Create a new map."),
+            ("open", "Open", self._open, "Open a saved map."),
+            ("save", "Save", self._save, "Save the current map."),
+            ("export", "Export", self._export, "Export the current map."),
+            ("bundle", "Pack", self._export_bundle,
+             "Create a portable project bundle with assets and PNG renders."),
+            ("undo", "Undo", self.undo, "Undo the last change."),
+            ("redo", "Redo", self.redo, "Redo the last undone change."),
+            ("text", "Text", self._add_text, "Add an editable text label."),
+            ("stamp", "Stamp", self._start_stamp_tool,
+             "Repeatedly place copies of the selected node."),
+            ("crop", "Crop", self._start_crop_tool,
+             "Crop the selected image non-destructively."),
+            ("ruler", "Ruler", self._start_ruler_tool,
+             "Measure map distance; hold Shift to snap endpoints to the grid."),
+            ("scale", "Scale", self._start_scale_tool,
+             "Draw a static scale bar with the current map calibration."),
+            ("connector", "Link", self._start_connector_tool,
+             "Draw a labeled transition / connection marker."),
+            ("lasso", "Lasso", self._start_lasso_tool,
+             "Lasso-select nodes by their centers."),
+            ("similar", "Similar", self._select_similar,
+             "Select other nodes similar to the current selection."),
+            ("copy_style", "Copy Style", self._start_copy_style,
+             "Apply the selected node's formatting to other nodes."),
+            ("patch", "Patch",
+             lambda: self.canvas.set_patch_tool(True),
+             "Draw a separate cover patch over rasterized image lettering."),
+            ("zone_rect", "Rect Zone",
+             lambda: self.canvas.set_zone_tool("rectangle"),
+             "Draw an independent rectangular gameplay zone."),
+            ("zone_poly", "Poly Zone",
+             lambda: self.canvas.set_zone_tool("polygon"),
+             "Draw an independent polygonal gameplay zone."),
+            ("zone_finish", "Finish Zone", self.canvas.finish_zone_polygon,
+             "Finish the polygon gameplay zone currently being drawn."),
+            ("group_rotate", "Group Rot", self._toggle_group_rotate,
+             "Rotate a multi-node selection around its center."),
+            ("generate", "Generate", self._open_generator,
+             "Generate a map from the asset library."),
+            ("import", "Import", self.library._import_folder,
+             "Import an asset folder into the library."),
+        ]
+        actions = {}
+        for tool_id, label, callback, tooltip in specs:
+            action = QAction(label, self)
+            action.setToolTip(tooltip)
+            action.triggered.connect(
+                lambda checked=False, fn=callback: fn())
+            actions[tool_id] = action
+        self.toolbar = CustomizableToolBar(
+            "Main toolbar", actions, self.settings, self)
+        self.toolbar.customizeRequested.connect(self._customize_toolbar)
+        self.addToolBar(self.toolbar)
+
+    def _customize_toolbar(self):
+        if not hasattr(self, "toolbar"):
+            return
+        CustomizeToolbarDialog(self.toolbar, self).exec()
+
+    def _reset_toolbar(self):
+        if hasattr(self, "toolbar"):
+            self.toolbar.reset_to_default()
 
     def _build_status(self):
         self.status = QStatusBar()
@@ -383,6 +557,14 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(self.lbl_cursor, 1)
         self.status.addPermanentWidget(self.lbl_zoom, 0)
         self.status.addPermanentWidget(self.lbl_hist, 1)
+        self.canvas.colorPickStateChanged.connect(self._on_color_pick_state)
+
+    def _on_color_pick_state(self, active: bool):
+        if active:
+            self.status.showMessage(
+                "Eyedropper active — click a map pixel; Esc or right-click cancels.")
+        else:
+            self.status.clearMessage()
 
     # ------------------------------------------------------------------
     # Launch
@@ -390,15 +572,40 @@ class MainWindow(QMainWindow):
     def _show_launch(self):
         """Open the in-window system menu over the editor (replaces the old
         modal launcher; the map behind it starts as a fresh empty project)."""
-        self._new_project()
+        self._new_project(preserve_recovery=True)
         self._apply_theme()
-        if self.project.flourish_boot:
+        if os.path.exists(self._recovery_file):
+            QTimer.singleShot(0, self._offer_recovery)
+        elif self.theme_mode == "alien" and self.alien_boot_text:
             self.boot.show_boot(1600)
-            # reveal the menu once the boot text has finished
             QTimer.singleShot(1650, self.overlay.open_menu)
         else:
-            # let the window paint once so the overlay snapshot isn't blank
             QTimer.singleShot(0, self.overlay.open_menu)
+
+    def _offer_recovery(self):
+        if not os.path.isfile(self._recovery_file):
+            self.overlay.open_menu()
+            return
+        answer = QMessageBox.question(
+            self, "Recover auto-saved map?",
+            "A recent auto-save recovery copy was found. Restore it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if answer == QMessageBox.StandardButton.Yes:
+            try:
+                with open(self._recovery_file, "r", encoding="utf-8") as fh:
+                    self.project = Project.from_dict(json.load(fh))
+                self._current_file = None
+                self._apply_project()
+                self._mark_dirty(True)
+                self.status.showMessage(
+                    "Recovered auto-saved work. Use Save As to choose a project file.", 10000)
+                self._remove_recovery()
+                return
+            except Exception as exc:
+                QMessageBox.warning(self, "Recovery failed", str(exc))
+        self._remove_recovery()
+        self.overlay.open_menu()
 
     # ------------------------------------------------------------------
     def _apply_project(self):
@@ -407,44 +614,134 @@ class MainWindow(QMainWindow):
         self.library.set_project(self.project, self.library.library, self._add_at_center)
         self.level_bar.set_project(self.project)
         self.layers.set_project(self.project, self.project.levels[self.canvas.level_index])
+        self.zones.set_project(self.project)
         self.canvas.level_index = 0
         self._resync_history()
+        self._apply_theme()
 
     def _apply_theme(self):
         app = QApplication.instance()
-        thememod.apply_stylesheet(app, self.project.accent, self.project.text_scale)
-        self.scanlines.set_accent(self.project.accent)
-        self.boot.accent = self.project.accent
-        self.scanlines.setVisible(self.project.flourish_scanlines)
+        colors = thememod.theme_colors(self.theme_mode, self.theme_accent)
+        accent = colors["accent"]
+        text_scale = self.project.text_scale
+        thememod.apply_stylesheet(app, self.theme_accent, text_scale,
+                                  self.theme_mode)
+        self.canvas.set_theme(self.theme_mode, self.theme_accent)
+        self.minimap.set_theme(self.theme_mode, self.theme_accent)
+        self.layers.set_theme(self.theme_mode, self.theme_accent)
+        self.scanlines.set_accent(accent)
+        self.boot.accent = accent
+        self.boot.label.setStyleSheet(
+            f"color:{accent}; background:transparent;")
+        self.scanlines.setVisible(
+            self.theme_mode == "alien" and self.alien_scanlines)
+        if self.theme_mode != "alien":
+            self.boot.timer.stop()
+            self.boot.hide()
+        if hasattr(self, "overlay"):
+            self.overlay._sync_theme()
+        self._sync_theme_actions()
+        self._update_window_title()
+
+    def _sync_theme_actions(self):
+        for mode, action in getattr(self, "theme_actions", {}).items():
+            action.setChecked(mode == self.theme_mode)
+        for attr, action in getattr(self, "flourish_actions", {}).items():
+            action.setChecked({
+                "flourish_scanlines": self.alien_scanlines,
+                "flourish_boot": self.alien_boot_text,
+            }.get(attr, False))
+            action.setEnabled(self.theme_mode == "alien")
+        for hexc, action in getattr(self, "alien_accent_actions", {}).items():
+            action.setChecked(hexc.lower() == self.theme_accent.lower())
 
     # ------------------------------------------------------------------
-    # Theme helpers
+    # Theme and preferences helpers
     # ------------------------------------------------------------------
-    def _set_accent(self, hexc):
-        self.project.accent = hexc
+    def _set_theme_mode(self, mode: str):
+        mode = mode.lower()
+        if mode not in thememod.THEME_MODES:
+            return
+        self.theme_mode = mode
+        self.settings.setValue("appearance/theme", mode)
+        if mode == "alien" and self.alien_boot_text:
+            self.boot.show_boot(1600)
         self._apply_theme()
-        self._mark_dirty()
+
+    def _set_accent(self, hexc):
+        color = QColor(hexc)
+        if not color.isValid():
+            return
+        self.theme_accent = color.name()
+        self.settings.setValue("appearance/alien_accent", self.theme_accent)
+        self._set_theme_mode("alien")
+
+    def _set_alien_effects(self, scanlines: bool, boot_text: bool):
+        old_boot_text = self.alien_boot_text
+        self.alien_scanlines = bool(scanlines)
+        self.alien_boot_text = bool(boot_text)
+        self.settings.setValue("appearance/alien_scanlines", self.alien_scanlines)
+        self.settings.setValue("appearance/alien_boot_text", self.alien_boot_text)
+        self._apply_theme()
+        if self.theme_mode == "alien" and self.alien_boot_text and not old_boot_text:
+            self.boot.show_boot(1600)
+        elif old_boot_text and not self.alien_boot_text:
+            self.boot.timer.stop()
+            self.boot.hide()
+
+    def _set_autosave_interval(self, minutes: int):
+        if minutes not in self.AUTOSAVE_CHOICES:
+            return
+        self.autosave_interval_minutes = minutes
+        self.settings.setValue("autosave/interval_minutes", minutes)
+        if minutes:
+            self._autosave_timer.start(minutes * 60 * 1000)
+        else:
+            self._autosave_timer.stop()
+        for value, action in getattr(self, "autosave_actions", {}).items():
+            action.setChecked(value == minutes)
+        if hasattr(self, "overlay"):
+            self.overlay._sync_theme()
+        if hasattr(self, "status"):
+            label = "off" if minutes == 0 else f"every {minutes} min"
+            self.status.showMessage(f"Auto-save set to {label}.", 3000)
 
     def _toggle_flourish(self, attr):
-        setattr(self.project, attr, not getattr(self.project, attr))
+        if self.theme_mode != "alien":
+            return
+        scanlines = self.alien_scanlines
+        boot_text = self.alien_boot_text
         if attr == "flourish_scanlines":
-            self.scanlines.setVisible(self.project.flourish_scanlines)
-        if attr == "flourish_boot" and self.project.flourish_boot:
-            self.boot.show_boot(1600)
-        self._mark_dirty()
+            scanlines = not scanlines
+        elif attr == "flourish_boot":
+            boot_text = not boot_text
+        self._set_alien_effects(scanlines, boot_text)
 
     # ------------------------------------------------------------------
     # Project lifecycle
     # ------------------------------------------------------------------
-    def _new_project(self):
+    def _new_project(self, preserve_recovery=False):
+        if not preserve_recovery:
+            self._remove_recovery()
         self.project = new_project()
+        try:
+            self.project.text_scale = float(self.settings.value(
+                "appearance/text_scale", self.project.text_scale))
+        except (TypeError, ValueError):
+            pass
         self._current_file = None
         self._apply_project()
         self._mark_dirty(False)
-        self.setWindowTitle("MU-TH-UR 6000 — Untitled")
+        self._update_window_title()
 
     def _template(self, name):
+        self._remove_recovery()
         self.project = new_project()
+        try:
+            self.project.text_scale = float(self.settings.value(
+                "appearance/text_scale", self.project.text_scale))
+        except (TypeError, ValueError):
+            pass
         if name and name.startswith("Blank 40"):
             self.project.map_cols = 40
             self.project.map_rows = 40
@@ -459,7 +756,7 @@ class MainWindow(QMainWindow):
         self._current_file = None
         self._apply_project()
         self._mark_dirty(False)
-        self.setWindowTitle("MU-TH-UR 6000 — Template")
+        self._update_window_title()
 
     def _place_template_room(self):
         by_name = {os.path.splitext(a.name)[0]: a for a in self.library.library.assets}
@@ -486,21 +783,38 @@ class MainWindow(QMainWindow):
     def _open(self):
         if self._dirty and not self._confirm_discard():
             return
-        fn, _ = QFileDialog.getOpenFileName(self, "Open project", os.getcwd(),
-                                            f"Map projects (*{BMAP_EXT})")
+        fn, _ = QFileDialog.getOpenFileName(
+            self, "Open project or map pack", os.getcwd(),
+            f"Map projects and packs (*{BMAP_EXT} *.rpgpack);;Map projects (*{BMAP_EXT});;RPG Map Packs (*.rpgpack)")
         if fn:
             self._load_file(fn)
 
     def _load_file(self, fn):
         try:
+            opened_bundle = str(fn).lower().endswith(".rpgpack")
+            bundle_manifest = None
+            if opened_bundle:
+                pack_path = fn
+                bundle_manifest = bundle.read_bundle_manifest(pack_path)
+                fn = bundle.unpack_project_bundle(pack_path, self._bundle_extract_root)
             with open(fn, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             self.project = Project.from_dict(data)
+            if self.project.asset_store and not os.path.isabs(self.project.asset_store):
+                self.project.asset_store = os.path.abspath(os.path.join(
+                    os.path.dirname(fn), self.project.asset_store))
             self._current_file = fn
             self._apply_project()
             self._mark_dirty(False)
-            self.setWindowTitle(f"MU-TH-UR 6000 — {os.path.basename(fn)}")
+            self._update_window_title()
+            self._remove_recovery()
             self._push_recent(fn)
+            if opened_bundle:
+                missing = bundle_manifest.get("missing_assets", []) if bundle_manifest else []
+                message = "Map pack opened as a local working copy. Save or export a new pack when ready."
+                if missing:
+                    message += f" {len(missing)} source asset(s) were missing from the pack."
+                self.status.showMessage(message, 12000)
         except Exception as e:
             QMessageBox.critical(self, "Open failed", str(e))
 
@@ -518,17 +832,70 @@ class MainWindow(QMainWindow):
                 fn += BMAP_EXT
             self._current_file = fn
             self._write(fn)
-            self.setWindowTitle(f"MU-TH-UR 6000 — {os.path.basename(fn)}")
+            self._update_window_title()
 
-    def _write(self, fn):
+    @staticmethod
+    def _atomic_json_write(data, path):
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        temp_path = path + ".tmp"
         try:
-            with open(fn, "w", encoding="utf-8") as fh:
-                json.dump(self.project.to_dict(), fh, indent=2)
+            with open(temp_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temp_path, path)
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    def _write(self, fn, autosave=False):
+        try:
+            self._atomic_json_write(self.project.to_dict(), fn)
             exporter.save_thumbnail(self.project, fn)
-            self._push_recent(fn)
+            if not autosave:
+                self._push_recent(fn)
+                self._remove_recovery()
             self._mark_dirty(False)
-        except Exception as e:
-            QMessageBox.critical(self, "Save failed", str(e))
+            return True
+        except Exception as exc:
+            if autosave:
+                if hasattr(self, "status"):
+                    self.status.showMessage(f"Auto-save failed: {exc}", 10000)
+            else:
+                QMessageBox.critical(self, "Save failed", str(exc))
+            return False
+
+    def _autosave_tick(self):
+        if not self._dirty:
+            return
+        if self._current_file:
+            if self._write(self._current_file, autosave=True):
+                self.status.showMessage("Auto-saved project.", 4000)
+            return
+        try:
+            os.makedirs(self._autosave_dir, exist_ok=True)
+            self._atomic_json_write(self.project.to_dict(), self._recovery_file)
+            meta = {"project_name": self.project.name,
+                    "updated": time.time()}
+            self._atomic_json_write(meta, self._recovery_meta)
+            self.status.showMessage(
+                "Auto-saved recovery copy. Use Save As to keep this map permanently.",
+                7000)
+        except Exception as exc:
+            self.status.showMessage(f"Auto-save failed: {exc}", 10000)
+
+    def _remove_recovery(self):
+        for path in (self._recovery_file, self._recovery_meta,
+                     self._recovery_file + ".tmp", self._recovery_meta + ".tmp"):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
 
     def _push_recent(self, fn):
         self.recent = [fn] + [x for x in self.recent if x != fn]
@@ -537,17 +904,38 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _export(self):
         from ui.export_dialog import ExportDialog
-        ExportDialog(self.project, self.canvas, self).exec()
+        ExportDialog(self.project, self.canvas, self, file_format="png").exec()
 
     def _export_pdf(self):
-        fn, _ = QFileDialog.getSaveFileName(self, "Export PDF", "map.pdf", "PDF (*.pdf)")
-        if fn:
-            try:
-                exporter.export_pdf(self.project, fn, self.project.export_grid,
-                                    exporter.preset_scale(self.project, "Original (1×)"))
-                QMessageBox.information(self, "Export", f"Saved {fn}")
-            except Exception as e:
-                QMessageBox.critical(self, "Export failed", str(e))
+        from ui.export_dialog import ExportDialog
+        ExportDialog(self.project, self.canvas, self, file_format="pdf").exec()
+
+    def _export_tts(self):
+        from ui.export_dialog import ExportDialog
+        ExportDialog(self.project, self.canvas, self, file_format="png",
+                     default_preset="Tabletop Sim (2048px)").exec()
+
+    def _export_bundle(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export project bundle and PNG pack", os.getcwd(),
+            "RPG Map Pack (*.rpgpack)")
+        if not path:
+            return
+        if not path.lower().endswith(".rpgpack"):
+            path += ".rpgpack"
+        try:
+            bundle.export_project_bundle(self.project, path, include_renders=True)
+            manifest = bundle.read_bundle_manifest(path)
+            missing = manifest.get("missing_assets", [])
+            if missing:
+                QMessageBox.warning(
+                    self, "Bundle exported with missing sources",
+                    f"The pack was created, but {len(missing)} referenced source asset(s) "
+                    "could not be included. Check the manifest inside the pack.")
+            else:
+                self.status.showMessage(f"Project bundle exported: {path}", 8000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Bundle export failed", str(exc))
 
     # ------------------------------------------------------------------
     def _open_generator(self):
@@ -650,6 +1038,7 @@ class MainWindow(QMainWindow):
         self.canvas.fit_to_view()
         self.level_bar.refresh()
         self.layers.set_project(self.project, level)
+        self.zones.refresh_level()
         self._mark_dirty()
         return result
 
@@ -687,7 +1076,67 @@ class MainWindow(QMainWindow):
             self._gen_output = None
         self.canvas.selection.clear()
         self.canvas.selectionChanged.emit([])
+        self.zones.refresh_level()
         self.canvas.update()
+
+    def _start_stamp_tool(self):
+        if not self.canvas.set_stamp_tool(True):
+            QMessageBox.information(self, "Stamp tool",
+                                    "Select one node before starting the stamp tool.")
+            return
+        self.status.showMessage(
+            "Stamp tool active — click or drag to place copies; right-click or Esc to finish.",
+            8000)
+
+    def _start_crop_tool(self):
+        if not self.canvas.set_crop_tool(True):
+            QMessageBox.information(self, "Crop image",
+                                    "Select one image node (not text or a patch) first.")
+            return
+        self.status.showMessage(
+            "Crop tool active — drag the area to keep; the source image remains unchanged.",
+            8000)
+
+    def _start_ruler_tool(self):
+        self.canvas.set_ruler_tool(True)
+        self.status.showMessage(
+            "Ruler active — drag to measure; hold Shift to snap endpoints to the grid. Esc to finish.",
+            8000)
+
+    def _start_scale_tool(self):
+        self.canvas.set_scale_tool(True)
+        self.status.showMessage(
+            "Scale-bar tool active — drag to set its static pixel length. Esc to cancel.",
+            8000)
+
+    def _start_connector_tool(self):
+        self.canvas.set_connector_tool(True)
+        self.status.showMessage(
+            "Connection-marker tool active — drag between points, then edit its label in Node properties.",
+            9000)
+
+    def _start_lasso_tool(self):
+        self.canvas.set_lasso_tool(True)
+        self.status.showMessage(
+            "Lasso active — draw around node centers; hold Shift to add to the selection.",
+            8000)
+
+    def _start_copy_style(self):
+        if not self.canvas.set_copy_style_mode(True):
+            QMessageBox.information(self, "Copy style",
+                                    "Select one source node before copying its style.")
+            return
+        self.status.showMessage(
+            "Copy-style mode active — click compatible nodes to apply formatting; Esc to finish.",
+            9000)
+
+    def _select_similar(self):
+        matches = self.canvas.select_similar()
+        if not matches:
+            self.status.showMessage("Select a node first to select similar nodes.", 5000)
+
+    def _replace_selected_image(self):
+        self.props._replace_image()
 
     def _add_at_center(self, path):
         w = self.canvas.width(); h = self.canvas.height()
@@ -702,6 +1151,7 @@ class MainWindow(QMainWindow):
     def _on_level_changed(self, idx):
         self.canvas.set_level(idx)
         self.layers.set_project(self.project, self.project.levels[idx])
+        self.zones.refresh_level()
 
     def _rotate_sel(self, d):
         if self.canvas.selected_pieces():
@@ -714,7 +1164,7 @@ class MainWindow(QMainWindow):
     def _toggle_group_rotate(self):
         if not self.canvas.selected_pieces():
             QMessageBox.information(self, "Group rotate",
-                                    "Select two or more pieces first.")
+                                    "Select two or more nodes first.")
             return
         if not self.canvas._group_rotate:
             QMessageBox.information(self, "Group rotate",
@@ -743,6 +1193,9 @@ class MainWindow(QMainWindow):
         self.canvas.level_index = idx
         self.level_bar.refresh()
         self.layers.set_project(self.project, self.project.levels[idx])
+        if self.canvas.selected_zone_id and not self.canvas.selected_zone:
+            self.canvas.select_zone(None)
+        self.zones.set_project(self.project)
         self.canvas.update()
         self._resync_history()
 
@@ -750,14 +1203,16 @@ class MainWindow(QMainWindow):
         self.hist.refresh()
 
     # ------------------------------------------------------------------
+    def _update_window_title(self):
+        product = ALIEN_NAME if self.theme_mode == "alien" else APP_NAME
+        subject = (os.path.basename(self._current_file) if self._current_file
+                   else (self.project.name or "Untitled"))
+        marker = "*" if self._dirty else ""
+        self.setWindowTitle(f"{product} — {subject}{marker}")
+
     def _mark_dirty(self, dirty=True):
-        self._dirty = dirty
-        title = self.windowTitle()
-        base = title.rstrip("*")
-        if dirty and not base.endswith("*"):
-            self.setWindowTitle(base + "*")
-        elif not dirty and base.endswith("*"):
-            self.setWindowTitle(base[:-1])
+        self._dirty = bool(dirty)
+        self._update_window_title()
 
     def _confirm_discard(self):
         r = QMessageBox.question(self, "Unsaved changes", "Discard unsaved changes?")
@@ -784,6 +1239,9 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
+            if (self.canvas.cancel_color_pick() or self.canvas.cancel_zone_tool()
+                    or self.canvas.cancel_patch_tool()):
+                return
             # ESC toggles the in-window system menu (close if open, else show)
             self.overlay.toggle_menu()
             return
@@ -791,6 +1249,9 @@ class MainWindow(QMainWindow):
         fw = self.focusWidget()
         typing = isinstance(fw, (QLineEdit, QTextEdit, QComboBox,
                                  QAbstractSpinBox))
+        if not typing and self.canvas.selected_zone and e.key() == Qt.Key.Key_Delete:
+            self.canvas.delete_selected_zone()
+            return
         if (not typing and self.canvas.selected_pieces()
                 and not isinstance(fw, QDoubleSpinBox)):
             step = self.project.cell_size if e.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
@@ -819,7 +1280,8 @@ class MainWindow(QMainWindow):
         e.accept()
 
     def _about(self):
+        product = ALIEN_NAME if self.theme_mode == "alien" else APP_NAME
         QMessageBox.about(self, "About",
-                          "MU-TH-UR 6000 — Sci-Fi Battlemap Builder\n\n"
-                          "Assemble PNG map pieces on a snapping grid, manage floors/levels,\n"
-                          "overlay a reference floor, tint/label pieces, and export to PNG/PDF.")
+                          f"{product} — General-purpose PNG map and image studio\n\n"
+                          "Arrange PNG assets on a canvas, recolor nodes with tint overlays, "
+                          "manage levels and layers, and export to PNG, PDF, or Tabletop Simulator-sized images.")

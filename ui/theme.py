@@ -1,9 +1,12 @@
-"""MUTHER-style sci-fi theme: dark CRT look, glowing accent, scanlines, boot text."""
+"""Neutral and Alien-themed application palettes, plus Alien-only effects."""
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QPainter, QFont, QLinearGradient
+from PyQt6.QtGui import QColor, QPainter, QFont
 from PyQt6.QtWidgets import QWidget, QLabel, QApplication
+
+THEME_MODES = ("dark", "light", "alien")
+DEFAULT_ACCENT = "#9bff9b"
 
 
 def hex_with_alpha(hex_color: str, alpha: float) -> str:
@@ -11,46 +14,83 @@ def hex_with_alpha(hex_color: str, alpha: float) -> str:
     return f"rgba({c.red()},{c.green()},{c.blue()},{alpha:.2f})"
 
 
-def build_stylesheet(accent: str, text_scale: float) -> str:
-    base = int(11 * text_scale)
-    bg = "#070a0f"
-    panel = "#0c1119"
-    panel2 = "#121a26"
-    panel3 = "#18222f"
-    border = hex_with_alpha(accent, 0.35)
-    border_hot = hex_with_alpha(accent, 0.85)
-    muted = "#6f8a86"
-    sel = hex_with_alpha(accent, 0.22)
-    hover = hex_with_alpha(accent, 0.14)
+def theme_colors(mode: str, accent: str = DEFAULT_ACCENT) -> dict[str, str]:
+    """Return the palette used by both the app stylesheet and custom panels."""
+    mode = mode if mode in THEME_MODES else "dark"
+    if mode == "light":
+        return {
+            "bg": "#edf1f5", "panel": "#f8fafc", "panel2": "#ffffff",
+            "panel3": "#e5ebf2", "text": "#263342", "accent": "#2563a6",
+            "muted": "#667587", "border": "#c3ceda",
+            "border_hot": "#7296bd", "selection": "#d5e5f5",
+            "hover": "#e4edf7", "disabled": "#8c99a7",
+        }
+    if mode == "alien":
+        return {
+            "bg": "#070a0f", "panel": "#0c1119", "panel2": "#121a26",
+            "panel3": "#18222f", "text": accent, "accent": accent,
+            "muted": "#6f8a86", "border": hex_with_alpha(accent, 0.35),
+            "border_hot": hex_with_alpha(accent, 0.85),
+            "selection": hex_with_alpha(accent, 0.22),
+            "hover": hex_with_alpha(accent, 0.14), "disabled": "#50635f",
+        }
+    return {
+        "bg": "#151a21", "panel": "#1b222b", "panel2": "#242d38",
+        "panel3": "#2d3946", "text": "#dce4ed", "accent": "#69b7f5",
+        "muted": "#9aa9b8", "border": "#3d4d5e",
+        "border_hot": "#69b7f5", "selection": "#30475b",
+        "hover": "#293848", "disabled": "#778594",
+    }
+
+
+def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
+                     mode: str = "alien") -> str:
+    """Build the application-wide Qt stylesheet for dark, light, or Alien mode.
+
+    The default mode stays Alien for compatibility with older direct callers;
+    the application explicitly starts in neutral dark mode.
+    """
+    c = theme_colors(mode, accent)
+    base = max(8, int(11 * text_scale))
     radius = "5px"
     return f"""
     QWidget {{
-        background-color: {bg};
-        color: {accent};
+        background-color: {c['bg']};
+        color: {c['text']};
         font-family: 'Consolas', 'Courier New', monospace;
         font-size: {base}px;
     }}
-    QMainWindow, QDialog {{ background-color: {bg}; }}
+    QMainWindow, QDialog {{ background-color: {c['bg']}; }}
+    QFrame#MenuCard {{
+        background-color: {c['panel']};
+        border: 1px solid {c['border_hot']};
+        border-radius: 10px;
+    }}
+    QLabel#AssetPreviewPopout {{
+        background-color: {c['panel']};
+        border: 1px solid {c['border_hot']};
+        padding: 4px;
+    }}
 
     QMenuBar {{
-        background-color: {panel};
-        border-bottom: 1px solid {border};
+        background-color: {c['panel']};
+        border-bottom: 1px solid {c['border']};
         padding: 2px;
     }}
     QMenuBar::item {{ padding: 4px 10px; border-radius: {radius}; }}
-    QMenuBar::item:selected {{ background: {sel}; }}
+    QMenuBar::item:selected {{ background: {c['selection']}; }}
     QMenu {{
-        background-color: {panel};
-        border: 1px solid {border_hot};
+        background-color: {c['panel']};
+        border: 1px solid {c['border_hot']};
         border-radius: {radius};
         padding: 4px;
     }}
     QMenu::item {{ padding: 5px 24px 5px 18px; border-radius: 3px; }}
-    QMenu::item:selected {{ background: {sel}; }}
-    QMenu::separator {{ height: 1px; background: {border}; margin: 4px 8px; }}
+    QMenu::item:selected {{ background: {c['selection']}; }}
+    QMenu::separator {{ height: 1px; background: {c['border']}; margin: 4px 8px; }}
 
     QGroupBox {{
-        border: 1px solid {border};
+        border: 1px solid {c['border']};
         border-radius: {radius};
         margin-top: 16px;
         padding-top: 10px;
@@ -59,56 +99,56 @@ def build_stylesheet(accent: str, text_scale: float) -> str:
     QGroupBox::title {{
         subcontrol-origin: margin;
         left: 10px; padding: 0 6px;
-        color: {accent};
-        background: {bg};
+        color: {c['accent']};
+        background: {c['bg']};
     }}
 
     QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {{
-        background: {panel2};
-        border: 1px solid {border};
+        background: {c['panel2']};
+        border: 1px solid {c['border']};
         border-radius: {radius};
         padding: 5px 7px;
-        color: {accent};
-        selection-background-color: {sel};
+        color: {c['text']};
+        selection-background-color: {c['selection']};
     }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
     QDoubleSpinBox:focus, QTextEdit:focus {{
-        border: 1px solid {border_hot};
+        border: 1px solid {c['border_hot']};
     }}
     QComboBox::drop-down {{ border: none; width: 18px; }}
     QComboBox::down-arrow {{
         image: none; border-left: 4px solid transparent;
-        border-right: 4px solid transparent; border-top: 5px solid {accent};
+        border-right: 4px solid transparent; border-top: 5px solid {c['accent']};
         margin-right: 6px;
     }}
     QComboBox QAbstractItemView {{
-        background: {panel}; border: 1px solid {border_hot};
-        selection-background-color: {sel};
+        background: {c['panel']}; border: 1px solid {c['border_hot']};
+        selection-background-color: {c['selection']};
     }}
 
     QPushButton {{
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                    stop:0 {panel3}, stop:1 {panel2});
-        border: 1px solid {border};
+                                    stop:0 {c['panel3']}, stop:1 {c['panel2']});
+        border: 1px solid {c['border']};
         border-radius: {radius};
         padding: 6px 12px;
-        color: {accent};
+        color: {c['text']};
     }}
     QPushButton:hover {{
-        background: {hover};
-        border: 1px solid {border_hot};
+        background: {c['hover']};
+        border: 1px solid {c['border_hot']};
     }}
     QPushButton:pressed {{
-        background: {sel};
+        background: {c['selection']};
         padding-top: 7px; padding-bottom: 5px;
     }}
-    QPushButton:focus {{ border: 1px solid {border_hot}; }}
-    QPushButton:disabled {{ color: {muted}; border-color: {panel3}; }}
-    QPushButton:default {{ border: 2px solid {border_hot}; }}
+    QPushButton:focus {{ border: 1px solid {c['border_hot']}; }}
+    QPushButton:disabled {{ color: {c['disabled']}; border-color: {c['panel3']}; }}
+    QPushButton:default {{ border: 2px solid {c['border_hot']}; }}
 
     QListWidget, QTreeWidget {{
-        background: {panel};
-        border: 1px solid {border};
+        background: {c['panel']};
+        border: 1px solid {c['border']};
         border-radius: {radius};
         padding: 3px;
         outline: 0;
@@ -118,111 +158,106 @@ def build_stylesheet(accent: str, text_scale: float) -> str:
         border-radius: 3px;
         margin: 1px 2px;
     }}
-    QListWidget::item:selected {{ background: {sel}; color: {accent}; }}
-    QListWidget::item:hover {{ background: {hover}; }}
+    QListWidget::item:selected {{ background: {c['selection']}; color: {c['text']}; }}
+    QListWidget::item:hover {{ background: {c['hover']}; }}
 
     QTabWidget::pane {{
-        border: 1px solid {border};
+        border: 1px solid {c['border']};
         border-radius: {radius};
         top: -1px;
     }}
     QTabBar {{ qproperty-drawBase: 0; }}
     QTabBar::tab {{
-        background: {panel};
-        border: 1px solid {border};
+        background: {c['panel']};
+        border: 1px solid {c['border']};
         border-bottom: none;
         border-top-left-radius: {radius};
         border-top-right-radius: {radius};
         padding: 6px 14px;
         margin-right: 2px;
-        color: {muted};
+        color: {c['muted']};
     }}
     QTabBar::tab:selected {{
-        background: {panel3};
-        color: {accent};
-        border-bottom: 2px solid {accent};
+        background: {c['panel3']};
+        color: {c['accent']};
+        border-bottom: 2px solid {c['accent']};
     }}
-    QTabBar::tab:hover:!selected {{ background: {hover}; color: {accent}; }}
+    QTabBar::tab:hover:!selected {{ background: {c['hover']}; color: {c['text']}; }}
 
     QSlider::groove:horizontal {{
-        background: {panel2};
-        height: 5px;
-        border-radius: 2px;
+        background: {c['panel2']}; height: 5px; border-radius: 2px;
     }}
     QSlider::sub-page:horizontal {{
-        background: {hex_with_alpha(accent, 0.55)};
-        border-radius: 2px;
+        background: {c['accent']}; border-radius: 2px;
     }}
     QSlider::handle:horizontal {{
-        background: {accent};
-        width: 13px; height: 13px;
-        margin: -5px 0;
-        border-radius: 7px;
+        background: {c['accent']}; width: 13px; height: 13px;
+        margin: -5px 0; border-radius: 7px;
     }}
-    QSlider::handle:horizontal:hover {{ background: {accent}; border: 2px solid {border_hot}; }}
+    QSlider::handle:horizontal:hover {{
+        background: {c['accent']}; border: 2px solid {c['border_hot']};
+    }}
 
     QScrollBar:vertical {{
-        background: {panel};
-        width: 11px;
-        border-radius: 5px;
-        margin: 0;
+        background: {c['panel']}; width: 11px; border-radius: 5px; margin: 0;
     }}
     QScrollBar::handle:vertical {{
-        background: {border};
-        border-radius: 5px;
-        min-height: 28px;
+        background: {c['border']}; border-radius: 5px; min-height: 28px;
     }}
-    QScrollBar::handle:vertical:hover {{ background: {border_hot}; }}
+    QScrollBar::handle:vertical:hover {{ background: {c['border_hot']}; }}
     QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
-    QScrollBar:horizontal {{
-        background: {panel}; height: 11px; border-radius: 5px;
-    }}
+    QScrollBar:horizontal {{ background: {c['panel']}; height: 11px; border-radius: 5px; }}
     QScrollBar::handle:horizontal {{
-        background: {border}; border-radius: 5px; min-width: 28px;
+        background: {c['border']}; border-radius: 5px; min-width: 28px;
     }}
-    QScrollBar::handle:horizontal:hover {{ background: {border_hot}; }}
+    QScrollBar::handle:horizontal:hover {{ background: {c['border_hot']}; }}
     QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
     QCheckBox {{ spacing: 6px; }}
     QCheckBox::indicator {{
-        width: 14px; height: 14px;
-        border: 1px solid {border};
-        border-radius: 3px;
-        background: {panel2};
+        width: 14px; height: 14px; border: 1px solid {c['border']};
+        border-radius: 3px; background: {c['panel2']};
     }}
     QCheckBox::indicator:checked {{
-        background: {accent};
-        border: 1px solid {accent};
+        background: {c['accent']}; border: 1px solid {c['accent']};
     }}
-    QCheckBox::indicator:hover {{ border-color: {border_hot}; }}
+    QCheckBox::indicator:hover {{ border-color: {c['border_hot']}; }}
 
-    QLabel {{ color: {accent}; background: transparent; }}
-    QStatusBar {{ background: {panel}; color: {muted}; border-top: 1px solid {border}; }}
+    QLabel {{ color: {c['text']}; background: transparent; }}
+    QStatusBar {{ background: {c['panel']}; color: {c['muted']}; border-top: 1px solid {c['border']}; }}
     QStatusBar::item {{ border: none; }}
     QToolTip {{
-        background: {panel3};
-        color: {accent};
-        border: 1px solid {border_hot};
-        border-radius: 3px;
-        padding: 4px 8px;
+        background: {c['panel3']}; color: {c['text']};
+        border: 1px solid {c['border_hot']}; border-radius: 3px; padding: 4px 8px;
     }}
     QHeaderView::section {{
-        background: {panel2}; color: {accent};
-        border: 1px solid {border};
-        padding: 3px 6px;
+        background: {c['panel2']}; color: {c['text']};
+        border: 1px solid {c['border']}; padding: 3px 6px;
     }}
-    QToolBar {{ background: {panel}; border-bottom: 1px solid {border}; spacing: 4px; padding: 3px; }}
-    QProgressBar {{ background: {panel2}; border: 1px solid {border}; border-radius: {radius}; }}
-    QProgressBar::chunk {{ background: {accent}; border-radius: {radius}; }}
+    QToolBar {{
+        background: {c['panel']}; border-bottom: 1px solid {c['border']};
+        spacing: 4px; padding: 3px;
+    }}
+    QToolBar QToolButton {{
+        background: {c['panel2']}; border: 1px solid {c['border']};
+        border-radius: {radius}; padding: 4px 8px; color: {c['text']};
+    }}
+    QToolBar QToolButton:hover {{
+        background: {c['hover']}; border-color: {c['border_hot']};
+    }}
+    QToolBar QToolButton:pressed {{ background: {c['selection']}; }}
+    QProgressBar {{ background: {c['panel2']}; border: 1px solid {c['border']}; border-radius: {radius}; }}
+    QProgressBar::chunk {{ background: {c['accent']}; border-radius: {radius}; }}
     """
 
 
-def apply_stylesheet(app: QApplication, accent: str, text_scale: float):
-    app.setStyleSheet(build_stylesheet(accent, text_scale))
+def apply_stylesheet(app: QApplication, accent: str, text_scale: float,
+                     mode: str = "alien"):
+    app.setStyleSheet(build_stylesheet(accent, text_scale, mode))
 
 
 class ScanlineOverlay(QWidget):
-    def __init__(self, parent=None, accent: str = "#9bff9b"):
+    def __init__(self, parent=None, accent: str = DEFAULT_ACCENT):
         super().__init__(parent)
         self.accent = accent
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -236,14 +271,14 @@ class ScanlineOverlay(QWidget):
         p = QPainter(self)
         p.setPen(Qt.PenStyle.NoPen)
         c = QColor(self.accent)
+        p.setBrush(QColor(c.red(), c.green(), c.blue(), 22))
         for y in range(0, self.height(), 3):
-            p.setBrush(QColor(c.red(), c.green(), c.blue(), 22))
             p.drawRect(0, y, self.width(), 1)
         p.end()
 
 
 class BootOverlay(QWidget):
-    def __init__(self, parent=None, accent: str = "#9bff9b"):
+    def __init__(self, parent=None, accent: str = DEFAULT_ACCENT):
         super().__init__(parent)
         self.accent = accent
         self.label = QLabel("MU-TH-UR 6000\n\n> INITIALIZING SHIP SYSTEMS…", self)

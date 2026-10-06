@@ -3,14 +3,15 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QRectF, QSizeF
+from PyQt6.QtCore import QPointF, Qt, QRectF, QSizeF
 from PyQt6.QtGui import QImage, QPainter, QPixmap, QColor, QPen, QPdfWriter, QPageSize
 from PyQt6.QtWidgets import QApplication
 
 from core.project import Level, Project, Piece, decode_embed
-from core.render import draw_piece
+from core.render import draw_node_border, draw_piece, draw_zone_borders
 
 
 def ensure_app():
@@ -67,10 +68,16 @@ def _draw_grid(painter, project, scale, color, opacity):
 
 
 def render_level(project: Project, level: Level, include_grid: bool = True,
-                 scale: float = 1.0, transparent: bool = False) -> QImage:
+                 scale: float = 1.0, transparent: bool = False,
+                 grid_color: str | None = None,
+                 grid_opacity: float | None = None,
+                 include_node_borders: bool | None = None,
+                 include_zones: bool | None = None) -> QImage:
     w = max(1, int(project.canvas_w * scale))
     h = max(1, int(project.canvas_h * scale))
-    img = QImage(w, h, QImage.Format.Format_ARGB32)
+    image_format = (QImage.Format.Format_ARGB32 if transparent
+                    else QImage.Format.Format_RGB32)
+    img = QImage(w, h, image_format)
     if transparent:
         img.fill(QColor(0, 0, 0, 0))
     else:
@@ -92,31 +99,80 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
         sy = scale * p.scale * (-1 if p.flip_v else 1)
         painter.scale(sx, sy)
         painter.setOpacity(lop * p.opacity)
-        draw_piece(painter, p, pm)
+        draw_piece(painter, p, pm, project)
+        draw_borders = (getattr(project, "export_node_borders", False)
+                        if include_node_borders is None else include_node_borders)
+        if draw_borders:
+            draw_node_border(painter, p, pm, project)
         painter.restore()
+    draw_regions = (getattr(project, "export_zones", True)
+                    if include_zones is None else include_zones)
+    if draw_regions:
+        draw_zone_borders(
+            painter, level.zones, project,
+            lambda x, y: QPointF(x * scale, y * scale), scale)
     if include_grid:
-        _draw_grid(painter, project, scale, project.export_grid_color,
-                   project.export_grid_opacity)
+        _draw_grid(painter, project, scale,
+                   grid_color or project.export_grid_color,
+                   project.export_grid_opacity if grid_opacity is None
+                   else grid_opacity)
     painter.end()
     return img
 
 
+def sample_level_color(project: Project, level: Level, world_x: float,
+                       world_y: float, cache: dict | None = None) -> QColor:
+    """Sample the rendered map pixel without editor-only guides or grid lines."""
+    x = int(math.floor(world_x))
+    y = int(math.floor(world_y))
+    if not (0 <= x < project.canvas_w and 0 <= y < project.canvas_h):
+        return QColor()
+
+    image = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(QColor(level.background))
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.translate(-x, -y)
+    cache = cache if cache is not None else {}
+    for piece in level.paint_order():
+        layer = level.layer_by_id(piece.layer)
+        layer_opacity = layer.opacity if layer else 1.0
+        pixmap = piece_pixmap(piece, project, cache)
+        painter.save()
+        painter.translate(piece.center[0], piece.center[1])
+        painter.rotate(piece.rotation)
+        painter.scale(piece.scale * (-1 if piece.flip_h else 1),
+                      piece.scale * (-1 if piece.flip_v else 1))
+        painter.setOpacity(layer_opacity * piece.opacity)
+        draw_piece(painter, piece, pixmap, project)
+        painter.restore()
+    painter.end()
+    return image.pixelColor(0, 0)
+
+
 def export_level_to_file(project, level, path, include_grid=True, scale=1.0,
-                         transparent=False):
-    img = render_level(project, level, include_grid, scale, transparent)
+                         transparent=False, grid_color=None, grid_opacity=None,
+                         include_node_borders=None, include_zones=None):
+    img = render_level(project, level, include_grid, scale, transparent,
+                       grid_color, grid_opacity, include_node_borders,
+                       include_zones)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     img.save(path, "PNG")
     return path
 
 
 def export_all_levels(project, out_dir, include_grid=True, scale=1.0,
-                      name_prefix="map", transparent=False):
+                      name_prefix="map", transparent=False, grid_color=None,
+                      grid_opacity=None, include_node_borders=None,
+                      include_zones=None):
     os.makedirs(out_dir, exist_ok=True)
     out = []
     for i, lvl in enumerate(project.levels, 1):
         safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in lvl.name)
         path = os.path.join(out_dir, f"{name_prefix}_{i:02d}_{safe}.png")
-        export_level_to_file(project, lvl, path, include_grid, scale, transparent)
+        export_level_to_file(project, lvl, path, include_grid, scale, transparent,
+                             grid_color, grid_opacity, include_node_borders,
+                             include_zones)
         out.append(path)
     return out
 
@@ -128,7 +184,9 @@ PRESETS = {
     "Print 4×": 4.0,
     "Foundry (140px/sq)": None,   # computed
     "Roll20 (70px/sq)": None,
-    "Tabletop Sim (1024px board)": None,
+    "Tabletop Sim (1024px)": None,
+    "Tabletop Sim (2048px)": None,
+    "Tabletop Sim (3072px high-res)": None,
 }
 
 
@@ -140,24 +198,40 @@ def preset_scale(project: Project, name: str) -> float:
     if name.startswith("Roll20"):
         return 70.0 / max(1, project.cell_size)
     if name.startswith("Tabletop"):
-        return 1024.0 / max(1, project.canvas_w)
+        match = re.search(r"(1024|2048|3072)", name)
+        target = int(match.group(1)) if match else 1024
+        return target / max(1, project.canvas_w, project.canvas_h)
     return 1.0
 
 
-def export_pdf(project, out_path, include_grid=True, scale=1.0):
+def export_pdf(project, out_path, include_grid=True, scale=1.0, levels=None,
+               transparent=False, grid_color=None, grid_opacity=None,
+               include_node_borders=None, include_zones=None):
+    """Export chosen level(s) to PDF with the same grid/render options as PNG.
+
+    Each selected level becomes one page. ``levels`` defaults to every level
+    to preserve the original API/behavior.
+    """
     ensure_app()
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     writer = QPdfWriter(out_path)
     writer.setResolution(96)
-    cache: dict = {}
+    selected_levels = list(project.levels if levels is None else levels)
+    if not selected_levels:
+        return out_path
+    first = render_level(project, selected_levels[0], include_grid, scale,
+                         transparent, grid_color, grid_opacity,
+                         include_node_borders, include_zones)
+    writer.setPageSize(QPageSize(
+        QSizeF(first.width() / 96.0, first.height() / 96.0),
+        QPageSize.Unit.Inch))
     painter = QPainter(writer)
-    for i, lvl in enumerate(project.levels):
-        img = render_level(project, lvl, include_grid, scale)
-        if i == 0:
-            writer.setPageSize(QPageSize(
-                QSizeF(img.width() / 96.0, img.height() / 96.0),
-                QPageSize.Unit.Inch))
-        else:
-            writer.newPage()
+    painter.drawImage(0, 0, first)
+    for lvl in selected_levels[1:]:
+        writer.newPage()
+        img = render_level(project, lvl, include_grid, scale, transparent,
+                           grid_color, grid_opacity, include_node_borders,
+                           include_zones)
         painter.drawImage(0, 0, img)
     painter.end()
     return out_path

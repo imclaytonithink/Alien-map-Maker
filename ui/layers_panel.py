@@ -9,22 +9,26 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QListWidget,
 )
 from core.project import Project, Level, Layer
+from ui.theme import theme_colors
 
 
 class LayerRow(QWidget):
     changed = pyqtSignal()
     active = pyqtSignal(str)
 
-    def __init__(self, layer: Layer, is_active: bool, parent=None):
+    def __init__(self, layer: Layer, is_active: bool, parent=None,
+                 theme_accent="#69b7f5", theme_muted="#9aa9b8"):
         super().__init__(parent)
         self.layer = layer
+        self.theme_accent = theme_accent
+        self.theme_muted = theme_muted
         self.setStyleSheet("background: transparent;")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(2, 2, 2, 2)
         lay.setSpacing(3)
         self.btn_active = QPushButton("●" if is_active else "○")
         self.btn_active.setMaximumWidth(20)
-        self.btn_active.setStyleSheet("color:" + ("#9bff9b" if is_active else "#555") + ";")
+        self._apply_active_style(is_active)
         self.btn_active.clicked.connect(lambda: self.active.emit(layer.id))
         self.btn_visible = QPushButton("●" if layer.visible else "○")
         self.btn_visible.setToolTip("Show / hide this layer")
@@ -59,9 +63,18 @@ class LayerRow(QWidget):
         self.layer.opacity = v / 100.0
         self.changed.emit()
 
+    def _apply_active_style(self, active: bool):
+        color = self.theme_accent if active else self.theme_muted
+        self.btn_active.setStyleSheet(f"color:{color};")
+
+    def set_theme_colors(self, accent: str, muted: str):
+        self.theme_accent = accent
+        self.theme_muted = muted
+        self._apply_active_style(self.btn_active.text() == "●")
+
     def set_active_style(self, active: bool):
         self.btn_active.setText("●" if active else "○")
-        self.btn_active.setStyleSheet("color:" + ("#9bff9b" if active else "#555") + ";")
+        self._apply_active_style(active)
 
 
 class LayersPanel(QWidget):
@@ -70,6 +83,9 @@ class LayersPanel(QWidget):
         self.canvas = canvas
         self.project: Optional[Project] = None
         self.level: Optional[Level] = None
+        colors = theme_colors("dark")
+        self.theme_accent = colors["accent"]
+        self.theme_muted = colors["muted"]
         self._build()
 
     def _build(self):
@@ -86,6 +102,15 @@ class LayersPanel(QWidget):
         row.addWidget(b_add); row.addWidget(b_del); row.addWidget(b_up); row.addWidget(b_dn)
         root.addLayout(row)
 
+    def set_theme(self, mode: str, accent: str):
+        colors = theme_colors(mode, accent)
+        self.theme_accent = colors["accent"]
+        self.theme_muted = colors["muted"]
+        for i in range(self.list.count()):
+            row = self.list.itemWidget(self.list.item(i))
+            if row:
+                row.set_theme_colors(self.theme_accent, self.theme_muted)
+
     def set_project(self, project: Project, level: Level):
         self.project = project
         self.level = level
@@ -96,7 +121,9 @@ class LayersPanel(QWidget):
         self.list.clear()
         for l in self.level.layers:
             item = self.list.listWidgetItem if False else None
-            row = LayerRow(l, l.id == self.level.current_layer)
+            row = LayerRow(l, l.id == self.level.current_layer,
+                           theme_accent=self.theme_accent,
+                           theme_muted=self.theme_muted)
             row.changed.connect(self._changed)
             row.active.connect(self._set_active)
             lw = self.list  # placeholder

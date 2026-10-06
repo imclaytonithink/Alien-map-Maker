@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core import generator as gen
+from ui.branding import APP_NAME, ALIEN_NAME
+from ui import theme as thememod
 
 SETTING_TIPS = {
     "Random": "Let the seed pick a style at random.",
@@ -49,7 +51,11 @@ class GeneratorDialog(QDialog):
             if not hasattr(library, "assets") else library
         self.canvas = canvas
         self.generate_cb = generate_cb
-        self.setWindowTitle("MU-TH-UR 6000 — Map Generator")
+        self.theme_mode = getattr(parent, "theme_mode", "dark")
+        self.theme_accent = getattr(parent, "theme_accent", thememod.DEFAULT_ACCENT)
+        self.colors = thememod.theme_colors(self.theme_mode, self.theme_accent)
+        product = ALIEN_NAME if self.theme_mode == "alien" else APP_NAME
+        self.setWindowTitle(f"{product} — Map Generator")
         self.setMinimumSize(580, 640)
         self.cats = {}
         self._build()
@@ -67,7 +73,7 @@ class GeneratorDialog(QDialog):
         f.addRow("Setting", self.cmb_setting)
         self.lbl_setting_tip = QLabel(SETTING_TIPS[self.cmb_setting.currentText()])
         self.lbl_setting_tip.setWordWrap(True)
-        self.lbl_setting_tip.setStyleSheet("color: #6f8a86;")
+        self.lbl_setting_tip.setStyleSheet(f"color:{self.colors['muted']};")
         f.addRow("", self.lbl_setting_tip)
 
         self.cmb_layout = QComboBox()
@@ -77,7 +83,7 @@ class GeneratorDialog(QDialog):
         f.addRow("Layout", self.cmb_layout)
         self.lbl_layout_tip = QLabel(LAYOUT_TIPS["Random"])
         self.lbl_layout_tip.setWordWrap(True)
-        self.lbl_layout_tip.setStyleSheet("color: #6f8a86;")
+        self.lbl_layout_tip.setStyleSheet(f"color:{self.colors['muted']};")
         f.addRow("", self.lbl_layout_tip)
 
         self.sl_clutter = QSlider(Qt.Orientation.Horizontal)
@@ -104,7 +110,7 @@ class GeneratorDialog(QDialog):
         if not self.canvas.selected_pieces():
             self.cmb_mode.setCurrentIndex(0)
             self.cmb_mode.setEnabled(False)
-            self.cmb_mode.setToolTip("Select pieces on the canvas first "
+            self.cmb_mode.setToolTip("Select nodes on the canvas first "
                                      "to fill a specific area.")
         else:
             self.cmb_mode.setToolTip("New level = add a fresh level and "
@@ -128,7 +134,6 @@ class GeneratorDialog(QDialog):
         # status line ----------------------------------------------------
         self.lbl_status = QLabel("")
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setStyleSheet("color: #9bff9b;")
         root.addWidget(self.lbl_status)
 
         # buttons --------------------------------------------------------
@@ -150,6 +155,15 @@ class GeneratorDialog(QDialog):
     def _taxonomy(self):
         ensure_sizes(self.library.assets, self.library)
         return gen.classify_assets(self.library.assets)
+
+    def _set_status_tone(self, tone: str):
+        colors = {
+            "success": (self.colors["accent"] if self.theme_mode == "alien"
+                        else ("#347a4d" if self.theme_mode == "light" else "#83d6a3")),
+            "warning": "#b47a08" if self.theme_mode == "light" else "#ffbf47",
+            "error": "#b42332" if self.theme_mode == "light" else "#ff6b75",
+        }
+        self.lbl_status.setStyleSheet(f"color:{colors.get(tone, self.colors['text'])};")
 
     def _refresh_preview(self):
         self.cats = self._taxonomy()
@@ -183,11 +197,11 @@ class GeneratorDialog(QDialog):
                 "! Missing tile types: " + ", ".join(missing) +
                 " — import PNGs whose names contain room/floor/deck/tile "
                 "(floor) or wall/bulkhead/hull (wall).")
-            self.lbl_status.setStyleSheet("color: #ffb000;")
+            self._set_status_tone("warning")
         elif not any(self.cats.values()):
             self.lbl_status.setText(
                 "! No assets classified yet - use Import Folder first.")
-            self.lbl_status.setStyleSheet("color: #ff5a5a;")
+            self._set_status_tone("error")
         else:
             msg = "Ready: " + gen.summarize(self.cats)
             if not self.cats.get("floor_fixture"):
@@ -195,9 +209,9 @@ class GeneratorDialog(QDialog):
                         "locker…) were found, so Floor clutter has nothing "
                         "to scatter yet — import PNGs with those names to "
                         "use the slider.")
-                self.lbl_status.setStyleSheet("color: #ffb000;")
+                self._set_status_tone("warning")
             else:
-                self.lbl_status.setStyleSheet("color: #9bff9b;")
+                self._set_status_tone("success")
             self.lbl_status.setText(msg)
         self.prev_layout.addStretch(1)
 
@@ -233,12 +247,12 @@ class GeneratorDialog(QDialog):
         result = self.generate_cb(opts)
         if result:
             c = result.get("counts", {})
-            msg = (f"OK  {c.get('pieces', 0)} pieces · {c.get('rooms', 0)} rooms"
+            msg = (f"OK  {c.get('pieces', 0)} nodes · {c.get('rooms', 0)} rooms"
                    f" · seed {result.get('seed')} · "
                    f"{result.get('setting', '')} / {result.get('layout', '')}")
             if result.get("warnings"):
                 msg += "\n" + "  ".join("! " + w for w in result["warnings"])
-                self.lbl_status.setStyleSheet("color: #ffb000;")
+                self._set_status_tone("warning")
             else:
-                self.lbl_status.setStyleSheet("color: #9bff9b;")
+                self._set_status_tone("success")
             self.lbl_status.setText(msg)

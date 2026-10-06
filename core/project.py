@@ -38,6 +38,10 @@ def decode_embed(b64: str) -> bytes:
     return base64.b64decode(b64)
 
 
+def _is_hex_color(value: str) -> bool:
+    return bool(re.fullmatch(r"#[0-9a-fA-F]{6}", str(value or "")))
+
+
 # --------------------------------------------------------------------------
 # Data model
 # --------------------------------------------------------------------------
@@ -70,18 +74,53 @@ class Piece:
     is_overlay: bool = False
     locked: bool = False
     layer: str = ""               # Layer id
-    # recolor / tint
+    # recolor / tint. ``inherit`` uses the project tint; ``override`` uses
+    # this node's tint values; ``original`` opts out of all tinting.
+    tint_mode: str = "inherit"
     tint_color: str = ""          # hex or "" for none
     tint_strength: float = 0.0
+    # Optional node boundary. Bounds outlines may hide individual sides.
+    border_mode: str = "inherit"  # inherit | override | off
+    border_shape: str = "inherit" # inherit | bounds | alpha
+    border_color: str = "#69b7f5"
+    border_opacity: float = 1.0
+    border_edges: list[bool] = field(default_factory=lambda: [True] * 4)
+    # A separate, editable solid-fill cover over rasterized labels/artwork.
+    is_patch: bool = False
+    patch_color: str = "#10141c"
+    patch_opacity: float = 1.0
     # custom uploaded image embedded in the save
-    embedded: str = ""            # base64 PNG or ""
+    embedded: str = ""            # base64 image data or ""
+    # non-destructive source-image crop, normalized to [left, top, right, bottom]
+    crop_rect: list[float] = field(default_factory=lambda: [0.0, 0.0, 1.0, 1.0])
+    # independent static scale-bar composition object
+    is_scale_bar: bool = False
+    scale_distance: float = 5.0
+    scale_units: str = "ft"
+    scale_caption: str = ""
+    scale_color: str = "#ffffff"
+    scale_line_width: float = 3.0
+    # connection / transition marker composition object
+    is_connector: bool = False
+    connector_label: str = ""
+    connector_color: str = "#ffcc66"
+    connector_arrow: bool = True
+    connector_width: float = 3.0
     # text element
     is_text: bool = False
     text: str = ""
     font_family: str = "Monospace"
     font_size: int = 24
     font_bold: bool = True
-    text_color: str = "#9bff9b"
+    font_italic: bool = False
+    font_underline: bool = False
+    text_halign: str = "center"  # left | center | right
+    text_valign: str = "center"  # top | center | bottom
+    text_padding: int = 4
+    text_auto_size: bool = True
+    text_background_color: str = ""
+    text_background_opacity: float = 0.85
+    text_color: str = "#69b7f5"
     # grouping
     group_id: str = ""
 
@@ -91,7 +130,46 @@ class Piece:
     @classmethod
     def from_dict(cls, d: dict) -> "Piece":
         known = {f for f in cls.__dataclass_fields__}
-        return cls(**{k: v for k, v in d.items() if k in known})
+        piece = cls(**{k: v for k, v in d.items() if k in known})
+        # Older projects stored only per-node tint values. Preserve their
+        # appearance by treating an existing tint as an explicit override.
+        if "tint_mode" not in d and piece.tint_color and piece.tint_strength > 0:
+            piece.tint_mode = "override"
+        if piece.tint_mode not in {"inherit", "override", "original"}:
+            piece.tint_mode = "inherit"
+        if piece.border_mode not in {"inherit", "override", "off"}:
+            piece.border_mode = "inherit"
+        if piece.border_shape not in {"inherit", "bounds", "alpha"}:
+            piece.border_shape = "inherit"
+        piece.border_opacity = max(0.0, min(1.0, float(piece.border_opacity)))
+        piece.border_edges = [bool(value) for value in piece.border_edges[:4]]
+        piece.border_edges.extend([True] * (4 - len(piece.border_edges)))
+        try:
+            crop = [max(0.0, min(1.0, float(value)))
+                    for value in piece.crop_rect[:4]]
+            if len(crop) != 4 or crop[2] - crop[0] < 0.001 or crop[3] - crop[1] < 0.001:
+                raise ValueError("invalid crop rectangle")
+            piece.crop_rect = crop
+        except (TypeError, ValueError):
+            piece.crop_rect = [0.0, 0.0, 1.0, 1.0]
+        piece.scale_distance = max(0.01, min(1_000_000.0, float(piece.scale_distance)))
+        piece.scale_line_width = max(0.5, min(100.0, float(piece.scale_line_width)))
+        piece.connector_width = max(0.5, min(100.0, float(piece.connector_width)))
+        if piece.scale_units not in {"ft", "m", "km", "mi", "squares", "custom"}:
+            piece.scale_units = "ft"
+        if not _is_hex_color(piece.scale_color):
+            piece.scale_color = "#ffffff"
+        if not _is_hex_color(piece.connector_color):
+            piece.connector_color = "#ffcc66"
+        if piece.text_halign not in {"left", "center", "right"}:
+            piece.text_halign = "center"
+        if piece.text_valign not in {"top", "center", "bottom"}:
+            piece.text_valign = "center"
+        piece.text_padding = max(0, min(100, int(piece.text_padding)))
+        piece.text_background_opacity = max(
+            0.0, min(1.0, float(piece.text_background_opacity)))
+        piece.patch_opacity = max(0.0, min(1.0, float(piece.patch_opacity)))
+        return piece
 
     @property
     def center(self) -> tuple[float, float]:
@@ -122,13 +200,83 @@ class Piece:
             ly = -ly
         lx /= max(self.scale, 1e-6)
         ly /= max(self.scale, 1e-6)
-        return abs(lx) <= self.w / 2.0 and abs(ly) <= self.h / 2.0
+        tolerance = 8.0 / max(self.scale, 1e-6) if self.is_connector else 0.0
+        return (abs(lx) <= self.w / 2.0 + tolerance
+                and abs(ly) <= self.h / 2.0 + tolerance)
+
+
+@dataclass
+class ZoneRegion:
+    """A gameplay boundary that is independent of the PNG nodes underneath."""
+
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    name: str = "Zone"
+    points: list[tuple[float, float]] = field(default_factory=list)
+    label: str = ""
+    show_label: bool = True
+    show_id: bool = False
+    border_mode: str = "inherit"  # inherit | override | off
+    border_color: str = "#69b7f5"
+    border_opacity: float = 1.0
+    edge_visible: list[bool] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.points = [(float(point[0]), float(point[1]))
+                       for point in self.points if len(point) >= 2]
+        self.border_opacity = max(0.0, min(1.0, float(self.border_opacity)))
+        self.edge_visible = [bool(value) for value in self.edge_visible[:len(self.points)]]
+        self.edge_visible.extend([True] * (len(self.points) - len(self.edge_visible)))
+        if self.border_mode not in {"inherit", "override", "off"}:
+            self.border_mode = "inherit"
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "name": self.name,
+            "points": [[x, y] for x, y in self.points],
+            "label": self.label, "show_label": self.show_label,
+            "show_id": self.show_id,
+            "border_mode": self.border_mode,
+            "border_color": self.border_color,
+            "border_opacity": self.border_opacity,
+            "edge_visible": list(self.edge_visible),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ZoneRegion":
+        return cls(
+            id=data.get("id", uuid.uuid4().hex),
+            name=data.get("name", "Zone"),
+            points=data.get("points", []),
+            label=str(data.get("label", "")),
+            show_label=bool(data.get("show_label", True)),
+            show_id=bool(data.get("show_id", False)),
+            border_mode=data.get("border_mode", "inherit"),
+            border_color=data.get("border_color", "#69b7f5"),
+            border_opacity=data.get("border_opacity", 1.0),
+            edge_visible=data.get("edge_visible", []),
+        )
+
+    def contains(self, x: float, y: float) -> bool:
+        """Return true when a point falls inside this polygon."""
+        if len(self.points) < 3:
+            return False
+        inside = False
+        j = len(self.points) - 1
+        for i, (xi, yi) in enumerate(self.points):
+            xj, yj = self.points[j]
+            crosses = ((yi > y) != (yj > y)
+                       and x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-12) + xi)
+            if crosses:
+                inside = not inside
+            j = i
+        return inside
 
 
 @dataclass
 class Level:
     name: str = "Level 1"
     pieces: list[Piece] = field(default_factory=list)
+    zones: list[ZoneRegion] = field(default_factory=list)
     layers: list[Layer] = field(default_factory=list)
     background: str = "#10141c"
     current_layer: str = ""
@@ -150,7 +298,8 @@ class Level:
         return {"name": self.name, "background": self.background,
                 "current_layer": self.current_layer,
                 "layers": [asdict(l) for l in self.layers],
-                "pieces": [p.to_dict() for p in self.pieces]}
+                "pieces": [p.to_dict() for p in self.pieces],
+                "zones": [zone.to_dict() for zone in self.zones]}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Level":
@@ -158,7 +307,8 @@ class Level:
                  background=d.get("background", "#10141c"),
                  current_layer=d.get("current_layer", ""),
                  layers=[Layer(**l) for l in d.get("layers", [])],
-                 pieces=[Piece.from_dict(p) for p in d.get("pieces", [])])
+                 pieces=[Piece.from_dict(p) for p in d.get("pieces", [])],
+                 zones=[ZoneRegion.from_dict(zone) for zone in d.get("zones", [])])
         if not lv.layers:
             lv.__post_init__()
         if not lv.current_layer and lv.layers:
@@ -211,18 +361,30 @@ class Project:
     export_grid_opacity: float = 0.5
     grid_major: int = 5
     grid_style: str = "solid"     # solid | dashed | dotted
+    # Project-wide tint inherited by image nodes unless overridden or disabled.
+    tint_color: str = ""
+    tint_strength: float = 0.0
+    # Shared node/zone border defaults. Overrides live on individual objects.
+    border_color: str = "#69b7f5"
+    border_opacity: float = 0.85
+    border_width: float = 2.0
+    node_border_shape: str = "bounds"  # bounds | alpha
+    show_node_borders: bool = False
+    export_node_borders: bool = False
+    show_zones: bool = True
+    export_zones: bool = True
     canvas_w: int = 2100
     canvas_h: int = 2100
     levels: list[Level] = field(default_factory=list)
     collections: dict[str, list[str]] = field(default_factory=dict)
     group_order: list[str] = field(default_factory=list)
     thumb_size: int = 56
-    # theme
-    accent: str = "#9bff9b"
+    # Legacy per-project UI preferences (the active application theme is global).
+    accent: str = "#69b7f5"
     text_scale: float = 1.0
-    flourish_scanlines: bool = True
-    flourish_boot: bool = True
-    flourish_cursor: bool = True
+    flourish_scanlines: bool = False
+    flourish_boot: bool = False
+    flourish_cursor: bool = False
     # user settings
     autosave_min: int = 0         # 0 = off
     reopen_last: bool = False
@@ -242,8 +404,14 @@ class Project:
 
     def to_dict(self) -> dict:
         return {
-            "version": 2, "name": self.name, "asset_store": self.asset_store,
+            "version": 7, "name": self.name, "asset_store": self.asset_store,
             "cell_size": self.cell_size, "feet_per_square": self.feet_per_square,
+            "tint_color": self.tint_color, "tint_strength": self.tint_strength,
+            "border_color": self.border_color, "border_opacity": self.border_opacity,
+            "border_width": self.border_width, "node_border_shape": self.node_border_shape,
+            "show_node_borders": self.show_node_borders,
+            "export_node_borders": self.export_node_borders,
+            "show_zones": self.show_zones, "export_zones": self.export_zones,
             "grid_color": self.grid_color, "show_grid": self.show_grid,
             "grid_opacity": self.grid_opacity, "export_grid": self.export_grid,
             "export_grid_color": self.export_grid_color,
@@ -278,6 +446,18 @@ class Project:
             asset_store=d.get("asset_store", ""),
             cell_size=d.get("cell_size", 70),
             feet_per_square=d.get("feet_per_square", 5),
+            tint_color=d.get("tint_color", ""),
+            tint_strength=max(0.0, min(1.0, float(d.get("tint_strength", 0.0)))),
+            border_color=d.get("border_color", "#69b7f5"),
+            border_opacity=max(0.0, min(1.0, float(d.get("border_opacity", 0.85)))),
+            border_width=max(0.5, min(20.0, float(d.get("border_width", 2.0)))),
+            node_border_shape=(d.get("node_border_shape", "bounds")
+                               if d.get("node_border_shape", "bounds") in {"bounds", "alpha"}
+                               else "bounds"),
+            show_node_borders=bool(d.get("show_node_borders", False)),
+            export_node_borders=bool(d.get("export_node_borders", False)),
+            show_zones=bool(d.get("show_zones", True)),
+            export_zones=bool(d.get("export_zones", True)),
             grid_color=d.get("grid_color", "#2e6fdf"),
             show_grid=d.get("show_grid", True),
             grid_opacity=d.get("grid_opacity", 0.5),
@@ -291,11 +471,11 @@ class Project:
             collections=d.get("collections", {}),
             group_order=d.get("group_order", []),
             thumb_size=d.get("thumb_size", 56),
-            accent=d.get("accent", "#9bff9b"),
+            accent=d.get("accent", "#69b7f5"),
             text_scale=d.get("text_scale", 1.0),
-            flourish_scanlines=d.get("flourish_scanlines", True),
-            flourish_boot=d.get("flourish_boot", True),
-            flourish_cursor=d.get("flourish_cursor", True),
+            flourish_scanlines=d.get("flourish_scanlines", False),
+            flourish_boot=d.get("flourish_boot", False),
+            flourish_cursor=d.get("flourish_cursor", False),
             autosave_min=d.get("autosave_min", 0),
             reopen_last=d.get("reopen_last", False),
             last_project=d.get("last_project", ""),
