@@ -33,6 +33,9 @@ SMART_CATEGORY_TREE = (
         ("loose_props", "Loose Props"),
         ("organic", "Bodies & Organic Remains"),
     )),
+    ("Environment & Terrain", (
+        ("landscaping", "Landscaping & Vegetation"),
+    )),
     ("Effects & Reference", (
         ("geomorph_overlays", "Core Overlay Variants"),
         ("overlays", "Overlays & Visual Effects"),
@@ -83,8 +86,10 @@ _STORAGE_WORDS = (
 _VEHICLE_WORDS = (
     "vehicle", "small craft", "air raft", "air-raft", "fighter", "shuttle",
     "ship's boat", "runabout", "dropship", "drop capsule", "grav bike",
-    "grav tank", "atv", "mech", "aircraft", "launch bay", "hangar",
-    "helipad", "landing pad",
+    "grav tank", "atv", "mech", "aircraft", "airplane", "aeroplane",
+    "spacecraft", "spaceship", "spaceplane", "orbiter", "concorde",
+    "boeing", "xb 70", "valkyrie", "launch bay", "hangar", "helipad",
+    "landing pad",
 )
 _WEAPON_WORDS = (
     "weapon", "gunnery", "gun", "missile", "cannon", "laser", "armory",
@@ -94,6 +99,12 @@ _WEAPON_WORDS = (
 _FOOD_WORDS = (
     "galley", "mess", "dining", "food", "kitchen", "restaurant",
     "cafeteria", "pantry", "beverage", "canteen", "bar",
+)
+_LANDSCAPING_WORDS = (
+    "landscape", "landscaping", "vegetation", "flora", "foliage", "tree",
+    "shrub", "bush", "grass", "flower", "garden", "fern", "moss", "vine",
+    "ivy", "cactus", "cacti", "fungus", "fungi", "mushroom", "orchid",
+    "palm", "hedge", "plant life", "potted plant",
 )
 _ORGANIC_WORDS = (
     "corpse", "body", "bodies", "skeleton", "remains", "creature",
@@ -252,6 +263,8 @@ def classify_asset_categories(assets) -> dict[str, set[str]]:
             tags.add("weapons")
         if _has(text, _FOOD_WORDS):
             tags.add("food")
+        if _has(text, _LANDSCAPING_WORDS):
+            tags.add("landscaping")
         if _has(text, _ORGANIC_WORDS):
             tags.add("organic")
 

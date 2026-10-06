@@ -65,6 +65,13 @@ def main():
                    size=(100, 50)),
         make_asset("real-pack/200x100 Megamorph/M107 Landing Pad or Helipad.png",
                    size=(200, 100)),
+        make_asset("real-pack/Misc/A132 [150x300] Port (Concorde).png"),
+        make_asset("real-pack/Misc/A133 [150x300] Port (Space Shuttle).png"),
+        make_asset("real-pack/Misc/A134 [150x300] Port (XB-70 Valkyrie).png"),
+        make_asset("real-pack/Misc/A136 [150x300] Port (Boeing 2707-300).png"),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/Landscaping/"
+            "Landscaping 001 [7x7].png"),
     ]
 
     tags = classify_asset_categories(assets)
@@ -120,6 +127,13 @@ def main():
     assert has("M107 Landing Pad or Helipad.png", "vehicles")
     assert has("M107 Landing Pad or Helipad.png", "floors")
     assert has("M107 Landing Pad or Helipad.png", "modular_pieces")
+    # Manual review of the full packs found real aircraft stored under Misc;
+    # visual category coverage must not depend on the original folder name.
+    assert has("A132 [150x300] Port (Concorde).png", "vehicles")
+    assert has("A133 [150x300] Port (Space Shuttle).png", "vehicles")
+    assert has("A134 [150x300] Port (XB-70 Valkyrie).png", "vehicles")
+    assert has("A136 [150x300] Port (Boeing 2707-300).png", "vehicles")
+    assert has("Landscaping 001 [7x7].png", "landscaping")
 
     # Pack/archive titles are not semantic tags for every contained asset.
     core_tags = tags[assets[0].path]
