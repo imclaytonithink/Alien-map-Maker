@@ -37,13 +37,18 @@ def main():
         "Standard Symbols/Battery/Battery 001 [20x20].png",
         "Battery 001 [20x20].png", "Standard Symbols/Battery",
         (20, 20), 360, 360)
+    archive_root_symbol = make_asset(
+        "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Root asset [10x10].png",
+        "Root asset [10x10].png",
+        "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal",
+        (10, 10), 900, 900)
     floor = make_asset(
         "Sample/floors/room_100x100.png", "room_100x100.png",
         "Sample/floors", (100, 100), 600, 600)
 
     detected = classify_geomorph_assets(
         [base, overlay, standard_base, standard_overlay, symbol,
-         standard_symbol, floor])
+         standard_symbol, archive_root_symbol, floor])
     assert len(detected["core"]) == 1
     assert detected["core"][0]["path"] == base.path
     assert detected["core"][0]["core_w"] == 20
@@ -53,15 +58,17 @@ def main():
     assert list(detected["overlays"]) == [detected["core"][0]["id"]]
     assert len(detected["overlays"][detected["core"][0]["id"]]) == 1
     assert detected["overlays"][detected["core"][0]["id"]][0]["path"] == overlay.path
-    assert len(detected["symbols"]) == 1
+    assert len(detected["symbols"]) == 2
     assert detected["symbols"][0]["w"] == symbol.width
+    assert any(asset["path"] == archive_root_symbol.path
+               for asset in detected["symbols"])
     assert detected["unpaired_overlay_count"] == 1
 
     # Whole Core tiles and the Symbols package are not misread as single-cell
     # floor/wall tiles, while the independent small-tile generator is intact.
     small_tiles = classify_assets(
         [base, overlay, standard_base, standard_overlay, symbol,
-         standard_symbol, floor])
+         standard_symbol, archive_root_symbol, floor])
     assert len(small_tiles["floor"]) == 1
     assert all(not pool for category, pool in small_tiles.items()
                if category != "floor")

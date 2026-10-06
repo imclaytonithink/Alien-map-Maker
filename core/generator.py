@@ -74,11 +74,17 @@ def _is_large_core_geomorph(asset) -> bool:
 
 
 def _is_symbol_pack_asset(asset) -> bool:
-    """Recognize Symbols folders/archive roots without matching mixed ZIP names."""
+    """Recognize Symbols folders and high-res ZIP roots, not mixed archive names."""
     for source in (getattr(asset, "folder", ""), getattr(asset, "path", "")):
         for part in source.replace("\\", "/").split("/"):
             label = os.path.splitext(part)[0].strip().casefold()
-            if label == "symbol" or label.startswith("symbols"):
+            words = set(re.findall(r"[a-z0-9]+", label))
+            named_symbols = (label == "symbol" or label.startswith("symbols"))
+            high_res_root = (
+                "symbols" in words and
+                ("highres" in words or
+                 ("high" in words and ("res" in words or "resolution" in words))))
+            if named_symbols or high_res_root:
                 return True
     return False
 

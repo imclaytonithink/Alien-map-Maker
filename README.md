@@ -36,7 +36,11 @@ templates, appearance, and auto-save settings.
 Install `requirements.txt`, then run `python run_tests.py --require-gui`.
 This executes the pure-Python checks, renders the demo, and runs the Qt GUI
 smoke tests using the offscreen platform. The GitHub Actions workflow runs this
-same required-GUI test command. If Qt runtime libraries are unavailable, plain
+same required-GUI test command. A separate `real-pack-integration` job
+retrieves the three published high-resolution geomorph, custom-tile, and
+Symbols ZIPs into the runner's temporary directory (never into Git), imports
+their actual contents, checks Core/Overlay pairing and Symbols recognition,
+and assembles a seeded 3x3 map. If Qt runtime libraries are unavailable, plain
 `python run_tests.py` still runs the pure-Python checks and clearly reports
 skipped GUI checks.
 

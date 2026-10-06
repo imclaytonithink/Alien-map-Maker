@@ -30,3 +30,26 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python run_tests.py --require-gui
+
+  real-pack-integration:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Download the published high-resolution asset packs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sceneboard-packs"
+          gh release download asset-intake-temp-20261006 \
+            --repo imclaytonithink/Alien-map-Maker \
+            --pattern 'RPG-Mobius-Geomorphs-*-High-Res-Teal.zip' \
+            --dir "$RUNNER_TEMP/sceneboard-packs"
+      - name: Import real packs and generate a sample map
+        run: >-
+          python test_pack_integration.py
+          --packs-dir "$RUNNER_TEMP/sceneboard-packs"
