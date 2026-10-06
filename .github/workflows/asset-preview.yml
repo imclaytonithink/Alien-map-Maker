@@ -1,0 +1,112 @@
+name: Temporary asset visual samples
+on:
+  push:
+    branches:
+      - arena/dc8952cc-alien-map-maker
+    paths:
+      - .github/workflows/asset-preview.yml
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  sample-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the published asset archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/map-assets
+          gh release download asset-intake-temp-20261006 \
+            --pattern '*.zip' --dir /tmp/map-assets --repo "$GITHUB_REPOSITORY"
+      - name: Build small visual samples and attach them to the PR report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install --quiet pillow
+          python - <<'PY'
+          import base64
+          import io
+          import os
+          import subprocess
+          import zipfile
+          from PIL import Image, ImageDraw
+
+          archives = {
+              "Custom Tiles": "RPG-Mobius-Geomorphs-Custom-Tiles-High-Res-Teal.zip",
+              "Geomorphs": "RPG-Mobius-Geomorphs-Geomorphs-High-Res-Teal.zip",
+              "Symbols": "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal.zip",
+          }
+          root = "/tmp/map-assets"
+          pr = "2"
+
+          def normalize(name):
+              return name.replace(chr(92), "/").strip("/")
+
+          def choose(label, infos):
+              images = [info for info in infos
+                        if normalize(info.filename).lower().endswith(".png")]
+              images.sort(key=lambda info: normalize(info.filename).lower())
+              if label == "Symbols":
+                  chosen, folders = [], set()
+                  for info in images:
+                      path = normalize(info.filename)
+                      folder = path.rsplit("/", 1)[0] if "/" in path else "[root]"
+                      if folder.casefold() not in folders:
+                          folders.add(folder.casefold())
+                          chosen.append(info)
+                      if len(chosen) == 4:
+                          break
+                  return chosen
+              core = [info for info in images
+                      if "100x100 core/" in normalize(info.filename).lower()
+                      and "[overlay]" not in normalize(info.filename).lower()]
+              overlays = [info for info in images
+                          if "[overlay]" in normalize(info.filename).lower()]
+              chosen = (core[:3] if core else images[:3])
+              if overlays:
+                  chosen.append(overlays[0])
+              return chosen[:4]
+
+          def render_sheet(zf, label, infos):
+              selected = choose(label, infos)
+              tile_w, tile_h = 196, 210
+              sheet = Image.new("RGB", (tile_w * 2, tile_h * 2), "#eef1f4")
+              draw = ImageDraw.Draw(sheet)
+              for index, info in enumerate(selected):
+                  x = (index % 2) * tile_w
+                  y = (index // 2) * tile_h
+                  try:
+                      with zf.open(info) as source:
+                          art = Image.open(source)
+                          art.thumbnail((tile_w - 16, tile_h - 42), Image.Resampling.LANCZOS)
+                          art = art.convert("RGBA")
+                      background = Image.new("RGBA", art.size, "#d7dde2")
+                      background.alpha_composite(art)
+                      thumb = background.convert("RGB")
+                      sheet.paste(thumb, (x + (tile_w - thumb.width) // 2, y + 4))
+                      name = normalize(info.filename).rsplit("/", 1)[-1]
+                      draw.text((x + 5, y + tile_h - 30), name[:30], fill="#15212b")
+                      draw.text((x + 5, y + tile_h - 15),
+                                f"{info.file_size:,} bytes", fill="#53616b")
+                  except Exception as exc:
+                      draw.text((x + 5, y + 20), f"Preview error: {exc}", fill="#b42332")
+              out = io.BytesIO()
+              sheet.save(out, format="JPEG", quality=58, optimize=True)
+              return selected, out.getvalue()
+
+          for label, filename in archives.items():
+              path = os.path.join(root, filename)
+              with zipfile.ZipFile(path) as zf:
+                  selected, jpeg = render_sheet(zf, label, zf.infolist())
+              encoded = base64.b64encode(jpeg).decode("ascii")
+              if len(encoded) > 48_000:
+                  raise RuntimeError(f"Preview for {label} is too large for a PR comment")
+              names = "\n".join(f"- `{normalize(info.filename)}`" for info in selected)
+              body = (f"Temporary visual sample — **{label}**\n\n"
+                      f"Selected files:\n{names}\n\n"
+                      "The base64 image below is temporary transfer text, not a source asset.\n"
+                      "```base64\n" + encoded + "\n```")
+              subprocess.run(["gh", "pr", "comment", pr, "--body", body], check=True)
+          PY
