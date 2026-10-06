@@ -87,7 +87,11 @@ jobs:
           import time
           import zipfile
 
-          pack_names = ("geomorphs", "custom_tiles", "symbols")
+          target_terms = (
+              "landscap", "concorde", "space shuttle", "xb-70", "boeing",
+              "holosuite", "holopit", "holodeck", "promenade", "barbette",
+              "shooting range", "helipad", "landing pad",
+          )
           bundle_paths = [("full", os.environ["BUNDLE_PATH"])]
           large_path = os.environ["LARGE_BUNDLE_PATH"]
           if os.path.isfile(large_path):
@@ -104,18 +108,21 @@ jobs:
                   with zipfile.ZipFile(source_path) as source:
                       sheets = [name for name in source.namelist()
                                 if name.startswith("sheets/") and name.endswith(".jpg")]
+                      source_manifest = csv.DictReader(io.StringIO(
+                          source.read("manifest.tsv").decode("utf-8")),
+                          delimiter="\t")
+                      source_rows = list(source_manifest)
+                      source_header = source_manifest.fieldnames
                       if bundle_kind == "full":
-                          selected = []
-                          for pack in pack_names:
-                              pack_sheets = sorted(
-                                  name for name in sheets
-                                  if name.rsplit("/", 1)[-1].startswith(pack + "-"))
-                              if not pack_sheets:
-                                  raise RuntimeError(
-                                      f"No visual-review sheets for {pack}.")
-                              indices = sorted({
-                                  0, len(pack_sheets) // 2, len(pack_sheets) - 1})
-                              selected.extend(pack_sheets[index] for index in indices)
+                          selected = sorted({
+                              "sheets/" + row["sheet"] for row in source_rows
+                              if any(term in row["original_path"].casefold()
+                                     for term in target_terms)
+                          })
+                          if not selected:
+                              raise RuntimeError(
+                                  "No visual-review sheets matched the "
+                                  "recently refined taxonomy examples.")
                       else:
                           selected = sorted(sheets)
 
@@ -128,23 +135,22 @@ jobs:
                           output.writestr(output_name, source.read(name))
                           selected_count += 1
 
-                      rows = csv.reader(io.StringIO(
-                          source.read("manifest.tsv").decode("utf-8")),
-                          delimiter="\t")
-                      source_header = next(rows)
                       if header is None:
                           header = source_header
                           writer.writerow(header)
-                      for row in rows:
-                          if row and row[0] in selected_names:
-                              row[0] = selected_names[row[0]]
-                              writer.writerow(row)
+                      for row in source_rows:
+                          if row["sheet"] in selected_names:
+                              writer.writerow([
+                                  selected_names[row["sheet"]]
+                                  if column == "sheet" else row[column]
+                                  for column in header
+                              ])
               output.writestr("manifest.tsv", manifest.getvalue())
               output.writestr(
                   "README.txt",
-                  "Full-pack previews contain first, middle, and last sheets "
-                  "for each pack; large-*.jpg sheets show every source image "
-                  "above the very-large-image threshold.\n"
+                  "Full-pack previews show sheets containing newly refined "
+                  "taxonomy examples; large-*.jpg sheets show every source "
+                  "image above the very-large-image threshold.\n"
                   "Each sheet shows up to 100 images. manifest.tsv maps every "
                   "thumbnail index to its original ZIP path and dimensions.\n")
 
@@ -180,9 +186,9 @@ jobs:
               summary.write(
                   f"Published {len(encoded_chunks)} temporary commit-comment "
                   f"chunks for a {len(payload):,}-byte thumbnail-only ZIP "
-                  f"(SHA-256 `{digest}`). The bundle contains first, middle, "
-                  "and last full-pack sheets plus every very-large-image sheet; "
-                  "`manifest.tsv` maps thumbnails to source paths.\n")
+                  f"(SHA-256 `{digest}`). The bundle contains focused sheets "
+                  "for refined taxonomy terms plus every very-large-image "
+                  "sheet; `manifest.tsv` maps thumbnails to source paths.\n")
           print(f"Published {len(encoded_chunks)} visual-review chunks "
                 f"(SHA-256 {digest}).")
           PY
