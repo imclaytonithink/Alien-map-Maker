@@ -74,8 +74,9 @@ clearly reports skipped GUI checks.
   normalize Windows-style archive paths, skip non-images, and keep each archive
   in its own group so similarly named files never overwrite each other. The
   original ZIP is never changed. The library's expandable folder tree preserves
-  those paths; overlapping smart views add counts for core modules, rooms,
-  floors, walls, corridors, doors, controls, engineering, medical/science,
+  those paths; overlapping smart views add counts for core modules and modular
+  tile pieces, rooms, floors, walls, corridors, doors, controls, engineering,
+  medical/science,
   furniture, storage, vehicles/small craft, weapons/security, food/galley,
   loose props, organic remains, overlays, lighting, hazards, fire/smoke, and
   symbols. Unmatched art stays visible under **Other /

@@ -14,6 +14,7 @@ from core import generator
 SMART_CATEGORY_TREE = (
     ("Map Structure", (
         ("core_modules", "Core Modules (50x50 / 100x100)"),
+        ("modular_pieces", "Modular Pieces & Build-It Tiles"),
         ("rooms", "Rooms, Facilities & Floorplans"),
         ("floors", "Floors, Decks & Walkways"),
         ("walls", "Walls & Bulkheads"),
@@ -83,14 +84,16 @@ _VEHICLE_WORDS = (
     "vehicle", "small craft", "air raft", "air-raft", "fighter", "shuttle",
     "ship's boat", "runabout", "dropship", "drop capsule", "grav bike",
     "grav tank", "atv", "mech", "aircraft", "launch bay", "hangar",
+    "helipad", "landing pad",
 )
 _WEAPON_WORDS = (
     "weapon", "gunnery", "gun", "missile", "cannon", "laser", "armory",
     "armoury", "security", "brig", "combat", "turret", "fire control",
+    "barbette", "shooting range", "target range",
 )
 _FOOD_WORDS = (
     "galley", "mess", "dining", "food", "kitchen", "restaurant",
-    "cafeteria", "pantry", "beverage", "canteen",
+    "cafeteria", "pantry", "beverage", "canteen", "bar",
 )
 _ORGANIC_WORDS = (
     "corpse", "body", "bodies", "skeleton", "remains", "creature",
@@ -114,6 +117,7 @@ _ROOM_WORDS = (
     "stateroom", "suite", "quarters", "barracks", "office", "lounge",
     "galley", "mess", "hangar", "arboretum", "classroom", "briefing",
     "conference", "gym", "court", "pool", "retail", "shop", "repair area",
+    "holodeck", "holopit", "holosuite", "promenade", "casino", "bar",
     "bay", "floorplan", "floor plan", "floor_plan", "deckplan", "deck plan",
     "deck_plan", "escape pod", "empty room", "fresher", "low berth",
     "animal pen", "launch area",
@@ -121,7 +125,7 @@ _ROOM_WORDS = (
 _FLOOR_SURFACE_WORDS = (
     "floor", "deck", "deckplate", "tile", "grating", "carpet", "ground",
     "plate", "mat", "catwalk", "walkway", "platform", "baseplate",
-    "base plate", "ramp", "stairway", "stairs",
+    "base plate", "ramp", "stairway", "stairs", "landing pad", "helipad",
 )
 _CORRIDOR_WORDS = (
     "corridor", "hallway", "passage", "high passage", "passageway", "tunnel",
@@ -145,6 +149,18 @@ def _text(asset) -> str:
         components.append(re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", component))
     components.append(re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", asset.name))
     return "/".join(components).casefold()
+
+
+def _is_modular_piece(asset) -> bool:
+    """Recognize the actual Geomorphs/Custom Tiles component directories."""
+    component_names = {"core", "corner", "edge", "end", "megamorph",
+                       "baseplate", "baseplates"}
+    folder = getattr(asset, "folder", "").replace("\\", "/")
+    for component in folder.split("/"):
+        words = set(re.findall(r"[a-z0-9]+", component.casefold()))
+        if words.intersection(component_names) or {"build", "it"}.issubset(words):
+            return True
+    return False
 
 
 def _has(text: str, terms) -> bool:
@@ -194,6 +210,8 @@ def classify_asset_categories(assets) -> dict[str, set[str]]:
         if (generator._is_large_core_geomorph(asset)
                 and not is_geomorph_overlay):
             tags.add("core_modules")
+        if _is_modular_piece(asset):
+            tags.add("modular_pieces")
         if is_geomorph_overlay:
             tags.add("overlays")
             if "core" in text:

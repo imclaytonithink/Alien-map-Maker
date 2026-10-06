@@ -55,6 +55,16 @@ def main():
         make_asset("real-pack/Core/E102 [100x100] Perimeter Catwalk.png",
                    size=(100, 100), pixels=(7199, 7199)),
         make_asset("real-pack/Bridge/Lightning Class Cruiser.png"),
+        make_asset("real-pack/50x50 Build It/E800 [50x50].png",
+                   size=(50, 50), pixels=(3600, 3600)),
+        make_asset("real-pack/100x50 Edge/E410 [100x50] Holodeck.png",
+                   size=(100, 50)),
+        make_asset("real-pack/100x50 Edge/E442 Promenade - Bar.png",
+                   size=(100, 50)),
+        make_asset("real-pack/100x50 Edge/E451 Dorsal Barbettes.png",
+                   size=(100, 50)),
+        make_asset("real-pack/200x100 Megamorph/M107 Landing Pad or Helipad.png",
+                   size=(200, 100)),
     ]
 
     tags = classify_asset_categories(assets)
@@ -101,6 +111,15 @@ def main():
     assert has("Laser Cannon.png", "weapons")
     assert has("E102 [100x100] Perimeter Catwalk.png", "floors")
     assert not has("Lightning Class Cruiser.png", "lighting")
+    assert has("E800 [50x50].png", "modular_pieces")
+    assert not has("E800 [50x50].png", "other")
+    assert has("E410 [100x50] Holodeck.png", "rooms")
+    assert has("E442 Promenade - Bar.png", "rooms")
+    assert has("E442 Promenade - Bar.png", "food")
+    assert has("E451 Dorsal Barbettes.png", "weapons")
+    assert has("M107 Landing Pad or Helipad.png", "vehicles")
+    assert has("M107 Landing Pad or Helipad.png", "floors")
+    assert has("M107 Landing Pad or Helipad.png", "modular_pieces")
 
     # Pack/archive titles are not semantic tags for every contained asset.
     core_tags = tags[assets[0].path]
