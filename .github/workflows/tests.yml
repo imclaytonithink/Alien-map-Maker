@@ -55,7 +55,7 @@ jobs:
           --packs-dir "$RUNNER_TEMP/sceneboard-packs"
           --taxonomy-report "$RUNNER_TEMP/asset-taxonomy-report.md"
       - name: Upload the real-pack taxonomy audit
-        if: success()
+        if: success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
         uses: actions/upload-artifact@v4
         with:
           name: real-pack-taxonomy-audit
@@ -63,7 +63,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Publish the taxonomy audit on this commit
-        if: success() && github.event_name == 'workflow_dispatch'
+        if: success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
         env:
           GH_TOKEN: ${{ github.token }}
           REPORT_PATH: ${{ runner.temp }}/asset-taxonomy-report.md
