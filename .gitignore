@@ -1,0 +1,5 @@
+extracted/
+__pycache__/
+*.pyc
+gui2_out.pdf
+ui/recent.json
