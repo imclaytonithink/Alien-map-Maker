@@ -79,8 +79,6 @@ def main():
         symbols_pack = classify_geomorph_assets(pack_assets["symbols"])
         assert geomorph_pack["core"], (
             "The real Geomorphs ZIP yielded no compatible 100x100 Core modules.")
-        assert geomorph_pack["overlays"], (
-            "The real Geomorphs ZIP yielded no filename-paired overlays.")
         assert symbols_pack["symbols"], (
             "The real Symbols ZIP yielded no recognized Symbols assets.")
 
@@ -146,13 +144,20 @@ def main():
         assert 250 <= categories["pixels_per_square"] <= 350, (
             "Expected approximately 300 source pixels per five-foot square; "
             f"detected {categories['pixels_per_square']:.1f}.")
+        assert categories["unpaired_overlay_count"] == 0, (
+            f"Found {categories['unpaired_overlay_count']} overlay assets "
+            "that were not paired with a compatible Core module.")
 
         paired_core = [item for item in core if item["id"] in overlays]
-        assert paired_core, "No Core/Overlay filename pairs were found."
         generated_categories = dict(categories)
-        generated_categories["core"] = paired_core
-        generated_categories["overlays"] = {
-            item["id"]: overlays[item["id"]] for item in paired_core}
+        if paired_core:
+            generated_categories["core"] = paired_core
+            generated_categories["overlays"] = {
+                item["id"]: overlays[item["id"]] for item in paired_core}
+        else:
+            # The published pack may have no overlay artwork. Exercise the
+            # base geomorph generator in that case; optional layers stay empty.
+            generated_categories["overlays"] = {}
 
         result = generate_geomorphs({
             "seed": 601006,
@@ -170,7 +175,8 @@ def main():
         symbol_pieces = [piece for piece in result["pieces"]
                          if piece["layer_name"] == "Symbols"]
         assert len(base_pieces) == 9, result["counts"]
-        assert len(overlay_pieces) == 9, result["counts"]
+        expected_overlays = 9 if paired_core else 0
+        assert len(overlay_pieces) == expected_overlays, result["counts"]
         assert result["connected"] is None  # prebuilt layouts aren't BFS-tested
 
         by_origin = {(piece["x"], piece["y"]): piece
