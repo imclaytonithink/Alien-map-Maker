@@ -960,11 +960,19 @@ class MainWindow(QMainWindow):
         Returns the generator result dict (for the dialog status line).
         """
         cs = self.project.cell_size
+        generator_mode = opts.get("generator_mode", "tiles")
+        geomorph_mode = generator_mode == "geomorph"
         cats = opts.get("categories", {})
         floor_pool = cats.get("floor", []) + cats.get("corridor", [])
-        if not floor_pool:
+        if not geomorph_mode and not floor_pool:
             QMessageBox.warning(self, "Generator",
                                 "No floor/room tiles detected. Import floor/room PNGs first.")
+            return None
+        geomorph_cats = opts.get("geomorph_categories", {})
+        if geomorph_mode and not geomorph_cats.get("core"):
+            QMessageBox.warning(self, "Generator",
+                                "No 100x100 Core geomorphs detected. Import the "
+                                "Geomorphs or Custom Tiles ZIP first.")
             return None
 
         # capture the target region FIRST — discarding the previous output
@@ -981,8 +989,20 @@ class MainWindow(QMainWindow):
             region = (x0, y0, x1, y1)
             new_level = False
         else:
-            region = (0, 0, self.project.map_cols - 1, self.project.map_rows - 1)
             new_level = True
+            if geomorph_mode:
+                grid = opts.get("geomorph_grid", 3)
+                grid = max(1, int(grid or 3))
+                core = geomorph_cats.get("core", [])
+                core_w = int(core[0].get("core_w", 20)) if core else 20
+                core_h = int(core[0].get("core_h", 20)) if core else 20
+                old_size = (self.project.map_cols, self.project.map_rows)
+                self.project.map_cols = max(self.project.map_cols, grid * core_w)
+                self.project.map_rows = max(self.project.map_rows, grid * core_h)
+                if old_size != (self.project.map_cols, self.project.map_rows):
+                    self.project._sync_canvas()
+                    self.props.set_project(self.project)
+            region = (0, 0, self.project.map_cols - 1, self.project.map_rows - 1)
 
         # replace only THIS mode's previous output (new-level vs area fills
         # are tracked separately so switching modes never eats the other one)
@@ -1002,7 +1022,10 @@ class MainWindow(QMainWindow):
         rooms = max(3, (W * H) // 220)
         opts2 = dict(opts)
         opts2.update(cell_size=cs, region=region, rooms=rooms)
-        result = gen.generate(opts2)
+        result = (gen.generate_geomorphs(opts2) if geomorph_mode
+                  else gen.generate(opts2))
+        if not result.get("pieces"):
+            return result
 
         if new_level:
             lvl = self.project.add_level(
@@ -1016,8 +1039,14 @@ class MainWindow(QMainWindow):
             self.project._sync_canvas()
         level = self.canvas.level
 
-        layer_map = {"Base": "Floor", "Props": "Props", "Overlay": "Overlay"}
-        lid = {orig: self._ensure_layer(level, mapped) for orig, mapped in layer_map.items()}
+        layer_map = {"Base": "Floor", "Props": "Props", "Overlay": "Overlay",
+                     "Geomorphs": "Floor", "Overlays": "Overlay",
+                     "Symbols": "Symbols"}
+        output_layers = {piece["layer_name"] for piece in result["pieces"]}
+        lid = {}
+        for orig in ("Base", "Props", "Overlay", "Geomorphs", "Overlays", "Symbols"):
+            if orig in output_layers:
+                lid[orig] = self._ensure_layer(level, layer_map.get(orig, orig))
 
         from core.project import Piece
         created = []

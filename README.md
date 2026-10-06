@@ -4,10 +4,10 @@
 
 A general-purpose desktop tool for arranging PNG assets into maps and scenes.
 Snap nodes to a grid, rotate/flip, add overlays and text, tint/recolor images,
-manage levels, and export to PNG or PDF. Asset-driven procedural generation is
-planned for imported map libraries. The app has neutral **Dark** and **Light**
-themes; an optional **Alien / MU-TH-UR 6000** theme turns the whole interface
-into the original CRT-style ship computer.
+manage levels, and export to PNG or PDF. Asset-driven procedural generation
+builds maps from imported small tiles or prebuilt geomorph modules. The app has
+neutral **Dark** and **Light** themes, plus an optional **Alien / MU-TH-UR 6000**
+theme inspired by the original CRT-style ship computer.
 
 Built with **Python + PyQt6**. Packaged to a standalone `.exe` via PyInstaller.
 
@@ -32,6 +32,14 @@ templates, appearance, and auto-save settings.
 
 > PyInstaller can't cross-compile from Linux/macOS, so build the `.exe` on Windows.
 
+## Testing
+Install `requirements.txt`, then run `python run_tests.py --require-gui`.
+This executes the pure-Python checks, renders the demo, and runs the Qt GUI
+smoke tests using the offscreen platform. The GitHub Actions workflow runs this
+same required-GUI test command. If Qt runtime libraries are unavailable, plain
+`python run_tests.py` still runs the pure-Python checks and clearly reports
+skipped GUI checks.
+
 ---
 
 ## How to use
@@ -44,7 +52,10 @@ templates, appearance, and auto-save settings.
   archive paths, skip non-images, and keep each archive in its own group so
   similarly named files never overwrite each other. The original ZIP is never
   changed. Imported assets are auto-grouped and tagged by type/size, and groups
-  can be reordered with ▲▼. Large libraries load thumbnails only as they enter
+  can be reordered with ▲▼. For geomorph assembly, import the matching high-res
+  Geomorphs / Custom Tiles and Symbols archives; folder names are preserved so
+  Core modules, paired overlays, and Symbols can be recognized. Large libraries
+  load thumbnails only as they enter
   view, rather than decoding every full-size PNG at once.
 - **Custom single PNGs** dragged straight onto the canvas are *embedded*
   inside the saved `.bmap` file, so that map is portable on its own.
@@ -112,19 +123,28 @@ templates, appearance, and auto-save settings.
 - **Arrow keys** nudge 1px; **Shift+arrows** move exactly one square.
 
 ### 4. Generate a map (Tools → Generate Map…)
-- **Settings**: Starship (corridor spine, compact rooms), Colony base (big
-  organic rooms, lots of floor clutter), Research lab (tidy grid, more
-  hazards), or Random.
-- **Layouts**: Random / Corridors / Grid / Organic.
-- **Output**: *New level* or *Fill selected area* (select nodes first).
-- Auto-classifies your tiles from filenames into floors, walls, corridors,
-  doors, wall fixtures (terminals…) and floor fixtures (crates…) — preview
-  panel shows the pools before you generate. Fixtures land only on the right
-  surfaces: never a computer on the floor, never a wall in mid-air.
-- Every room is connected by a spanning corridor, **BFS-verified** — no
-  sealed areas (auto-repairs isolated pockets and tells you).
-- **Seed** makes maps reproducible/shareable; **Regenerate** rolls a new seed
-  and *replaces* the previous result instead of piling up levels.
+- Choose between two distinct **Generator** modes:
+  - **Tile-by-tile** classifies smaller floor, wall, corridor, door, fixture,
+    and hazard assets. Starship / Colony base / Research lab settings and the
+    Random / Corridors / Grid / Organic layouts shape the room network. Props
+    are placed on their matching surfaces. Small-tile maps are BFS-verified
+    for connectivity, with isolated areas automatically repaired.
+  - **Geomorph assembly** arranges imported 100x100 Core deck-plan modules.
+    A module's 20x20-square playable core is placed on a 20-square pitch; the
+    surrounding two-square transparent gutter is preserved so adjacent walls
+    align. Source dimensions determine scale (the high-resolution pack is
+    300 pixels per five-foot square). Modules rotate as complete pieces, and
+    matching `[Overlay]` images inherit their base module's placement, scale,
+    and rotation. Optional Symbols assets are size-scaled and scattered on a
+    separate editable layer.
+- **Geomorph layout** offers 2x2, 3x3, or 4x4 modules. At the default five-foot
+  grid, a 3x3 assembly covers 60x60 squares; a new map expands the default
+  30x30 canvas as needed. The Overlay / symbol density slider controls optional
+  dressing.
+- **Output**: *New level* or *Fill selected area* (select nodes first). Area
+  fills place only whole modules that fit the selection bounds.
+- **Seed** makes generated results reproducible/shareable; **Regenerate** rolls
+  a new seed and replaces the previous result for that output mode.
 
 ### 5. Floors / Levels
 - Tab bar above the canvas: add / remove / rename / reorder floors.
@@ -179,7 +199,7 @@ templates, appearance, and auto-save settings.
 ```
 core/   project (data model) · history (undo/redo) · asset_manager (internal
         store) · exporter (PNG/PDF) · bundle (portable RPG Map Packs) ·
-        render (shared piece drawing) · generator (procedural maps, settings + BFS validation)
+        render (shared piece drawing) · generator (tile layouts + geomorph assembly)
 ui/     main_window · canvas · library · properties · layers_panel · zones_panel ·
         menu_overlay (ESC project menu) · generator_dialog · theme (Dark/Light/Alien) ·
         export_dialog

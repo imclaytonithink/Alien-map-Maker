@@ -11,8 +11,24 @@ test_output.png
 testmap_01_Level_1.png
 testmap_02_Level_2.png
 
-# Sandbox/upload snapshots: huge binaries, never source.
+# Build/cache/test artifacts.
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Sandbox/upload snapshots and generated portable packs are never source.
 *.zip
+*.rpgpack
+
+# Generated screenshots and demo render; use demo_render.py to recreate the latter.
+/demo_map.png
+/shot_final_*.png
 
 # Imported asset-library contents stay local. Checked-in sample files remain
 # tracked, but newly imported raster files and ZIP-import markers are ignored.

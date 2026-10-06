@@ -8,7 +8,8 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, pyqtSignal
 from PyQt6.QtGui import (
-    QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont, QPolygonF,
+    QImageReader, QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont,
+    QPolygonF,
 )
 from PyQt6.QtWidgets import QWidget, QFrame, QPushButton, QHBoxLayout
 
@@ -46,7 +47,7 @@ class CanvasView(QWidget):
         self.zoom = 1.0
         self.pan_x = 0.0
         self.pan_y = 0.0
-        self._cache: dict = {}
+        self._cache: dict = exporter.PixmapCache()
 
         self.selection: set[str] = set()
         self.selected_zone_id: str | None = None
@@ -617,8 +618,9 @@ class CanvasView(QWidget):
         piece = selected[0]
         if piece.is_text or piece.is_patch or piece.is_connector or piece.is_scale_bar:
             return False
-        pm = QPixmap(path)
-        if pm.isNull():
+        reader = QImageReader(path)
+        size = reader.size()
+        if not size.isValid():
             return False
         from core.project import embed_png
         center_x, center_y = piece.center
@@ -626,7 +628,7 @@ class CanvasView(QWidget):
         piece.asset_path = ""
         piece.embedded = embed_png(path)
         piece.name = os.path.basename(path)
-        piece.w, piece.h = float(pm.width()), float(pm.height())
+        piece.w, piece.h = float(size.width()), float(size.height())
         piece.crop_rect = [0.0, 0.0, 1.0, 1.0]
         piece.x = center_x - piece.w * piece.scale / 2.0
         piece.y = center_y - piece.h * piece.scale / 2.0
@@ -638,8 +640,8 @@ class CanvasView(QWidget):
         return True
 
     # ------------------------------------------------------------------
-    def pixmap(self, piece: Piece) -> QPixmap:
-        return exporter.piece_pixmap(piece, self.project, self._cache)
+    def pixmap(self, piece: Piece, target_size=None) -> QPixmap:
+        return exporter.piece_pixmap(piece, self.project, self._cache, target_size)
 
     # ------------------------------------------------------------------
     def world_to_screen(self, wx, wy):
@@ -732,14 +734,18 @@ class CanvasView(QWidget):
     def add_asset(self, store_rel_path: str, world_x, world_y) -> Optional[Piece]:
         if not self.level:
             return None
-        pm = self.pixmap(Piece(asset_path=store_rel_path)) if store_rel_path else QPixmap()
-        # resolve size
-        if store_rel_path:
-            probe = Piece(asset_path=store_rel_path)
-            pm = self.pixmap(probe)
-        w = pm.width() if not pm.isNull() else 64
-        h = pm.height() if not pm.isNull() else 64
         asset = self.library.get(store_rel_path) if self.library else None
+        if asset and asset.width and asset.height:
+            w, h = asset.width, asset.height
+        else:
+            reader = QImageReader(self.project.resolve_asset(store_rel_path))
+            size = reader.size()
+            if size.isValid():
+                w, h = size.width(), size.height()
+            else:
+                pm = self.pixmap(Piece(asset_path=store_rel_path), (2048, 2048))
+                w = pm.width() if not pm.isNull() else 64
+                h = pm.height() if not pm.isNull() else 64
         is_overlay = bool(asset and asset.is_overlay)
         name = asset.name if asset else store_rel_path.split("/")[-1]
         p = Piece(asset_path=store_rel_path, name=name, w=w, h=h,
@@ -756,10 +762,8 @@ class CanvasView(QWidget):
         return p
 
     def add_embedded(self, b64: str, world_x, world_y, name="Custom") -> Piece:
-        pm = QPixmap()
-        pm.loadFromData(exporter.decode_embed(b64))
-        w = pm.width() or 64
-        h = pm.height() or 64
+        size = exporter.embedded_size(b64)
+        w, h = size if size else (64, 64)
         p = Piece(embedded=b64, name=name, w=w, h=h, snap=False)
         p.x = world_x - w / 2.0
         p.y = world_y - h / 2.0
@@ -992,7 +996,9 @@ class CanvasView(QWidget):
         painter.setOpacity(prev)
 
     def _draw_piece(self, painter, p: Piece, opacity: float):
-        pm = self.pixmap(p)
+        target_size = (max(1, round(p.w * p.scale * self.zoom)),
+                       max(1, round(p.h * p.scale * self.zoom)))
+        pm = self.pixmap(p, target_size)
         cx, cy = p.center
         scx, scy = self.world_to_screen(cx, cy)
         lyr = self.level.layer_by_id(p.layer)

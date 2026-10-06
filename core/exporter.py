@@ -4,10 +4,12 @@ from __future__ import annotations
 import math
 import os
 import re
-from typing import Optional
+from collections import OrderedDict
 
-from PyQt6.QtCore import QPointF, Qt, QRectF, QSizeF
-from PyQt6.QtGui import QImage, QPainter, QPixmap, QColor, QPen, QPdfWriter, QPageSize
+from PyQt6.QtCore import (QByteArray, QBuffer, QIODevice, QPointF, Qt, QRectF,
+                          QSize, QSizeF)
+from PyQt6.QtGui import (QImage, QImageReader, QPainter, QPixmap, QColor, QPen,
+                         QPdfWriter, QPageSize)
 from PyQt6.QtWidgets import QApplication
 
 from core.project import Level, Project, Piece, decode_embed
@@ -19,22 +21,125 @@ def ensure_app():
         QApplication([])
 
 
-def piece_pixmap(piece: Piece, project: Project, cache: dict) -> QPixmap:
+def embedded_size(encoded: str) -> tuple[int, int] | None:
+    """Read embedded-image dimensions without decoding its full pixel array."""
+    try:
+        buffer = QBuffer()
+        buffer.setData(QByteArray(decode_embed(encoded)))
+        if not buffer.open(QIODevice.OpenModeFlag.ReadOnly):
+            return None
+        reader = QImageReader(buffer)
+        size = reader.size()
+        buffer.close()
+        return (size.width(), size.height()) if size.isValid() else None
+    except (TypeError, ValueError):
+        return None
+
+
+class PixmapCache(OrderedDict):
+    """Small LRU for decoded/scaled map images, bounded by bytes and entries."""
+
+    def __init__(self, max_bytes=256 * 1024 * 1024, max_entries=64):
+        super().__init__()
+        self.max_bytes = int(max_bytes)
+        self.max_entries = int(max_entries)
+
+    @staticmethod
+    def _bytes(pixmap):
+        return max(0, pixmap.width()) * max(0, pixmap.height()) * 4
+
+    def remember(self, key, pixmap):
+        size = self._bytes(pixmap)
+        if size <= 0 or size > self.max_bytes:
+            return
+        if key in self:
+            del self[key]
+        self[key] = pixmap
+        while self and (len(self) > self.max_entries or
+                        sum(self._bytes(item) for item in self.values()) > self.max_bytes):
+            self.popitem(last=False)
+
+    def get(self, key, default=None):
+        value = super().get(key, default)
+        if value is not default and key in self:
+            self.move_to_end(key)
+        return value
+
+
+def _scaled_pixmap_from_reader(reader: QImageReader, target_size) -> QPixmap:
+    source = reader.size()
+    if not source.isValid() or source.width() <= 0 or source.height() <= 0:
+        return QPixmap()
+    if target_size is None:
+        max_w = max_h = 2048
+    else:
+        max_w = max(1, int(target_size[0]))
+        max_h = max(1, int(target_size[1]))
+    factor = min(1.0, max_w / source.width(), max_h / source.height())
+    if factor < 0.999:
+        reader.setScaledSize(QSize(max(1, round(source.width() * factor)),
+                                   max(1, round(source.height() * factor))))
+    image = reader.read()
+    return QPixmap.fromImage(image) if not image.isNull() else QPixmap()
+
+
+def _cache_remember(cache: dict, key, pixmap: QPixmap):
+    if isinstance(cache, PixmapCache):
+        cache.remember(key, pixmap)
+        return
+    size = max(0, pixmap.width()) * max(0, pixmap.height()) * 4
+    if size <= 0 or size > 256 * 1024 * 1024:
+        return
+    cache[key] = pixmap
+    while cache and (len(cache) > 64 or sum(
+            max(0, value.width()) * max(0, value.height()) * 4
+            for value in cache.values() if isinstance(value, QPixmap)) > 256 * 1024 * 1024):
+        oldest = next(iter(cache))
+        if oldest == key and len(cache) == 1:
+            break
+        cache.pop(oldest, None)
+
+
+def piece_pixmap(piece: Piece, project: Project, cache: dict,
+                 target_size=None) -> QPixmap:
+    """Read a source image only as large as its current display/export target."""
+    requested_size = ((2048, 2048) if target_size is None else
+                      (max(1, int(target_size[0])), max(1, int(target_size[1]))))
     if piece.embedded:
-        key = "emb:" + piece.id
-        pm = cache.get(key)
-        if pm is None:
-            pm = QPixmap()
-            pm.loadFromData(decode_embed(piece.embedded))
-            cache[key] = pm
-        return pm
-    key = piece.asset_path
+        source_key = "emb:" + piece.id
+        embedded = True
+        source = None
+    else:
+        source_key = piece.asset_path
+        embedded = False
+        source = project.resolve_asset(piece.asset_path) if piece.asset_path else ""
+    key = (source_key, requested_size)
     pm = cache.get(key)
-    if pm is None:
+    if pm is not None:
+        # Preserve LRU behavior for ordinary dictionaries supplied by callers.
+        if not isinstance(cache, PixmapCache) and key in cache:
+            cache[key] = cache.pop(key)
+        return pm
+
+    if embedded:
+        source = decode_embed(piece.embedded)
+    if not source:
         pm = QPixmap()
-        if piece.asset_path:
-            pm.load(project.resolve_asset(piece.asset_path))
-        cache[key] = pm
+    elif embedded:
+        buffer = QBuffer()
+        buffer.setData(QByteArray(source))
+        if buffer.open(QIODevice.OpenModeFlag.ReadOnly):
+            reader = QImageReader(buffer)
+            reader.setAutoTransform(True)
+            pm = _scaled_pixmap_from_reader(reader, requested_size)
+            buffer.close()
+        else:
+            pm = QPixmap()
+    else:
+        reader = QImageReader(source)
+        reader.setAutoTransform(True)
+        pm = _scaled_pixmap_from_reader(reader, requested_size)
+    _cache_remember(cache, key, pm)
     return pm
 
 
@@ -84,11 +189,13 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
         img.fill(QColor(level.background))
     painter = QPainter(img)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    cache: dict = {}
+    cache: dict = PixmapCache()
     for p in level.paint_order():
         lyr = level.layer_by_id(p.layer)
         lop = lyr.opacity if lyr else 1.0
-        pm = piece_pixmap(p, project, cache)
+        target_size = (max(1, round(p.w * p.scale * scale)),
+                       max(1, round(p.h * p.scale * scale)))
+        pm = piece_pixmap(p, project, cache, target_size)
         # Piece.x/y is the visual top-left; center accounts for p.scale.
         cx = (p.x + p.w * p.scale / 2.0) * scale
         cy = (p.y + p.h * p.scale / 2.0) * scale
@@ -133,11 +240,13 @@ def sample_level_color(project: Project, level: Level, world_x: float,
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.translate(-x, -y)
-    cache = cache if cache is not None else {}
+    cache = cache if cache is not None else PixmapCache()
     for piece in level.paint_order():
         layer = level.layer_by_id(piece.layer)
         layer_opacity = layer.opacity if layer else 1.0
-        pixmap = piece_pixmap(piece, project, cache)
+        target_size = (max(1, round(piece.w * piece.scale)),
+                       max(1, round(piece.h * piece.scale)))
+        pixmap = piece_pixmap(piece, project, cache, target_size)
         painter.save()
         painter.translate(piece.center[0], piece.center[1])
         painter.rotate(piece.rotation)
