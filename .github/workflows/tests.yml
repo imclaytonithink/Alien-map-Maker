@@ -124,7 +124,7 @@ jobs:
                           basename = name.rsplit("/", 1)[-1]
                           output_name = (basename if bundle_kind == "full"
                                          else "large-" + basename)
-                          selected_names[name] = output_name
+                          selected_names[basename] = output_name
                           output.writestr(output_name, source.read(name))
                           selected_count += 1
 
