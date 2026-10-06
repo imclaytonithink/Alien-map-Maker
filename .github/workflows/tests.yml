@@ -53,3 +53,12 @@ jobs:
         run: >-
           python test_pack_integration.py
           --packs-dir "$RUNNER_TEMP/sceneboard-packs"
+          --taxonomy-report "$RUNNER_TEMP/asset-taxonomy-report.md"
+      - name: Upload the real-pack taxonomy audit
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-pack-taxonomy-audit
+          path: ${{ runner.temp }}/asset-taxonomy-report.md
+          if-no-files-found: error
+          retention-days: 7

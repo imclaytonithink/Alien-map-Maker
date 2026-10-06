@@ -7,11 +7,14 @@ exercise import, classification, pairing, and both applicable generation paths.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import os
 import tempfile
 import traceback
+import zipfile
 
 from core.asset_manager import AssetLibrary
+from core.asset_taxonomy import SMART_CATEGORY_TREE, classify_asset_categories
 from core.generator import (classify_assets, classify_geomorph_assets, generate,
                             generate_geomorphs)
 
@@ -48,10 +51,77 @@ def _in_archive(assets, archive_path: str):
     return [asset for asset in assets if asset.path.startswith(prefix)]
 
 
+def _write_taxonomy_report(path, archives, pack_assets, tags):
+    """Write a compact audit of real pack paths and their smart categories."""
+    lines = [
+        "# Real RPG-Mobius asset inventory and taxonomy",
+        "",
+        "Counts below are multi-label: one image may appear in several smart "
+        "categories, but remains stored once at its original path.",
+        "",
+    ]
+    for kind, archive_path in archives.items():
+        archive_name = os.path.basename(archive_path)
+        prefix = os.path.splitext(archive_name)[0] + "/"
+        assets = pack_assets[kind]
+        extensions = Counter()
+        top_folders = Counter()
+        with zipfile.ZipFile(archive_path) as archive:
+            file_infos = [info for info in archive.infolist() if not info.is_dir()]
+            for info in file_infos:
+                member = info.filename.replace("\\", "/").strip("/")
+                extension = os.path.splitext(member)[1].casefold() or "[none]"
+                extensions[extension] += 1
+                parts = member.split("/")
+                top_folders[parts[0] if len(parts) > 1 else "[root]"] += 1
+
+        lines.extend([
+            f"## {kind.replace('_', ' ').title()}",
+            "",
+            f"- ZIP entries: {len(file_infos):,} ({len(assets):,} supported images imported)",
+            "- Original file types: " + ", ".join(
+                f"{extension}: {count:,}"
+                for extension, count in sorted(extensions.items())),
+            "- Internal top-level folders: " + ", ".join(
+                f"`{folder}` ({count:,})"
+                for folder, count in sorted(top_folders.items(),
+                                            key=lambda pair: pair[0].casefold())),
+            "",
+            "### Smart-category counts and real filename examples",
+            "",
+        ])
+        for group_name, categories in SMART_CATEGORY_TREE:
+            lines.append(f"#### {group_name}")
+            lines.append("")
+            for category_id, label in categories:
+                matching = [asset for asset in assets
+                            if category_id in tags.get(asset.path, set())]
+                lines.append(f"- **{label}:** {len(matching):,}")
+                for asset in sorted(matching,
+                                    key=lambda item: item.path.casefold())[:4]:
+                    relative = asset.path[len(prefix):]
+                    lines.append(f"  - `{relative}`")
+            lines.append("")
+
+        unclassified = [asset for asset in assets
+                        if "other" in tags.get(asset.path, set())]
+        lines.append(f"Unclassified examples ({len(unclassified):,} total):")
+        for asset in sorted(unclassified,
+                            key=lambda item: item.path.casefold())[:8]:
+            lines.append(f"- `{asset.path[len(prefix):]}`")
+        lines.append("")
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as output:
+        output.write("\n".join(lines))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packs-dir", required=True,
                         help="directory containing the downloaded ZIP archives")
+    parser.add_argument("--taxonomy-report", default="",
+                        help="optional path for a real-pack category audit")
     args = parser.parse_args()
     archives = find_pack_archives(args.packs_dir)
 
@@ -73,6 +143,11 @@ def main():
             assert len(assets) == import_counts[kind], (
                 f"{kind}: imported {import_counts[kind]} images but scanned "
                 f"{len(assets)} under its archive folder.")
+
+        taxonomy_tags = classify_asset_categories(library.assets)
+        if args.taxonomy_report:
+            _write_taxonomy_report(
+                args.taxonomy_report, archives, pack_assets, taxonomy_tags)
 
         geomorph_pack = classify_geomorph_assets(pack_assets["geomorphs"])
         custom_pack = classify_geomorph_assets(pack_assets["custom_tiles"])
