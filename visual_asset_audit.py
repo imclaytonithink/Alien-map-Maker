@@ -142,8 +142,23 @@ def _render_page(archive: zipfile.ZipFile, kind: str, page_number: int,
     return sheet
 
 
-def build_bundle(packs_dir: str | os.PathLike[str], output_path: str | os.PathLike[str]) -> tuple[int, int]:
-    """Create contact sheets for every supported image in each source ZIP."""
+def _pixel_count(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> int:
+    """Read image dimensions from headers only; do not decode image pixels."""
+    try:
+        with archive.open(info, "r") as stream:
+            with Image.open(stream) as image:
+                return image.width * image.height
+    except Exception:
+        return 0
+
+
+def build_bundle(packs_dir: str | os.PathLike[str], output_path: str | os.PathLike[str],
+                 *, large_images_only: bool = False) -> tuple[int, int]:
+    """Create contact sheets for every supported image, or just unusually large ones."""
+    if large_images_only:
+        # The release packs are trusted inputs; permit thumbnailing individual
+        # PNGs up to 500 MP after the caller has explicitly selected this mode.
+        Image.MAX_IMAGE_PIXELS = 500_000_000
     archives = find_pack_archives(packs_dir)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -158,6 +173,9 @@ def build_bundle(packs_dir: str | os.PathLike[str], output_path: str | os.PathLi
         for kind, archive_path in archives.items():
             with zipfile.ZipFile(archive_path) as archive:
                 members = _image_members(archive)
+                if large_images_only:
+                    members = [info for info in members
+                               if _pixel_count(archive, info) > 178_956_970]
                 page_total = (len(members) + PAGE_SIZE - 1) // PAGE_SIZE
                 for offset in range(0, len(members), PAGE_SIZE):
                     page_number = offset // PAGE_SIZE + 1
@@ -232,6 +250,8 @@ def main() -> None:
                         help="path for the thumbnail-only ZIP bundle")
     parser.add_argument("--publish-commit", default="",
                         help="optionally publish the bundle in comments on this commit")
+    parser.add_argument("--large-images-only", action="store_true",
+                        help="render only images above Pillow's default pixel safety limit")
     args = parser.parse_args()
 
     repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -239,7 +259,9 @@ def main() -> None:
     if args.publish_commit and (not repository or not token):
         parser.error("--publish-commit requires GITHUB_REPOSITORY and GH_TOKEN.")
     try:
-        image_count, page_count = build_bundle(args.packs_dir, args.output)
+        image_count, page_count = build_bundle(
+            args.packs_dir, args.output,
+            large_images_only=args.large_images_only)
         bundle_size = Path(args.output).stat().st_size
         print(f"Built {page_count} contact sheets for {image_count:,} images "
               f"({bundle_size:,} byte bundle) at {args.output}.")
