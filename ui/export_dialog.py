@@ -1,26 +1,35 @@
-"""Export-to-PNG/PDF dialog with presets, transparent option, and separate
-export-grid settings."""
+"""Shared PNG/PDF export dialog with matching grid and sizing controls."""
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QRadioButton, QButtonGroup, QSpinBox,
-    QDoubleSpinBox, QCheckBox, QPushButton, QFileDialog, QColorDialog,
-    QHBoxLayout, QLabel, QMessageBox, QProgressBar, QComboBox, QSlider,
-)
 from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QFormLayout, QRadioButton, QButtonGroup,
+    QCheckBox, QPushButton, QFileDialog, QHBoxLayout,
+    QLabel, QMessageBox, QComboBox, QSlider,
+)
 
 from core import exporter
+from ui.color_picker import choose_color
 
 
 class ExportDialog(QDialog):
-    def __init__(self, project, canvas, parent=None):
+    def __init__(self, project, canvas, parent=None, file_format="png",
+                 default_preset=None):
         super().__init__(parent)
         self.project = project
         self.canvas = canvas
-        self.setWindowTitle("Export")
-        self.setMinimumWidth(400)
+        self.file_format = "pdf" if str(file_format).lower() == "pdf" else "png"
+        self.output_path = ""
+        self.setWindowTitle(f"Export {self.file_format.upper()}")
+        self.setMinimumWidth(440)
         self._build()
+        if default_preset:
+            index = self.cmb_preset.findText(default_preset)
+            if index >= 0:
+                self.cmb_preset.setCurrentIndex(index)
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -28,18 +37,30 @@ class ExportDialog(QDialog):
 
         self.scope = QButtonGroup(self)
         self.rb_current = QRadioButton("Current level only")
-        self.rb_all = QRadioButton("All levels (one PNG each)")
+        self.rb_all = QRadioButton(
+            "All levels (one PDF page each)" if self.file_format == "pdf"
+            else "All levels (one PNG each)")
         self.rb_current.setChecked(True)
         self.scope.addButton(self.rb_current, 0)
         self.scope.addButton(self.rb_all, 1)
-        scope_row = QHBoxLayout(); scope_row.addWidget(self.rb_current); scope_row.addWidget(self.rb_all)
+        scope_row = QHBoxLayout()
+        scope_row.addWidget(self.rb_current)
+        scope_row.addWidget(self.rb_all)
         form.addRow("Export", scope_row)
 
         self.cmb_preset = QComboBox()
         self.cmb_preset.addItems(list(exporter.PRESETS.keys()))
-        form.addRow("Size preset", self.cmb_preset)
+        self.cmb_preset.setToolTip(
+            "Tabletop Simulator presets scale the longest map edge to the "
+            "selected pixel size while preserving the map's aspect ratio. "
+            "Import the resulting PNG as a Custom Board in Tabletop Simulator.")
+        self.cmb_preset.currentTextChanged.connect(self._preset_changed)
+        form.addRow("Image / page size", self.cmb_preset)
 
-        self.chk_trans = QCheckBox("Transparent background (PNG)")
+        self.chk_trans = QCheckBox("Transparent background")
+        self.chk_trans.setToolTip(
+            "Leave empty map areas transparent instead of using the level background. "
+            "For PDF, transparent areas may appear white in some viewers.")
         form.addRow(self.chk_trans)
 
         self.chk_grid = QCheckBox("Include grid")
@@ -47,75 +68,154 @@ class ExportDialog(QDialog):
         self.chk_grid.toggled.connect(self._grid_toggled)
         form.addRow(self.chk_grid)
 
-        self.btn_color = QPushButton("Grid color")
+        self.btn_color = QPushButton("Choose grid color…")
         self.btn_color.clicked.connect(self._pick)
-        form.addRow(self.btn_color)
+        self._update_color_button()
+        form.addRow("Grid color", self.btn_color)
+
         self.sl_op = QSlider(Qt.Orientation.Horizontal)
         self.sl_op.setRange(0, 100)
         self.sl_op.setValue(int(self.project.export_grid_opacity * 100))
         form.addRow("Grid opacity", self.sl_op)
         self._grid_toggled(self.chk_grid.isChecked())
 
-        self.le_path = QLabel("")
+        self.chk_node_borders = QCheckBox("Include node outlines")
+        self.chk_node_borders.setChecked(self.project.export_node_borders)
+        form.addRow(self.chk_node_borders)
+        self.chk_zones = QCheckBox("Include gameplay zones")
+        self.chk_zones.setChecked(self.project.export_zones)
+        form.addRow(self.chk_zones)
+
+        self.le_path = QLabel("No destination selected")
+        self.le_path.setWordWrap(True)
         self.btn_path = QPushButton("Choose…")
         self.btn_path.clicked.connect(self._choose)
-        path_row = QHBoxLayout(); path_row.addWidget(self.le_path, 1); path_row.addWidget(self.btn_path)
+        path_row = QHBoxLayout()
+        path_row.addWidget(self.le_path, 1)
+        path_row.addWidget(self.btn_path)
         form.addRow("Output", path_row)
 
         layout.addLayout(form)
         self.status = QLabel("")
         layout.addWidget(self.status)
         btns = QHBoxLayout()
-        b_cancel = QPushButton("Cancel"); b_cancel.clicked.connect(self.reject)
-        b_ok = QPushButton("Export"); b_ok.clicked.connect(self._export)
-        btns.addStretch(1); btns.addWidget(b_cancel); btns.addWidget(b_ok)
+        b_cancel = QPushButton("Cancel")
+        b_cancel.clicked.connect(self.reject)
+        b_ok = QPushButton("Export")
+        b_ok.clicked.connect(self._export)
+        btns.addStretch(1)
+        btns.addWidget(b_cancel)
+        btns.addWidget(b_ok)
         layout.addLayout(btns)
+
+    def _preset_changed(self, text):
+        is_tts = text.startswith("Tabletop Sim")
+        if is_tts and self.chk_trans.isChecked():
+            self.chk_trans.setChecked(False)
+        self.chk_trans.setEnabled(not is_tts)
+        if is_tts:
+            self.chk_trans.setToolTip(
+                "Tabletop Simulator board export uses an opaque RGB PNG; "
+                "the map's level background is included.")
+            self.chk_grid.setToolTip(
+                "Tabletop Simulator Custom Boards have an in-game grid. "
+                "Uncheck this to use that grid instead of baking grid lines into the PNG.")
+        else:
+            self.chk_trans.setToolTip(
+                "Leave empty map areas transparent instead of using the level background. "
+                "For PDF, transparent areas may appear white in some viewers.")
+            self.chk_grid.setToolTip("Show or hide the grid in the exported image.")
 
     def _grid_toggled(self, on):
         self.btn_color.setEnabled(on)
         self.sl_op.setEnabled(on)
 
+    def _update_color_button(self):
+        color = QColor(self.project.export_grid_color)
+        if color.isValid():
+            self.btn_color.setStyleSheet(
+                f"background-color:{color.name()}; color:#ffffff; "
+                "font-weight:bold;")
+            self.btn_color.setText(f"{color.name().upper()} — Choose…")
+
     def _pick(self):
-        c = QColorDialog.getColor(QColor(self.project.export_grid_color), self)
-        if c.isValid():
-            self.project.export_grid_color = c.name()
-            self.btn_color.setStyleSheet(f"background:{c.name()}")
+        color = choose_color(QColor(self.project.export_grid_color), self,
+                             self.canvas, "Choose export grid color")
+        if color.isValid():
+            self.project.export_grid_color = color.name()
+            self._update_color_button()
 
     def _choose(self):
-        if self.rb_all.isChecked():
-            d = QFileDialog.getExistingDirectory(self, "Output folder")
-            if d:
-                self.le_path.setText(d)
+        if self.file_format == "png" and self.rb_all.isChecked():
+            path = QFileDialog.getExistingDirectory(self, "Choose output folder")
         else:
-            d, _ = QFileDialog.getSaveFileName(self, "Save PNG", "map.png", "PNG (*.png)")
-            if d:
-                self.le_path.setText(d)
+            if self.file_format == "pdf":
+                title, default, file_filter = "Save PDF", "map.pdf", "PDF (*.pdf)"
+            else:
+                title, default, file_filter = "Save PNG", "map.png", "PNG (*.png)"
+            path, _ = QFileDialog.getSaveFileName(self, title, default, file_filter)
+        if path:
+            self.output_path = path
+            self.le_path.setText(path)
 
     def _export(self):
-        path = self.le_path.text().strip()
+        path = self.output_path.strip()
         if not path:
             QMessageBox.warning(self, "Export", "Choose an output destination first.")
             return
-        preset = self.cmb_preset.currentText()
-        scale = exporter.preset_scale(self.project, preset)
+        if self.file_format == "png" and self.rb_all.isChecked() and not os.path.isdir(path):
+            QMessageBox.warning(self, "Export", "Choose an existing output folder.")
+            return
+        if self.file_format == "pdf" and not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        if self.file_format == "png" and not self.rb_all.isChecked() and not path.lower().endswith(".png"):
+            path += ".png"
+
+        scale = exporter.preset_scale(self.project, self.cmb_preset.currentText())
         transparent = self.chk_trans.isChecked()
         include_grid = self.chk_grid.isChecked()
+        grid_opacity = self.sl_op.value() / 100.0
+        grid_color = self.project.export_grid_color
+        include_node_borders = self.chk_node_borders.isChecked()
+        include_zones = self.chk_zones.isChecked()
         self.project.export_grid = include_grid
-        self.project.export_grid_opacity = self.sl_op.value() / 100.0
+        self.project.export_grid_opacity = grid_opacity
+        self.project.export_node_borders = include_node_borders
+        self.project.export_zones = include_zones
+        if self.parent() and hasattr(self.parent(), "_mark_dirty"):
+            self.parent()._mark_dirty()
+
         try:
-            if self.rb_all.isChecked():
-                files = exporter.export_all_levels(self.project, path, include_grid,
-                                                  scale, "map", transparent)
-                self.status.setText(f"Exported {len(files)} file(s) to:\n{path}")
+            if self.file_format == "pdf":
+                levels = ([self.canvas.level] if self.rb_current.isChecked()
+                          else list(self.project.levels))
+                if not levels or levels[0] is None:
+                    QMessageBox.warning(self, "Export", "No level selected.")
+                    return
+                exporter.export_pdf(
+                    self.project, path, include_grid, scale, levels=levels,
+                    transparent=transparent, grid_color=grid_color,
+                    grid_opacity=grid_opacity,
+                    include_node_borders=include_node_borders,
+                    include_zones=include_zones)
+                self.status.setText(f"Saved PDF:\n{path}")
+            elif self.rb_all.isChecked():
+                files = exporter.export_all_levels(
+                    self.project, path, include_grid, scale, "map", transparent,
+                    grid_color, grid_opacity, include_node_borders,
+                    include_zones)
+                self.status.setText(f"Exported {len(files)} PNG file(s) to:\n{path}")
             else:
                 level = self.canvas.level
                 if level is None:
                     QMessageBox.warning(self, "Export", "No level selected.")
                     return
-                exporter.export_level_to_file(self.project, level, path,
-                                             include_grid, scale, transparent)
-                self.status.setText(f"Saved:\n{path}")
+                exporter.export_level_to_file(
+                    self.project, level, path, include_grid, scale, transparent,
+                    grid_color, grid_opacity, include_node_borders,
+                    include_zones)
+                self.status.setText(f"Saved PNG:\n{path}")
             QMessageBox.information(self, "Export", "Export complete.")
             self.accept()
-        except Exception as e:
-            QMessageBox.critical(self, "Export failed", str(e))
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))

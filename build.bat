@@ -1,5 +1,5 @@
 @echo off
-REM === Build a standalone .exe for Sci-Fi Battlemap Builder (run on Windows) ===
+REM === Build a standalone .exe for SceneBoard (run on Windows) ===
 REM 1) Install Python 3.10+ from python.org, then open a terminal in this folder.
 REM 2) Run this file (double-click) OR paste the commands below.
 
@@ -10,8 +10,8 @@ pip install -r requirements.txt
 pip install pyinstaller
 
 REM Build a single-file executable (no console window).
-pyinstaller --noconsole --onefile --name "BattlemapBuilder" main.py
+pyinstaller --noconsole --onefile --name "SceneBoard" main.py
 
 echo.
-echo Done. Your executable is in the dist\ folder: dist\BattlemapBuilder.exe
+echo Done. Your executable is in the dist\ folder: dist\SceneBoard.exe
 pause

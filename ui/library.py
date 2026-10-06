@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QMimeData, QSize, pyqtSignal, QTimer, QEvent
+from PyQt6.QtCore import Qt, QMimeData, QSize, pyqtSignal, QTimer, QThread
 from PyQt6.QtGui import QDrag, QPixmap, QIcon, QMouseEvent, QCursor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox,
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 
 from core.asset_manager import AssetLibrary
 from core.project import Project
+from ui.image_utils import load_scaled_pixmap
 
 
 ASSET_MIME = "application/x-mapbuilder-asset"
@@ -47,7 +48,29 @@ class PreviewDialog(QDialog):
                                      Qt.TransformationMode.SmoothTransformation))
 
 
+class ZipImportWorker(QThread):
+    """Import large archives without blocking the editor's event loop."""
+    completed = pyqtSignal(object, object)  # reports, (archive, error) pairs
+
+    def __init__(self, archive_paths, asset_store: str, parent=None):
+        super().__init__(parent)
+        self.archive_paths = list(archive_paths)
+        self.asset_store = asset_store
+
+    def run(self):
+        library = AssetLibrary(self.asset_store)
+        reports, errors = [], []
+        for path in self.archive_paths:
+            try:
+                reports.append(library.import_zip(path, rescan=False))
+            except Exception as exc:
+                errors.append((os.path.basename(path), str(exc)))
+        self.completed.emit(reports, errors)
+
+
 class AssetList(QListWidget):
+    viewportResized = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setIconSize(QSize(56, 56))
@@ -84,6 +107,10 @@ class AssetList(QListWidget):
         self._hide_popout()
         super().leaveEvent(e)
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.viewportResized.emit()
+
     def _on_entered(self, item):
         self._pop_timer.stop()
         self._hide_popout()
@@ -94,13 +121,13 @@ class AssetList(QListWidget):
         item = self.itemAt(self.mapFromGlobal(QCursor.pos()))
         if not item:
             return
-        pm = item.data(Qt.ItemDataRole.UserRole + 1)
-        if not pm or pm.isNull():
+        pm = item.icon().pixmap(QSize(160, 160))
+        if pm.isNull():
             return
         if self._pop is None:
             self._pop = QLabel(self.window())
+            self._pop.setObjectName("AssetPreviewPopout")
             self._pop.setWindowFlags(Qt.WindowType.ToolTip)
-            self._pop.setStyleSheet("border:1px solid #2e6fdf; background:#0d1219;")
         self._pop.setPixmap(pm.scaled(160, 160, Qt.AspectRatioMode.KeepAspectRatio,
                                       Qt.TransformationMode.SmoothTransformation))
         self._pop.adjustSize()
@@ -116,11 +143,9 @@ class AssetList(QListWidget):
         mime.setData(ASSET_MIME, path.encode("utf-8"))
         drag = QDrag(self)
         drag.setMimeData(mime)
-        pm = QPixmap()
-        data = self._press_item.data(Qt.ItemDataRole.UserRole + 1)
-        if data:
-            drag.setPixmap(data.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio,
-                                       Qt.TransformationMode.SmoothTransformation))
+        pm = self._press_item.icon().pixmap(QSize(64, 64))
+        if not pm.isNull():
+            drag.setPixmap(pm)
         drag.exec(Qt.DropAction.CopyAction)
         self._press_item = None
 
@@ -135,6 +160,8 @@ class LibraryPanel(QWidget):
         self.project: Optional[Project] = None
         self.add_at_center_cb = None
         self._view = ("all", None)
+        self._zip_worker = None
+        self._zip_import_target_root = ""
         self._build_ui()
 
     def _build_ui(self):
@@ -147,12 +174,18 @@ class LibraryPanel(QWidget):
         self.search.setPlaceholderText("Search name / size (40x120)")
         self.search.textChanged.connect(self._on_search)
         top.addWidget(self.search, 1)
-        b_imp_f = QPushButton("Import Folder")
-        b_imp_f.clicked.connect(self._import_folder)
-        b_imp_p = QPushButton("Import File")
-        b_imp_p.clicked.connect(self._import_file)
-        top.addWidget(b_imp_f)
-        top.addWidget(b_imp_p)
+        self.b_imp_f = QPushButton("Import Folder")
+        self.b_imp_f.clicked.connect(self._import_folder)
+        self.b_imp_p = QPushButton("Import File")
+        self.b_imp_p.clicked.connect(self._import_file)
+        self.b_imp_zip = QPushButton("Import ZIP")
+        self.b_imp_zip.setToolTip(
+            "Import supported images from one or more ZIP archives. "
+            "Folder paths are preserved; non-image files are skipped.")
+        self.b_imp_zip.clicked.connect(self._import_zip)
+        top.addWidget(self.b_imp_f)
+        top.addWidget(self.b_imp_p)
+        top.addWidget(self.b_imp_zip)
         layout.addLayout(top)
 
         # group list with reorder
@@ -199,6 +232,13 @@ class LibraryPanel(QWidget):
             lambda it: self.assetActivated.emit(it.data(Qt.ItemDataRole.UserRole)))
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._ctx_menu)
+        self._thumb_timer = QTimer(self)
+        self._thumb_timer.setSingleShot(True)
+        self._thumb_timer.setInterval(45)
+        self._thumb_timer.timeout.connect(self._load_visible_thumbnails)
+        self.list.verticalScrollBar().valueChanged.connect(
+            lambda _value: self._schedule_visible_thumbnails())
+        self.list.viewportResized.connect(self._schedule_visible_thumbnails)
         layout.addWidget(self.list, 1)
 
         # where the internal store lives + how to get help
@@ -256,9 +296,11 @@ class LibraryPanel(QWidget):
             "INTERNAL ASSET STORE\n"
             "━━━━━━━━━━━━━━━━━━━\n"
             f"Location:\n  {path}\n\n"
-            "• 'Import Folder' / 'Import File' COPY your images into that "
-            "folder.\n"
-            "  They stay there forever — this app never depends on the "
+            "• 'Import Folder' / 'Import File' / 'Import ZIP' COPY supported "
+            "images into that folder.\n"
+            "  ZIP imports preserve subfolders, normalize Windows path "
+            "separators, and skip non-images. The archive is never changed.\n"
+            "  Imported copies stay there — this app never depends on the "
             "original files.\n"
             "• Subfolders inside the store become the groups shown in the "
             "list,\n"
@@ -369,13 +411,6 @@ class LibraryPanel(QWidget):
             assets = self.library.assets
         for a in assets:
             item = QListWidgetItem()
-            pm = QPixmap(self.library.abs_path(a.path))
-            if not pm.isNull():
-                item.setIcon(QIcon(pm.scaled(self.sl_thumb.value(),
-                                           self.sl_thumb.value(),
-                                           Qt.AspectRatioMode.KeepAspectRatio,
-                                           Qt.TransformationMode.SmoothTransformation)))
-                item.setData(Qt.ItemDataRole.UserRole + 1, pm)
             label = a.name
             if a.size:
                 label += f"\n{a.size[0]}x{a.size[1]}"
@@ -386,6 +421,32 @@ class LibraryPanel(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, a.path)
             self.list.addItem(item)
         self.count_label.setText(f"{len(assets)} asset(s)")
+        self._schedule_visible_thumbnails()
+
+    def _schedule_visible_thumbnails(self):
+        if hasattr(self, "_thumb_timer"):
+            self._thumb_timer.start()
+
+    def _load_visible_thumbnails(self):
+        """Load icons only for visible rows, keeping large libraries responsive."""
+        if not self.library.root or not self.list.count():
+            return
+        visible = self.list.viewport().rect()
+        thumb_size = self.sl_thumb.value()
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            in_view = self.list.visualItemRect(item).intersects(visible)
+            if in_view:
+                if item.icon().isNull():
+                    rel_path = item.data(Qt.ItemDataRole.UserRole)
+                    pm = load_scaled_pixmap(self.library.abs_path(rel_path), thumb_size)
+                    if not pm.isNull():
+                        item.setIcon(QIcon(pm))
+            elif not item.icon().isNull():
+                # Do not retain thousands of QPixmaps as users scroll through
+                # high-resolution asset packs. The small LRU cache avoids
+                # repeated decoding when they scroll back.
+                item.setIcon(QIcon())
 
     def _thumb_size(self, v):
         self.list.setIconSize(QSize(v, v))
@@ -403,15 +464,91 @@ class LibraryPanel(QWidget):
             self._after_import(n)
 
     def _import_file(self):
-        fn, _ = QFileDialog.getOpenFileName(self, "Import PNG",
+        fn, _ = QFileDialog.getOpenFileName(self, "Import image",
                                            os.getcwd(),
-                                           "Images (*.png *.jpg *.jpeg *.webp *.bmp)")
+                                           "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tiff)")
         if fn and self.project:
             self._ensure_store()
             self.library.root = self.project.asset_store
             self.library.scan(self.project.asset_store)
             rel = self.library.import_file(fn)
             self._after_import(1 if rel else 0)
+
+    def _import_zip(self):
+        if not self.project or (self._zip_worker and self._zip_worker.isRunning()):
+            return
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import asset ZIP archives", os.getcwd(), "ZIP archives (*.zip)")
+        if not paths:
+            return
+        self._ensure_store()
+        root = os.path.abspath(self.project.asset_store)
+        self._zip_import_target_root = root
+        self.count_label.setText(
+            f"Importing {len(paths)} ZIP archive(s)… original files are unchanged.")
+        self._set_import_buttons_enabled(False)
+        self._zip_worker = ZipImportWorker(paths, root, self)
+        self._zip_worker.completed.connect(self._zip_import_completed)
+        self._zip_worker.finished.connect(self._zip_import_finished)
+        self._zip_worker.start()
+
+    def _set_import_buttons_enabled(self, enabled: bool):
+        for button in (self.b_imp_f, self.b_imp_p, self.b_imp_zip):
+            button.setEnabled(enabled)
+
+    def _zip_import_completed(self, reports, errors):
+        target_root = self._zip_import_target_root
+        same_store = bool(self.project and target_root and
+                          os.path.normcase(os.path.abspath(self.project.asset_store)) ==
+                          os.path.normcase(target_root))
+        if same_store:
+            self.library.scan(target_root)
+            self._rebuild_groups()
+            self.refresh()
+            if any(report.imported for report in reports):
+                self.collectionsChanged.emit()
+
+        imported = sum(report.imported for report in reports)
+        existing = sum(report.already_imported for report in reports)
+        non_images = sum(report.skipped_non_image for report in reports)
+        unsafe = sum(report.skipped_unsafe for report in reports)
+        symlinks = sum(report.skipped_symlinks for report in reports)
+        corrupt = sum(report.skipped_corrupt for report in reports)
+        renamed = sum(report.renamed_duplicates for report in reports)
+        summary = [f"Imported {imported:,} image(s) from {len(reports)} archive(s)."]
+        if existing:
+            summary.append(f"{existing:,} image(s) were already imported.")
+        if non_images:
+            summary.append(f"Skipped {non_images:,} non-image file(s).")
+        if unsafe:
+            summary.append(f"Rejected {unsafe:,} unsafe archive path(s).")
+        if symlinks:
+            summary.append(f"Skipped {symlinks:,} symbolic link(s).")
+        if corrupt:
+            summary.append(f"Skipped {corrupt:,} corrupt image(s).")
+        if renamed:
+            summary.append(f"Renamed {renamed:,} duplicate path(s) to avoid overwriting.")
+        if not imported and not existing:
+            summary.append("No supported images were added.")
+        if not same_store and imported:
+            summary.append("They were copied into the project that was active when import started.")
+        if errors:
+            summary.append(f"{len(errors)} archive(s) could not be imported.")
+        self.count_label.setText(" ".join(summary))
+        if errors:
+            from PyQt6.QtWidgets import QMessageBox
+            details = "\n".join(f"• {name}: {error}" for name, error in errors)
+            QMessageBox.warning(self, "Some ZIPs could not be imported", details)
+
+    def _zip_import_finished(self):
+        self._zip_worker = None
+        self._set_import_buttons_enabled(True)
+
+    def wait_for_zip_import(self):
+        """Do not destroy a live QThread while the editor is closing."""
+        worker = self._zip_worker
+        if worker and worker.isRunning():
+            worker.wait()
 
     def _ensure_store(self):
         if not self.project.asset_store:
@@ -442,7 +579,7 @@ class LibraryPanel(QWidget):
 
     def _view_large(self, asset):
         dlg = PreviewDialog(asset, self.assetActivated.emit)
-        pm = QPixmap(self.library.abs_path(asset.path))
+        pm = load_scaled_pixmap(self.library.abs_path(asset.path), 1000)
         dlg.set_pixmap(pm)
         dlg.exec()
 
