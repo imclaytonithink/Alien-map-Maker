@@ -30,6 +30,22 @@ win.library.set_project(win.project, lib, win._add_at_center)
 paths = [a.path for a in lib.assets]
 assert paths, "no sample assets"
 
+# The library's QTreeWidget exposes both the smart taxonomy and the preserved
+# folder branch; selecting either view filters assets without changing paths.
+panel = win.library
+assert panel.group_tree.topLevelItemCount() == 3
+assert "category:other" in panel._tree_items
+assert "folder:floors" in panel._tree_items
+panel.group_tree.setCurrentItem(panel._tree_items["category:other"])
+assert panel._view == ("category", "other")
+assert panel.list.count() == sum(
+    "other" in categories for categories in panel._category_tags.values())
+panel.group_tree.setCurrentItem(panel._tree_items["folder:."])
+assert panel._view == ("folder", ".")
+assert panel.list.count() == len(lib.assets)
+panel._show_all_assets()
+panel.refresh()
+
 # place pieces
 win.canvas.add_asset(paths[0], 50, 50)
 win.canvas.add_asset(paths[1], 120, 60)

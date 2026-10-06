@@ -9,11 +9,18 @@ from PyQt6.QtGui import QDrag, QPixmap, QIcon, QMouseEvent, QCursor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox,
     QListWidget, QListWidgetItem, QLabel, QSlider, QDialog, QFileDialog,
-    QListView,
+    QListView, QTreeWidget, QTreeWidgetItem,
 )
 
 from core.asset_manager import AssetLibrary
+from core.asset_taxonomy import (
+    CATEGORY_GROUPS,
+    CATEGORY_LABELS,
+    SMART_CATEGORY_TREE,
+    classify_asset_categories,
+)
 from core.project import Project
+from ui.branding import default_asset_store_path, seed_bundled_assets
 from ui.image_utils import load_scaled_pixmap
 
 
@@ -50,6 +57,7 @@ class PreviewDialog(QDialog):
 
 class ZipImportWorker(QThread):
     """Import large archives without blocking the editor's event loop."""
+    progress = pyqtSignal(str, int, int)   # archive name, current, total
     completed = pyqtSignal(object, object)  # reports, (archive, error) pairs
 
     def __init__(self, archive_paths, asset_store: str, parent=None):
@@ -60,7 +68,9 @@ class ZipImportWorker(QThread):
     def run(self):
         library = AssetLibrary(self.asset_store)
         reports, errors = [], []
-        for path in self.archive_paths:
+        total = len(self.archive_paths)
+        for index, path in enumerate(self.archive_paths, start=1):
+            self.progress.emit(os.path.basename(path), index, total)
             try:
                 reports.append(library.import_zip(path, rescan=False))
             except Exception as exc:
@@ -160,6 +170,9 @@ class LibraryPanel(QWidget):
         self.project: Optional[Project] = None
         self.add_at_center_cb = None
         self._view = ("all", None)
+        self._category_tags = {}
+        self._tree_items = {}
+        self._folder_groups = []
         self._zip_worker = None
         self._zip_import_target_root = ""
         self._build_ui()
@@ -171,12 +184,21 @@ class LibraryPanel(QWidget):
         # search + import
         top = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search name / size (40x120)")
+        self.search.setPlaceholderText("Search filename, folder, size…")
         self.search.textChanged.connect(self._on_search)
         top.addWidget(self.search, 1)
         self.b_imp_f = QPushButton("Import Folder")
+        self.b_imp_f.setToolTip(
+            "Copy images into the internal library, keeping the selected "
+            "folder name and its subfolders as an expandable file tree. "
+            "Useful for Core / Symbols packs. Importing does not place them "
+            "on the map; drag or double-click "
+            "an asset afterward.")
         self.b_imp_f.clicked.connect(self._import_folder)
         self.b_imp_p = QPushButton("Import File")
+        self.b_imp_p.setToolTip(
+            "Copy one image into the internal library. Drag or double-click "
+            "it afterward to place it on the map.")
         self.b_imp_p.clicked.connect(self._import_file)
         self.b_imp_zip = QPushButton("Import ZIP")
         self.b_imp_zip.setToolTip(
@@ -188,16 +210,27 @@ class LibraryPanel(QWidget):
         top.addWidget(self.b_imp_zip)
         layout.addLayout(top)
 
-        # group list with reorder
+        # Hierarchical file paths and virtual smart-category views.
         g_row = QHBoxLayout()
-        self.group_list = QListWidget()
-        self.group_list.setMaximumHeight(110)
-        self.group_list.currentItemChanged.connect(self._on_group_pick)
-        g_row.addWidget(self.group_list, 1)
+        self.group_tree = QTreeWidget()
+        self.group_tree.setHeaderHidden(True)
+        self.group_tree.setMaximumHeight(230)
+        self.group_tree.setUniformRowHeights(True)
+        self.group_tree.setToolTip(
+            "Browse the preserved asset-store folder paths or use overlapping "
+            "smart categories. Categories filter files in place; they never "
+            "move or duplicate assets.")
+        self.group_tree.currentItemChanged.connect(self._on_tree_pick)
+        g_row.addWidget(self.group_tree, 1)
         g_btns = QVBoxLayout()
-        up = QPushButton("▲"); up.clicked.connect(self._group_up)
-        dn = QPushButton("▼"); dn.clicked.connect(self._group_down)
-        g_btns.addWidget(up); g_btns.addWidget(dn)
+        self.b_group_up = QPushButton("▲")
+        self.b_group_up.setToolTip("Move this folder earlier among its siblings")
+        self.b_group_up.clicked.connect(self._group_up)
+        self.b_group_down = QPushButton("▼")
+        self.b_group_down.setToolTip("Move this folder later among its siblings")
+        self.b_group_down.clicked.connect(self._group_down)
+        g_btns.addWidget(self.b_group_up)
+        g_btns.addWidget(self.b_group_down)
         g_row.addLayout(g_btns)
         layout.addLayout(g_row)
 
@@ -247,7 +280,8 @@ class LibraryPanel(QWidget):
         self.lbl_store.setToolTip(
             "Internal asset store.\n\nEverything you import is COPIED into "
             "this folder and lives there permanently — maps reference those "
-            "copies. Subfolders become groups in the list above.\n\n"
+            "copies. Subfolders remain visible in the expandable file tree; "
+            "smart categories are virtual views only.\n\n"
             "PNGs dropped straight onto the canvas are different: they are "
             "embedded inside the .bmap file itself.")
         self.lbl_store.setTextInteractionFlags(
@@ -302,10 +336,13 @@ class LibraryPanel(QWidget):
             "separators, and skip non-images. The archive is never changed.\n"
             "  Imported copies stay there — this app never depends on the "
             "original files.\n"
-            "• Subfolders inside the store become the groups shown in the "
-            "list,\n"
-            "  and tiles are auto-tagged by name (room/floor, wall, "
-            "corridor, terminal…).\n"
+            "• The Browse tree preserves every subfolder. Smart categories "
+            "are extra\n"
+            "  overlapping views (rooms, floors, doors, furniture, consoles, "
+            "hazards,\n"
+            "  symbols and more); files stay in their original paths. Images "
+            "the app\n"
+            "  cannot classify remain available under Other / Unclassified.\n"
             "• Rename files with sizes like 'wall_25x50.png' so the app can "
             "auto-size them.\n"
             "• PNGs dragged straight onto the canvas are NOT copied there — "
@@ -337,16 +374,86 @@ class LibraryPanel(QWidget):
         super().resizeEvent(e)
         self._update_store_label()
 
+    def _new_tree_item(self, parent, label: str, token: str):
+        item = QTreeWidgetItem([label])
+        if parent is None:
+            self.group_tree.addTopLevelItem(item)
+        else:
+            parent.addChild(item)
+        item.setData(0, Qt.ItemDataRole.UserRole, token)
+        self._tree_items[token] = item
+        return item
+
     def _rebuild_groups(self):
-        self.group_list.blockSignals(True)
-        self.group_list.clear()
-        order = self.project.group_order
-        groups = self.library.groups(order)
-        # ensure order stored
-        self.project.group_order = groups
-        for g in groups:
-            self.group_list.addItem(g)
-        self.group_list.blockSignals(False)
+        groups = self.library.groups(self.project.group_order if self.project else None)
+        self._folder_groups = groups
+        if self.project:
+            self.project.group_order = list(groups)
+        self._category_tags = classify_asset_categories(self.library.assets)
+
+        self.group_tree.blockSignals(True)
+        self.group_tree.clear()
+        self._tree_items = {}
+
+        total = len(self.library.assets)
+        all_item = self._new_tree_item(None, f"All assets ({total:,})", "all")
+
+        smart_root = self._new_tree_item(
+            None, f"Smart categories ({total:,})", "smart-root")
+        for group_name, categories in SMART_CATEGORY_TREE:
+            category_ids = tuple(category_id for category_id, _label in categories)
+            matched_paths = {
+                path for path, tags in self._category_tags.items()
+                if tags.intersection(category_ids)
+            }
+            group_item = self._new_tree_item(
+                smart_root, f"{group_name} ({len(matched_paths):,})",
+                f"category-group:{group_name}")
+            for category_id, label in categories:
+                count = sum(category_id in tags
+                            for tags in self._category_tags.values())
+                self._new_tree_item(
+                    group_item, f"{label} ({count:,})",
+                    f"category:{category_id}")
+            group_item.setExpanded(True)
+        smart_root.setExpanded(True)
+
+        folders_root = self._new_tree_item(
+            None, f"Folders / file paths ({total:,})", "folder-root")
+        self._folder_counts = {".": total}
+        for asset in self.library.assets:
+            folder = asset.folder.replace("\\", "/").strip("/")
+            if folder in ("", "."):
+                continue
+            parts = folder.split("/")
+            for depth in range(1, len(parts) + 1):
+                prefix = "/".join(parts[:depth])
+                self._folder_counts[prefix] = self._folder_counts.get(prefix, 0) + 1
+
+        root_item = self._new_tree_item(
+            folders_root, f"Asset store root ({total:,})", "folder:.")
+        folder_items = {".": root_item}
+        for group in groups:
+            folder = group.replace("\\", "/").strip("/")
+            if folder in ("", "."):
+                continue
+            parts = folder.split("/")
+            for depth in range(1, len(parts) + 1):
+                prefix = "/".join(parts[:depth])
+                if prefix in folder_items:
+                    continue
+                parent_path = "/".join(parts[:depth - 1]) or "."
+                parent = folder_items[parent_path]
+                count = self._folder_counts.get(prefix, 0)
+                label = f"{parts[depth - 1]} ({count:,})"
+                folder_items[prefix] = self._new_tree_item(
+                    parent, label, f"folder:{prefix}")
+
+        folders_root.setExpanded(True)
+        root_item.setExpanded(False)
+        self.group_tree.blockSignals(False)
+        self.group_tree.setCurrentItem(all_item)
+        self._update_folder_reorder_buttons()
 
     def _rebuild_collections(self):
         self.coll_combo.blockSignals(True)
@@ -358,69 +465,166 @@ class LibraryPanel(QWidget):
         self.coll_combo.blockSignals(False)
 
     # ------------------------------------------------------------------
-    def _on_search(self, text):
-        if text.strip():
-            self._view = ("search", text)
-        else:
-            self._view = ("all", None)
+    def _on_search(self, _text):
+        # Search narrows the current folder, category, or collection instead of
+        # unexpectedly discarding the user's browsing context.
         self.refresh()
 
-    def _on_group_pick(self, cur, prev):
-        if cur:
-            self._view = ("group", cur.text())
-            self.refresh()
+    def _on_tree_pick(self, cur, _prev):
+        if not cur:
+            self._update_folder_reorder_buttons()
+            return
+        token = cur.data(0, Qt.ItemDataRole.UserRole) or "all"
+        if token == "all" or token in {"smart-root", "folder-root"}:
+            self._view = ("all", None)
+        elif token.startswith("category-group:"):
+            self._view = ("category_group", token.split(":", 1)[1])
+        elif token.startswith("category:"):
+            self._view = ("category", token.split(":", 1)[1])
+        elif token.startswith("folder:"):
+            self._view = ("folder", token.split(":", 1)[1])
+        else:
+            self._view = ("all", None)
+
+        self.coll_combo.blockSignals(True)
+        self.coll_combo.setCurrentIndex(0)
+        self.coll_combo.blockSignals(False)
+        self._update_folder_reorder_buttons()
+        self.refresh()
 
     def _on_collection_pick(self, idx):
         if idx <= 0:
             self._view = ("all", None)
+            item = self._tree_items.get("all")
+            if item and self.group_tree.currentItem() is not item:
+                self.group_tree.blockSignals(True)
+                self.group_tree.setCurrentItem(item)
+                self.group_tree.blockSignals(False)
         else:
             name = self.coll_combo.itemText(idx).lstrip("★ ").strip()
             self._view = ("collection", name)
+            self.group_tree.blockSignals(True)
+            self.group_tree.setCurrentItem(None)
+            self.group_tree.blockSignals(False)
+            self._update_folder_reorder_buttons()
         self.refresh()
 
+    def _selected_folder_group(self):
+        item = self.group_tree.currentItem()
+        if not item:
+            return None
+        token = item.data(0, Qt.ItemDataRole.UserRole) or ""
+        if not token.startswith("folder:"):
+            return None
+        path = token.split(":", 1)[1]
+        if path == "." or path not in self._folder_groups:
+            return None
+        return path
+
+    def _update_folder_reorder_buttons(self):
+        path = self._selected_folder_group()
+        groups = self._folder_groups
+        if path is None:
+            self.b_group_up.setEnabled(False)
+            self.b_group_down.setEnabled(False)
+            return
+        parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        siblings = [group for group in groups
+                    if group != "." and
+                    (group.rsplit("/", 1)[0] if "/" in group else "") == parent]
+        index = siblings.index(path)
+        self.b_group_up.setEnabled(index > 0)
+        self.b_group_down.setEnabled(index < len(siblings) - 1)
+
+    def _move_group(self, delta: int):
+        path = self._selected_folder_group()
+        if path is None or not self.project:
+            return
+        parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        order = list(self._folder_groups)
+        siblings = [group for group in order
+                    if group != "." and
+                    (group.rsplit("/", 1)[0] if "/" in group else "") == parent]
+        index = siblings.index(path)
+        target = index + delta
+        if target < 0 or target >= len(siblings):
+            return
+        first, second = order.index(siblings[index]), order.index(siblings[target])
+        order[first], order[second] = order[second], order[first]
+        self.project.group_order = order
+        self._rebuild_groups()
+        item = self._tree_items.get(f"folder:{path}")
+        if item:
+            parent = item.parent()
+            while parent:
+                parent.setExpanded(True)
+                parent = parent.parent()
+            self.group_tree.setCurrentItem(item)
+
     def _group_up(self):
-        i = self.group_list.currentRow()
-        if i > 0:
-            self.group_list.insertItem(i - 1, self.group_list.takeItem(i))
-            self.group_list.setCurrentRow(i - 1)
-            self._sync_group_order()
+        self._move_group(-1)
 
     def _group_down(self):
-        i = self.group_list.currentRow()
-        if 0 <= i < self.group_list.count() - 1:
-            self.group_list.insertItem(i + 1, self.group_list.takeItem(i))
-            self.group_list.setCurrentRow(i + 1)
-            self._sync_group_order()
-
-    def _sync_group_order(self):
-        self.project.group_order = [self.group_list.item(r).text()
-                                    for r in range(self.group_list.count())]
+        self._move_group(1)
 
     # ------------------------------------------------------------------
     def refresh(self):
         self.list.clear()
         mode, val = self._view
-        if mode == "search":
-            assets = self.library.search(val)
-        elif mode == "group":
-            assets = self.library.assets_in_group(val)
-        elif mode == "collection":
-            paths = set(self.project.collections.get(val, []))
-            assets = [a for a in self.library.assets if a.path in paths]
+        if mode == "collection":
+            paths = set(self.project.collections.get(val, [])) if self.project else set()
+            assets = [asset for asset in self.library.assets if asset.path in paths]
+        elif mode == "category":
+            assets = [asset for asset in self.library.assets
+                      if val in self._category_tags.get(asset.path, set())]
+        elif mode == "category_group":
+            category_ids = set(CATEGORY_GROUPS.get(val, ()))
+            assets = [asset for asset in self.library.assets
+                      if self._category_tags.get(asset.path, set()).intersection(category_ids)]
+        elif mode == "folder" and val not in ("", "."):
+            prefix = val.rstrip("/") + "/"
+            assets = [asset for asset in self.library.assets
+                      if asset.folder == val or asset.folder.startswith(prefix)]
         else:
-            assets = self.library.assets
-        for a in assets:
+            assets = list(self.library.assets)
+
+        query = self.search.text().strip()
+        if query:
+            matching_paths = {asset.path for asset in self.library.search(query)}
+            assets = [asset for asset in assets if asset.path in matching_paths]
+
+        for asset in assets:
             item = QListWidgetItem()
-            label = a.name
-            if a.size:
-                label += f"\n{a.size[0]}x{a.size[1]}"
-            if a.is_overlay:
+            label = asset.name
+            if asset.size:
+                label += f"\n{asset.size[0]}x{asset.size[1]}"
+            if asset.is_overlay:
                 label += "  [overlay]"
             item.setText(label)
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            item.setData(Qt.ItemDataRole.UserRole, a.path)
+            item.setData(Qt.ItemDataRole.UserRole, asset.path)
+            tags = self._category_tags.get(asset.path, set())
+            labels = sorted(CATEGORY_LABELS[tag] for tag in tags
+                            if tag in CATEGORY_LABELS)
+            tooltip = asset.path
+            if labels:
+                tooltip += "\nSmart categories: " + ", ".join(labels)
+            item.setToolTip(tooltip)
             self.list.addItem(item)
-        self.count_label.setText(f"{len(assets)} asset(s)")
+
+        scope = "All assets"
+        if mode == "folder" and val not in ("", "."):
+            scope = val
+        elif mode == "category":
+            scope = CATEGORY_LABELS.get(val, val)
+        elif mode == "category_group":
+            scope = val
+        elif mode == "collection":
+            scope = val
+        count_text = f"{len(assets):,} asset(s) · {scope}"
+        if query:
+            count_text += f" · search: {query}"
+        self.count_label.setText(count_text)
         self._schedule_visible_thumbnails()
 
     def _schedule_visible_thumbnails(self):
@@ -460,7 +664,7 @@ class LibraryPanel(QWidget):
             self._ensure_store()
             self.library.root = self.project.asset_store
             self.library.scan(self.project.asset_store)
-            n = self.library.import_folder(d)
+            n = self.library.import_folder(d, preserve_root=True)
             self._after_import(n)
 
     def _import_file(self):
@@ -479,18 +683,38 @@ class LibraryPanel(QWidget):
             return
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Import asset ZIP archives", os.getcwd(), "ZIP archives (*.zip)")
-        if not paths:
-            return
+        if paths:
+            self.import_zip_paths(
+                paths, status_text=f"Importing {len(paths)} ZIP archive(s)… "
+                                   "original files are unchanged.")
+
+    def import_zip_paths(self, paths, *, status_text: str = "",
+                         progress_callback=None, completed_callback=None) -> bool:
+        """Start a background import for user-selected or bundled ZIPs."""
+        paths = [os.path.abspath(path) for path in paths if path]
+        if (not paths or not self.project or
+                (self._zip_worker and self._zip_worker.isRunning())):
+            return False
         self._ensure_store()
         root = os.path.abspath(self.project.asset_store)
         self._zip_import_target_root = root
         self.count_label.setText(
-            f"Importing {len(paths)} ZIP archive(s)… original files are unchanged.")
+            status_text or f"Importing {len(paths)} ZIP archive(s)…")
         self._set_import_buttons_enabled(False)
         self._zip_worker = ZipImportWorker(paths, root, self)
+        self._zip_worker.progress.connect(self._zip_import_progress)
         self._zip_worker.completed.connect(self._zip_import_completed)
+        if progress_callback:
+            self._zip_worker.progress.connect(progress_callback)
+        if completed_callback:
+            self._zip_worker.completed.connect(completed_callback)
         self._zip_worker.finished.connect(self._zip_import_finished)
         self._zip_worker.start()
+        return True
+
+    def _zip_import_progress(self, archive_name: str, current: int, total: int):
+        self.count_label.setText(
+            f"Installing/importing ZIP {current} of {total}: {archive_name}…")
 
     def _set_import_buttons_enabled(self, enabled: bool):
         for button in (self.b_imp_f, self.b_imp_p, self.b_imp_zip):
@@ -504,6 +728,7 @@ class LibraryPanel(QWidget):
         if same_store:
             self.library.scan(target_root)
             self._rebuild_groups()
+            self._show_all_assets()
             self.refresh()
             if any(report.imported for report in reports):
                 self.collectionsChanged.emit()
@@ -551,17 +776,45 @@ class LibraryPanel(QWidget):
             worker.wait()
 
     def _ensure_store(self):
+        app_data_dir = getattr(self.window(), "_app_data_dir", "")
+        default_store = default_asset_store_path(__file__, app_data_dir)
         if not self.project.asset_store:
-            store = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 "..", "asset_store")
-            self.project.asset_store = os.path.abspath(store)
+            self.project.asset_store = default_store
         os.makedirs(self.project.asset_store, exist_ok=True)
+        if os.path.normcase(os.path.abspath(self.project.asset_store)) == \
+                os.path.normcase(default_store):
+            seed_bundled_assets(self.project.asset_store, __file__)
+
+    def _show_all_assets(self):
+        """Clear library filters after an import so new assets are visible."""
+        self._view = ("all", None)
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self.coll_combo.blockSignals(True)
+        self.coll_combo.setCurrentIndex(0)
+        self.coll_combo.blockSignals(False)
+        all_item = self._tree_items.get("all")
+        if all_item:
+            self.group_tree.blockSignals(True)
+            self.group_tree.setCurrentItem(all_item)
+            self.group_tree.blockSignals(False)
 
     def _after_import(self, n):
         if n:
             self._rebuild_groups()
+            # Don't leave a fresh import hidden behind an old search, group,
+            # or collection filter. Show the complete updated library right
+            # away so users can confirm the copy succeeded.
+            self._show_all_assets()
             self.refresh()
+            self.count_label.setText(
+                f"Imported {n:,} image(s). Drag or double-click an asset "
+                "to place it on the map.")
             self.collectionsChanged.emit()
+        else:
+            self.count_label.setText(
+                "No supported images were imported. Use PNG, JPG, WEBP, BMP, or TIFF.")
 
     # ------------------------------------------------------------------
     def _ctx_menu(self, pos):
