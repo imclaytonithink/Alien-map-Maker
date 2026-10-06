@@ -19,7 +19,7 @@ import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 
 
 PACK_MARKERS = {
@@ -76,9 +76,12 @@ def _draw_thumbnail(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[Im
         with Image.open(stream) as source:
             source.seek(0)
             original_size = source.size
-            source.load()
-            thumb = ImageOps.contain(source.convert("RGBA"), THUMBNAIL_SIZE,
-                                     method=Image.Resampling.LANCZOS)
+            # Let Pillow's reduced-gap thumbnail path shrink very large sources
+            # before the final resample; converting a 7k square PNG to RGBA first
+            # wastes both memory and time when the output is only 68 by 58 px.
+            source.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS,
+                             reducing_gap=3.0)
+            thumb = source.convert("RGBA")
     tile_image = Image.new("RGBA", THUMBNAIL_SIZE, (235, 239, 241, 255))
     x = (THUMBNAIL_SIZE[0] - thumb.width) // 2
     y = (THUMBNAIL_SIZE[1] - thumb.height) // 2
@@ -143,18 +146,21 @@ def build_bundle(packs_dir: str | os.PathLike[str], output_path: str | os.PathLi
         for kind, archive_path in archives.items():
             with zipfile.ZipFile(archive_path) as archive:
                 members = _image_members(archive)
+                page_total = (len(members) + PAGE_SIZE - 1) // PAGE_SIZE
                 for offset in range(0, len(members), PAGE_SIZE):
                     page_number = offset // PAGE_SIZE + 1
                     page_members = members[offset:offset + PAGE_SIZE]
                     image = _render_page(archive, kind, page_number, page_members,
                                          offset + 1, len(members), writer)
                     buffer = io.BytesIO()
-                    image.save(buffer, format="JPEG", quality=62, optimize=True,
-                               progressive=True)
+                    image.save(buffer, format="JPEG", quality=58, optimize=False,
+                               progressive=False)
                     bundle.writestr(
                         f"sheets/{kind}-{page_number:03d}.jpg", buffer.getvalue())
                     image_count += len(page_members)
                     page_count += 1
+                    print(f"Rendered {kind} sheet {page_number}/{page_total} "
+                          f"({image_count:,} images total so far).", flush=True)
         bundle.writestr("manifest.tsv", manifest.getvalue().encode("utf-8"))
         bundle.writestr(
             "README.txt",
