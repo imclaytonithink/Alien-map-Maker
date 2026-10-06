@@ -1,6 +1,7 @@
 name: Temporary asset intake report
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - arena/dc8952cc-alien-map-maker
