@@ -34,7 +34,7 @@ jobs:
   real-pack-integration:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -62,3 +62,13 @@ jobs:
           path: ${{ runner.temp }}/asset-taxonomy-report.md
           if-no-files-found: error
           retention-days: 7
+      - name: Publish the taxonomy audit on this commit
+        if: success() && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_PATH: ${{ runner.temp }}/asset-taxonomy-report.md
+        run: |
+          report_body="$(cat "$REPORT_PATH")"
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" \
+            --field "body=$report_body" >/dev/null
