@@ -45,6 +45,18 @@ def main():
     floor = make_asset(
         "Sample/floors/room_100x100.png", "room_100x100.png",
         "Sample/floors", (100, 100), 600, 600)
+    code_base = make_asset(
+        "Custom Tiles/100x100 Core/E111 [100x100] Tractor Beam Control.png",
+        "E111 [100x100] Tractor Beam Control.png",
+        "Custom Tiles/100x100 Core", (100, 100), 7199, 7199)
+    code_overlay = make_asset(
+        "Custom Tiles/100x100 Core/E111 [100x100] [Overlay] Grav Fighter Outline x24.png",
+        "E111 [100x100] [Overlay] Grav Fighter Outline x24.png",
+        "Custom Tiles/100x100 Core", (100, 100), 7199, 7199, True)
+
+    coded = classify_geomorph_assets([code_base, code_overlay])
+    assert coded["core"][0]["id"] == "e111"
+    assert coded["overlays"]["e111"][0]["id"] == "e111"
 
     detected = classify_geomorph_assets(
         [base, overlay, standard_base, standard_overlay, symbol,

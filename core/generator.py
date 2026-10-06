@@ -121,8 +121,15 @@ def classify_assets(assets) -> dict:
 
 
 def _geomorph_id(name: str) -> str:
-    """Canonicalize a tile filename so ``[Overlay]`` pairs with its base."""
+    """Canonicalize a tile filename so overlay variants pair with their base.
+
+    RPG Mobius custom tiles use stable E###-style identifiers even when an
+    overlay has a different descriptive title from its base image.
+    """
     stem = os.path.splitext(name)[0].casefold()
+    code = re.match(r"^\s*([a-z]\d{2,})\b", stem)
+    if code:
+        return code.group(1)
     stem = re.sub(r"\[\s*overlay[^\]]*\]", " ", stem)
     stem = re.sub(r"\b\d+\s*x\s*\d+\b", " ", stem)
     stem = re.sub(r"\b(core|overlay)\b", " ", stem)
