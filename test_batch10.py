@@ -42,12 +42,19 @@ def main():
         make_asset("starter/Hazards/acid_spill.png"),
         make_asset("starter/Effects/fire_and_smoke.png"),
         make_asset("starter/Effects/glow_overlay.png", overlay=True),
-        make_asset("starter/Misc/strange_unrecognized_art.png"),
+        make_asset("starter/Uncategorized/strange_unrecognized_art.png"),
         make_asset("hand-build/Rooms/E201.png"),
         make_asset("hand-build/Furniture/E202.png"),
         make_asset("hand-build/Medical/E203.png"),
         make_asset("hand-build/Storage/E204.png"),
         make_asset("hand-build/Props/E205.png"),
+        make_asset("real-pack/Core/Fire Control CIC.png"),
+        make_asset("real-pack/Mess Halls/Galley & Mess Halls.png"),
+        make_asset("real-pack/Small Craft/Grav Fighter.png"),
+        make_asset("real-pack/Weaponry/Laser Cannon.png"),
+        make_asset("real-pack/Core/E102 [100x100] Perimeter Catwalk.png",
+                   size=(100, 100), pixels=(7199, 7199)),
+        make_asset("real-pack/Bridge/Lightning Class Cruiser.png"),
     ]
 
     tags = classify_asset_categories(assets)
@@ -83,6 +90,17 @@ def main():
     assert has("E203.png", "medical")
     assert has("E204.png", "storage")
     assert has("E205.png", "loose_props")
+    assert has("Fire Control CIC.png", "controls")
+    assert has("Fire Control CIC.png", "weapons")
+    assert not has("Fire Control CIC.png", "hazards")
+    assert not has("Fire Control CIC.png", "fire_smoke")
+    assert has("Galley & Mess Halls.png", "rooms")
+    assert has("Galley & Mess Halls.png", "food")
+    assert not has("Galley & Mess Halls.png", "corridors")
+    assert has("Grav Fighter.png", "vehicles")
+    assert has("Laser Cannon.png", "weapons")
+    assert has("E102 [100x100] Perimeter Catwalk.png", "floors")
+    assert not has("Lightning Class Cruiser.png", "lighting")
 
     # Pack/archive titles are not semantic tags for every contained asset.
     core_tags = tags[assets[0].path]

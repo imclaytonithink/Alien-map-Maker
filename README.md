@@ -76,8 +76,9 @@ clearly reports skipped GUI checks.
   original ZIP is never changed. The library's expandable folder tree preserves
   those paths; overlapping smart views add counts for core modules, rooms,
   floors, walls, corridors, doors, controls, engineering, medical/science,
-  furniture, storage, loose props, organic remains, overlays, lighting,
-  hazards, fire/smoke, and symbols. Unmatched art stays visible under **Other /
+  furniture, storage, vehicles/small craft, weapons/security, food/galley,
+  loose props, organic remains, overlays, lighting, hazards, fire/smoke, and
+  symbols. Unmatched art stays visible under **Other /
   Unclassified**. These are browse filters only—assets are not moved or copied
   again—and folder siblings can be reordered with ▲▼. For geomorph assembly, import
   the matching high-res Geomorphs / Custom Tiles and Symbols archives; folder
