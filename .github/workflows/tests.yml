@@ -75,12 +75,16 @@ jobs:
         env:
           BUNDLE_PATH: ${{ runner.temp }}/asset-visual-audit.zip
           LARGE_BUNDLE_PATH: ${{ runner.temp }}/large-image-visual-audit.zip
+          GH_TOKEN: ${{ github.token }}
         run: |
           python - <<'PY'
           import base64
           import csv
+          import hashlib
           import io
           import os
+          import subprocess
+          import time
           import zipfile
 
           pack_names = ("geomorphs", "custom_tiles", "symbols")
@@ -150,18 +154,37 @@ jobs:
                   f"Selected visual-review bundle is unexpectedly large: "
                   f"{len(payload):,} bytes.")
           encoded = base64.b64encode(payload).decode("ascii")
+          digest = hashlib.sha256(payload).hexdigest()
+          encoded_chunks = [encoded[offset:offset + 30_000]
+                            for offset in range(0, len(encoded), 30_000)]
+          endpoint = (f"repos/{os.environ['GITHUB_REPOSITORY']}/commits/"
+                      f"{os.environ['GITHUB_SHA']}/comments")
+          for part, chunk in enumerate(encoded_chunks, start=1):
+              body = (
+                  f"Visual review bundle {digest} part {part}/{len(encoded_chunks)}\n\n"
+                  "Decode and join these temporary Base64 chunks to view the "
+                  "thumbnail-only ZIP.\n\n```text\n" + chunk + "\n```")
+              result = subprocess.run(
+                  ["gh", "api", "--method", "POST", endpoint,
+                   "--field", f"body={body}"],
+                  capture_output=True, text=True, check=False)
+              if result.returncode:
+                  raise RuntimeError(
+                      "Could not publish visual-review chunk "
+                      f"{part}/{len(encoded_chunks)}: "
+                      f"{result.stderr.strip()[-1000:]}")
+              if part < len(encoded_chunks):
+                  time.sleep(1.0)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("## Visual review preview bundle\n\n")
-              summary.write("Full-pack sheets sample the beginning, middle, and "
-                            "end of each sorted pack, plus sheets for all very "
-                            "large images. `manifest.tsv` maps thumbnails to "
-                            "original ZIP paths.\n\n")
-              summary.write("VISUAL_REVIEW_BUNDLE_B64_BEGIN\n\n```text\n")
-              for start in range(0, len(encoded), 120):
-                  summary.write(encoded[start:start + 120] + "\n")
-              summary.write("```\n\nVISUAL_REVIEW_BUNDLE_B64_END\n")
-          print(f"Added {selected_count} contact sheets "
-                f"({len(payload):,} bytes before base64) to the job summary.")
+              summary.write(
+                  f"Published {len(encoded_chunks)} temporary commit-comment "
+                  f"chunks for a {len(payload):,}-byte thumbnail-only ZIP "
+                  f"(SHA-256 `{digest}`). The bundle contains first, middle, "
+                  "and last full-pack sheets plus every very-large-image sheet; "
+                  "`manifest.tsv` maps thumbnails to source paths.\n")
+          print(f"Published {len(encoded_chunks)} visual-review chunks "
+                f"(SHA-256 {digest}).")
           PY
       - name: Upload the real-pack taxonomy audit
         if: success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
