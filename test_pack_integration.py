@@ -143,9 +143,15 @@ def main():
         assert 250 <= categories["pixels_per_square"] <= 350, (
             "Expected approximately 300 source pixels per five-foot square; "
             f"detected {categories['pixels_per_square']:.1f}.")
-        assert categories["unpaired_overlay_count"] == 0, (
-            f"Found {categories['unpaired_overlay_count']} overlay assets "
-            "that were not paired with a compatible Core module.")
+        if categories["unpaired_overlay_count"]:
+            overlay_examples = [asset.path for asset in library.assets
+                                if asset.is_overlay][:5]
+            core_examples = [asset.path for asset in library.assets
+                             if "core" in f"{asset.folder}/{asset.name}".casefold()][:5]
+            raise AssertionError(
+                f"Found {categories['unpaired_overlay_count']} overlay assets "
+                "without a compatible Core; examples: "
+                f"overlays={overlay_examples}; cores={core_examples}.")
 
         paired_core = [item for item in core if item["id"] in overlays]
         generated_categories = dict(categories)
