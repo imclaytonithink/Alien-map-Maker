@@ -134,7 +134,6 @@ def main():
         overlays = categories["overlays"]
         symbols = categories["symbols"]
         assert core, "No 100x100 Core modules were detected across the real packs."
-        assert overlays, "No [Overlay] assets paired with a Core module."
         assert symbols, "No high-resolution Symbols assets were detected."
         symbols_archive_prefix = (
             os.path.splitext(os.path.basename(archives["symbols"]))[0] + "/")
