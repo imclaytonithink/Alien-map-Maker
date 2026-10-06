@@ -1,0 +1,15 @@
+extracted/
+__pycache__/
+*.pyc
+ui/recent.json
+
+# Written fresh by the test scripts / demo renderers — no need to track.
+gui2_out.pdf
+gui2_out.png
+gui_test_out.png
+test_output.png
+testmap_01_Level_1.png
+testmap_02_Level_2.png
+
+# Sandbox/upload snapshots: huge binaries, never source.
+*.zip
