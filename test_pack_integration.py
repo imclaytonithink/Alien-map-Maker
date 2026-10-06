@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 import tempfile
+import traceback
 
 from core.asset_manager import AssetLibrary
 from core.generator import (classify_assets, classify_geomorph_assets, generate,
@@ -203,4 +204,26 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        frames = traceback.extract_tb(exc.__traceback__)
+        frame = next((item for item in reversed(frames)
+                      if item.filename.endswith("test_pack_integration.py")), None)
+        line = frame.lineno if frame else 1
+        detail = " ".join(str(exc).split()) or type(exc).__name__
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            escaped = (detail.replace("%", "%25")
+                       .replace("\r", "%0D").replace("\n", "%0A"))
+            print(f"::error file=test_pack_integration.py,line={line},"
+                  f"title=Real pack integration failed::{escaped}", flush=True)
+            summary = os.environ.get("GITHUB_STEP_SUMMARY")
+            if summary:
+                with open(summary, "a", encoding="utf-8") as output:
+                    output.write(f"## Real pack integration failed\n\n"
+                                 f"`test_pack_integration.py:{line}`: "
+                                 f"{detail}\n")
+        else:
+            print(f"Real pack integration failed at line {line}: {detail}",
+                  flush=True)
+        raise
