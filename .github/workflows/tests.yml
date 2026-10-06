@@ -59,23 +59,110 @@ jobs:
         run: python -m pip install --disable-pip-version-check 'Pillow>=9.0'
       - name: Build contact sheets for manual review of every pack image
         if: success() && github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-visual-audit]')
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           python visual_asset_audit.py \
             --packs-dir "$RUNNER_TEMP/sceneboard-packs" \
-            --output "$RUNNER_TEMP/asset-visual-audit.zip" \
-            --publish-commit "$GITHUB_SHA"
+            --output "$RUNNER_TEMP/asset-visual-audit.zip"
       - name: Build contact sheets for the very-large images
         if: success() && github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-large-visual-audit]')
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           python visual_asset_audit.py \
             --packs-dir "$RUNNER_TEMP/sceneboard-packs" \
             --output "$RUNNER_TEMP/large-image-visual-audit.zip" \
-            --publish-commit "$GITHUB_SHA" \
             --large-images-only
+      - name: Publish representative contact sheets for direct visual review
+        if: success() && github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-visual-audit]')
+        env:
+          BUNDLE_PATH: ${{ runner.temp }}/asset-visual-audit.zip
+          LARGE_BUNDLE_PATH: ${{ runner.temp }}/large-image-visual-audit.zip
+        run: |
+          python - <<'PY'
+          import base64
+          import csv
+          import io
+          import os
+          import zipfile
+
+          pack_names = ("geomorphs", "custom_tiles", "symbols")
+          bundle_paths = [("full", os.environ["BUNDLE_PATH"])]
+          large_path = os.environ["LARGE_BUNDLE_PATH"]
+          if os.path.isfile(large_path):
+              bundle_paths.append(("large", large_path))
+
+          review = io.BytesIO()
+          manifest = io.StringIO(newline="")
+          writer = csv.writer(manifest, delimiter="\t", lineterminator="\n")
+          header = None
+          selected_count = 0
+          with zipfile.ZipFile(review, "w", zipfile.ZIP_DEFLATED,
+                               compresslevel=6) as output:
+              for bundle_kind, source_path in bundle_paths:
+                  with zipfile.ZipFile(source_path) as source:
+                      sheets = [name for name in source.namelist()
+                                if name.startswith("sheets/") and name.endswith(".jpg")]
+                      if bundle_kind == "full":
+                          selected = []
+                          for pack in pack_names:
+                              pack_sheets = sorted(
+                                  name for name in sheets
+                                  if name.rsplit("/", 1)[-1].startswith(pack + "-"))
+                              if not pack_sheets:
+                                  raise RuntimeError(
+                                      f"No visual-review sheets for {pack}.")
+                              indices = sorted({
+                                  0, len(pack_sheets) // 2, len(pack_sheets) - 1})
+                              selected.extend(pack_sheets[index] for index in indices)
+                      else:
+                          selected = sorted(sheets)
+
+                      selected_names = {}
+                      for name in selected:
+                          basename = name.rsplit("/", 1)[-1]
+                          output_name = (basename if bundle_kind == "full"
+                                         else "large-" + basename)
+                          selected_names[name] = output_name
+                          output.writestr(output_name, source.read(name))
+                          selected_count += 1
+
+                      rows = csv.reader(io.StringIO(
+                          source.read("manifest.tsv").decode("utf-8")),
+                          delimiter="\t")
+                      source_header = next(rows)
+                      if header is None:
+                          header = source_header
+                          writer.writerow(header)
+                      for row in rows:
+                          if row and row[0] in selected_names:
+                              row[0] = selected_names[row[0]]
+                              writer.writerow(row)
+              output.writestr("manifest.tsv", manifest.getvalue())
+              output.writestr(
+                  "README.txt",
+                  "Full-pack previews contain first, middle, and last sheets "
+                  "for each pack; large-*.jpg sheets show every source image "
+                  "above the very-large-image threshold.\n"
+                  "Each sheet shows up to 100 images. manifest.tsv maps every "
+                  "thumbnail index to its original ZIP path and dimensions.\n")
+
+          payload = review.getvalue()
+          if len(payload) > 700_000:
+              raise RuntimeError(
+                  f"Selected visual-review bundle is unexpectedly large: "
+                  f"{len(payload):,} bytes.")
+          encoded = base64.b64encode(payload).decode("ascii")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Visual review preview bundle\n\n")
+              summary.write("Full-pack sheets sample the beginning, middle, and "
+                            "end of each sorted pack, plus sheets for all very "
+                            "large images. `manifest.tsv` maps thumbnails to "
+                            "original ZIP paths.\n\n")
+              summary.write("VISUAL_REVIEW_BUNDLE_B64_BEGIN\n\n```text\n")
+              for start in range(0, len(encoded), 120):
+                  summary.write(encoded[start:start + 120] + "\n")
+              summary.write("```\n\nVISUAL_REVIEW_BUNDLE_B64_END\n")
+          print(f"Added {selected_count} contact sheets "
+                f"({len(payload):,} bytes before base64) to the job summary.")
+          PY
       - name: Upload the real-pack taxonomy audit
         if: success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
         uses: actions/upload-artifact@v4
