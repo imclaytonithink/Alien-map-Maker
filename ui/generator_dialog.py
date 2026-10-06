@@ -5,7 +5,7 @@ import os
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QPixmap, QIcon
+from PyQt6.QtGui import QImageReader
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QComboBox, QSlider, QSpinBox,
     QPushButton, QLabel, QHBoxLayout, QGroupBox, QScrollArea, QWidget,
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 
 from core import generator as gen
 from ui.branding import APP_NAME, ALIEN_NAME
+from ui.image_utils import load_scaled_pixmap
 from ui import theme as thememod
 
 SETTING_TIPS = {
@@ -35,11 +36,13 @@ LAYOUT_TIPS = {
 
 
 def ensure_sizes(assets, library):
+    """Fill missing pixel dimensions from image headers, never full decoding."""
     for a in assets:
         if not a.width or not a.height:
-            pm = QPixmap(library.abs_path(a.path))
-            if not pm.isNull():
-                a.width, a.height = pm.width(), pm.height()
+            reader = QImageReader(library.abs_path(a.path))
+            size = reader.size()
+            if size.isValid():
+                a.width, a.height = size.width(), size.height()
 
 
 class GeneratorDialog(QDialog):
@@ -179,11 +182,10 @@ class GeneratorDialog(QDialog):
             row.addStretch(1)
             shown = 0
             for a in items[:8]:
-                pm = QPixmap(self.library.abs_path(a["path"]))
+                pm = load_scaled_pixmap(self.library.abs_path(a["path"]), 64)
                 if not pm.isNull():
                     ic = QLabel()
-                    ic.setPixmap(pm.scaled(40, 40, Qt.AspectRatioMode.KeepAspectRatio,
-                                           Qt.TransformationMode.SmoothTransformation))
+                    ic.setPixmap(pm)
                     ic.setToolTip(a["name"])
                     row.addWidget(ic)
                     shown += 1

@@ -13,3 +13,13 @@ testmap_02_Level_2.png
 
 # Sandbox/upload snapshots: huge binaries, never source.
 *.zip
+
+# Imported asset-library contents stay local. Checked-in sample files remain
+# tracked, but newly imported raster files and ZIP-import markers are ignored.
+/asset_store/**/*.png
+/asset_store/**/*.jpg
+/asset_store/**/*.jpeg
+/asset_store/**/*.webp
+/asset_store/**/*.bmp
+/asset_store/**/*.tiff
+/asset_store/**/.sceneboard-import.json

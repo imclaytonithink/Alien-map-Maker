@@ -1277,6 +1277,10 @@ class MainWindow(QMainWindow):
         if self._dirty and not self._confirm_discard():
             e.ignore()
             return
+        # ZIP intake runs off the GUI thread; join it before its owning panel is
+        # destroyed so closing during a large import cannot tear down a live thread.
+        if hasattr(self, "library") and hasattr(self.library, "wait_for_zip_import"):
+            self.library.wait_for_zip_import()
         e.accept()
 
     def _about(self):

@@ -37,11 +37,15 @@ templates, appearance, and auto-save settings.
 ## How to use
 
 ### 1. Bring your pictures into the tool (stays forever)
-- **Import Folder** / **Import File** (top of the library panel) copies your
-  PNGs into the app's **internal asset store** — shown at the bottom of the
-  panel (`Store: …`) with an **Open** button and a **?** help button that
-  explains exactly where files live. They're auto-grouped by their source
-  subfolder, auto-tagged by type/size, and you can reorder groups with ▲▼.
+- **Import Folder**, **Import File**, or **Import ZIP** (top of the library
+  panel) copies supported images into the app's **internal asset store** —
+  shown at the bottom of the panel (`Store: …`) with an **Open** button and a
+  **?** help button. ZIP imports preserve folders, normalize Windows-style
+  archive paths, skip non-images, and keep each archive in its own group so
+  similarly named files never overwrite each other. The original ZIP is never
+  changed. Imported assets are auto-grouped and tagged by type/size, and groups
+  can be reordered with ▲▼. Large libraries load thumbnails only as they enter
+  view, rather than decoding every full-size PNG at once.
 - **Custom single PNGs** dragged straight onto the canvas are *embedded*
   inside the saved `.bmap` file, so that map is portable on its own.
 
