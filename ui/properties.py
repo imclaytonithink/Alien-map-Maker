@@ -8,13 +8,15 @@ from typing import Optional
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox,
+    QWidget, QVBoxLayout, QGroupBox, QDoubleSpinBox, QSpinBox,
     QSlider, QCheckBox, QPushButton, QHBoxLayout, QGridLayout, QLabel,
     QComboBox, QLineEdit, QScrollArea, QTextEdit, QFileDialog, QSizePolicy,
 )
 from core.project import Piece, Project, snap_value
 from core.render import compute_text_size
 from ui.color_picker import choose_color
+from ui.responsive import (FitFormLayout, FlowLayout, WrapButton, WrapCheckBox,
+                           breakable, fixed_label)
 
 FONTS = ["Monospace", "Consolas", "Courier New", "Arial", "Times New Roman"]
 
@@ -48,8 +50,8 @@ class PropertiesPanel(QWidget):
 
         # ---- project-wide tint inherited by image nodes ----
         self.project_tint_box = QGroupBox("Project-wide tint")
-        project_tint_form = QFormLayout(self.project_tint_box)
-        self.btn_project_tint = QPushButton("Choose project tint…")
+        project_tint_form = FitFormLayout(self.project_tint_box)
+        self.btn_project_tint = WrapButton("Choose project tint…")
         self.btn_project_tint.clicked.connect(self._pick_project_tint)
         project_tint_form.addRow("Overlay", self.btn_project_tint)
         project_tint_row = QHBoxLayout()
@@ -60,7 +62,8 @@ class PropertiesPanel(QWidget):
         self.sl_project_tint.valueChanged.connect(self._project_tint_strength)
         project_tint_row.addWidget(self.sl_project_tint, 1)
         self.btn_clear_project_tint = QPushButton("Clear")
-        self.btn_clear_project_tint.setMaximumWidth(60)
+        self.btn_clear_project_tint.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                                  QSizePolicy.Policy.Fixed)
         self.btn_clear_project_tint.clicked.connect(self._clear_project_tint)
         project_tint_row.addWidget(self.btn_clear_project_tint)
         project_tint_form.addRow("Strength", project_tint_row)
@@ -68,7 +71,7 @@ class PropertiesPanel(QWidget):
 
         # ---- single node ----
         self.single = QGroupBox("Selected node")
-        sf = QFormLayout(self.single)
+        sf = FitFormLayout(self.single)
         self.lbl_name = QLabel("(none)")
         self.lbl_name.setWordWrap(True)
         self.lbl_name.setMinimumWidth(0)
@@ -88,12 +91,12 @@ class PropertiesPanel(QWidget):
         self.spin_w.valueChanged.connect(lambda v: self._set_size("w", v))
         self.spin_h.valueChanged.connect(lambda v: self._set_size("h", v))
         sf.addRow("Width", self.spin_w); sf.addRow("Height", self.spin_h)
-        rot_row = QHBoxLayout()
+        rot_row = FlowLayout()
         self.spin_rot = QDoubleSpinBox(); self.spin_rot.setRange(-360, 360); self.spin_rot.setSuffix("°")
         self.spin_rot.valueChanged.connect(lambda v: self._set("rotation", v))
         b90 = QPushButton("⟲90"); b90.clicked.connect(lambda: self._rotate(90))
         b_90 = QPushButton("⟳90"); b_90.clicked.connect(lambda: self._rotate(-90))
-        rot_row.addWidget(self.spin_rot); rot_row.addWidget(b90); rot_row.addWidget(b_90)
+        rot_row.add(self.spin_rot); rot_row.add(b90); rot_row.add(b_90, stick=True)
         sf.addRow("Rotation", rot_row)
         self.spin_scale = QDoubleSpinBox(); self.spin_scale.setRange(0.05, 10); self.spin_scale.setSingleStep(0.05)
         self.spin_scale.valueChanged.connect(lambda v: self._set("scale", v))
@@ -102,35 +105,35 @@ class PropertiesPanel(QWidget):
         self.sl_op = QSlider(Qt.Orientation.Horizontal); self.sl_op.setRange(0, 100); self.sl_op.setValue(100)
         self.sl_op.valueChanged.connect(lambda v: self._set("opacity", v / 100.0))
         op_row.addWidget(self.sl_op); sf.addRow("Opacity", op_row)
-        self.chk_snap = QCheckBox("Snap to grid"); self.chk_snap.toggled.connect(lambda v: self._set("snap", v))
+        self.chk_snap = WrapCheckBox("Snap to grid"); self.chk_snap.toggled.connect(lambda v: self._set("snap", v))
         sf.addRow(self.chk_snap)
         self.chk_lock = QCheckBox("Locked"); self.chk_lock.toggled.connect(lambda v: self._set("locked", v))
         sf.addRow(self.chk_lock)
-        flip_row = QHBoxLayout()
-        fh = QPushButton("Flip H"); fh.clicked.connect(lambda: self._toggle("flip_h"))
-        fv = QPushButton("Flip V"); fv.clicked.connect(lambda: self._toggle("flip_v"))
-        flip_row.addWidget(fh); flip_row.addWidget(fv); sf.addRow("Flip", flip_row)
+        flip_row = FlowLayout()
+        fh = WrapButton("Flip H"); fh.clicked.connect(lambda: self._toggle("flip_h"))
+        fv = WrapButton("Flip V"); fv.clicked.connect(lambda: self._toggle("flip_v"))
+        flip_row.add(fh); flip_row.add(fv); sf.addRow("Flip", flip_row)
         self.cmb_layer = QComboBox(); self.cmb_layer.currentIndexChanged.connect(self._set_layer)
         sf.addRow("Layer", self.cmb_layer)
-        z_row = QHBoxLayout()
+        z_row = FlowLayout()
         bf = QPushButton("Front"); bf.clicked.connect(lambda: self._z("front"))
         bk = QPushButton("Back"); bk.clicked.connect(lambda: self._z("back"))
         bup = QPushButton("▲"); bup.clicked.connect(lambda: self.canvas._raise(self.pieces))
         bdn = QPushButton("▼"); bdn.clicked.connect(lambda: self.canvas._lower(self.pieces))
-        z_row.addWidget(bf); z_row.addWidget(bk); z_row.addWidget(bup); z_row.addWidget(bdn)
+        z_row.add(bf); z_row.add(bk, stick=True); z_row.add(bup); z_row.add(bdn, stick=True)
         sf.addRow("Order", z_row)
         root.addWidget(self.single)
 
         self.image_tools_box = QGroupBox("Image tools")
         image_tools = QGridLayout(self.image_tools_box)
-        self.btn_crop_image = QPushButton("Crop image…")
+        self.btn_crop_image = WrapButton("Crop image…")
         self.btn_crop_image.setToolTip("Crop this image non-destructively.")
         self.btn_crop_image.clicked.connect(self._start_crop)
-        self.btn_replace_image = QPushButton("Replace image…")
+        self.btn_replace_image = WrapButton("Replace image…")
         self.btn_replace_image.setToolTip(
             "Choose a different source image for this node.")
         self.btn_replace_image.clicked.connect(self._replace_image)
-        self.btn_reset_crop = QPushButton("Reset crop")
+        self.btn_reset_crop = WrapButton("Reset crop")
         self.btn_reset_crop.setToolTip("Restore the full source image.")
         self.btn_reset_crop.clicked.connect(self.canvas.reset_selected_crop)
         image_tools.addWidget(self.btn_crop_image, 0, 0)
@@ -142,17 +145,17 @@ class PropertiesPanel(QWidget):
         self.btn_tighten.clicked.connect(self._open_tighten)
         image_tools.addWidget(self.btn_tighten, 1, 0)
         image_tools.addWidget(self.btn_reset_crop, 1, 1)
-        self.btn_cutout = QPushButton("Cut out part…")
+        self.btn_cutout = WrapButton("Cut out part…")
         self.btn_cutout.setToolTip(
             "Select part of this image (rectangle, ellipse, lasso or polygon), then "
             "delete it, cut or copy it, or make it a new node.")
         self.btn_cutout.clicked.connect(self._start_cutout)
-        self.btn_restore_cutouts = QPushButton("Restore cut-outs")
+        self.btn_restore_cutouts = WrapButton("Restore cut-outs")
         self.btn_restore_cutouts.setToolTip("Bring back every area cut out of this image.")
         self.btn_restore_cutouts.clicked.connect(self._restore_cutouts)
         image_tools.addWidget(self.btn_cutout, 2, 0)
         image_tools.addWidget(self.btn_restore_cutouts, 2, 1)
-        self.btn_clone_source = QPushButton("Pick a new clone source…")
+        self.btn_clone_source = WrapButton("Pick a new clone source…")
         self.btn_clone_source.setToolTip(
             "Choose another spot of the picture for this clone patch to copy.")
         self.btn_clone_source.clicked.connect(self._repick_clone)
@@ -161,7 +164,7 @@ class PropertiesPanel(QWidget):
 
         # ---- editable text node controls ----
         self.text_box = QGroupBox("Editable text node")
-        tf = QFormLayout(self.text_box)
+        tf = FitFormLayout(self.text_box)
         self.lbl_text_help = QLabel(
             "This is an editable text node, separate from lettering baked into a source image.")
         self.lbl_text_help.setWordWrap(True)
@@ -175,14 +178,14 @@ class PropertiesPanel(QWidget):
         self.spin_fsize = QSpinBox(); self.spin_fsize.setRange(6, 400); self.spin_fsize.setValue(24)
         self.spin_fsize.valueChanged.connect(self._fsize_changed)
         tf.addRow("Size", self.spin_fsize)
-        style_row = QHBoxLayout()
+        style_row = FlowLayout()
         self.chk_bold = QCheckBox("Bold"); self.chk_bold.toggled.connect(self._bold_changed)
         self.chk_italic = QCheckBox("Italic"); self.chk_italic.toggled.connect(self._italic_changed)
         self.chk_underline = QCheckBox("Underline")
         self.chk_underline.toggled.connect(self._underline_changed)
-        style_row.addWidget(self.chk_bold)
-        style_row.addWidget(self.chk_italic)
-        style_row.addWidget(self.chk_underline)
+        style_row.add(self.chk_bold)
+        style_row.add(self.chk_italic)
+        style_row.add(self.chk_underline)
         tf.addRow("Style", style_row)
         self.cmb_text_halign = QComboBox()
         self.cmb_text_halign.addItem("Left", "left")
@@ -196,10 +199,10 @@ class PropertiesPanel(QWidget):
         self.cmb_text_valign.addItem("Bottom", "bottom")
         self.cmb_text_valign.currentIndexChanged.connect(self._text_alignment_changed)
         tf.addRow("Vertical", self.cmb_text_valign)
-        self.chk_text_auto_size = QCheckBox("Auto-fit text box")
+        self.chk_text_auto_size = WrapCheckBox("Auto-fit text box")
         self.chk_text_auto_size.toggled.connect(self._text_auto_size_changed)
         tf.addRow(self.chk_text_auto_size)
-        dimensions = QHBoxLayout()
+        dimensions = FlowLayout()
         self.spin_text_width = QSpinBox(); self.spin_text_width.setRange(10, 10000)
         self.spin_text_width.setSuffix(" px")
         self.spin_text_width.valueChanged.connect(
@@ -208,27 +211,28 @@ class PropertiesPanel(QWidget):
         self.spin_text_height.setSuffix(" px")
         self.spin_text_height.valueChanged.connect(
             lambda value: self._text_dimension_changed("h", value))
-        dimensions.addWidget(self.spin_text_width)
-        dimensions.addWidget(QLabel("×"))
-        dimensions.addWidget(self.spin_text_height)
+        dimensions.add(self.spin_text_width)
+        dimensions.add(fixed_label("×"))
+        dimensions.add(self.spin_text_height, stick=True)
         tf.addRow("Box size", dimensions)
         self.spin_text_padding = QSpinBox(); self.spin_text_padding.setRange(0, 100)
         self.spin_text_padding.valueChanged.connect(self._text_padding_changed)
         tf.addRow("Padding", self.spin_text_padding)
-        self.btn_textcol = QPushButton("Choose text color…")
+        self.btn_textcol = WrapButton("Choose text color…")
         self.btn_textcol.clicked.connect(self._pick_text_color)
         tf.addRow("Text color", self.btn_textcol)
-        bg_row = QHBoxLayout()
-        self.chk_text_bg = QCheckBox("Background")
+        bg_row = FlowLayout()
+        self.chk_text_bg = WrapCheckBox("Background")
         self.chk_text_bg.toggled.connect(self._text_background_toggled)
-        self.btn_text_bg = QPushButton("Choose fill…")
+        self.btn_text_bg = WrapButton("Choose fill…")
         self.btn_text_bg.clicked.connect(self._pick_text_background)
         self.btn_clear_text_bg = QPushButton("Clear")
-        self.btn_clear_text_bg.setMaximumWidth(55)
+        self.btn_clear_text_bg.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                             QSizePolicy.Policy.Fixed)
         self.btn_clear_text_bg.clicked.connect(self._clear_text_background)
-        bg_row.addWidget(self.chk_text_bg)
-        bg_row.addWidget(self.btn_text_bg, 1)
-        bg_row.addWidget(self.btn_clear_text_bg)
+        bg_row.add(self.chk_text_bg)
+        bg_row.add(self.btn_text_bg)
+        bg_row.add(self.btn_clear_text_bg, stick=True)
         tf.addRow(bg_row)
         self.sl_text_bg_opacity = QSlider(Qt.Orientation.Horizontal)
         self.sl_text_bg_opacity.setRange(0, 100)
@@ -239,7 +243,7 @@ class PropertiesPanel(QWidget):
 
         # ---- PNG recolor overlay: available for a single piece or a selection ----
         self.tint_box = QGroupBox("Tint / recolor PNGs")
-        tint_form = QFormLayout(self.tint_box)
+        tint_form = FitFormLayout(self.tint_box)
         self.cmb_tint_mode = QComboBox()
         self.cmb_tint_mode.addItem("Inherit project", "inherit")
         self.cmb_tint_mode.addItem("Override", "override")
@@ -247,7 +251,7 @@ class PropertiesPanel(QWidget):
         self.cmb_tint_mode.addItem("Mixed selection", None)
         self.cmb_tint_mode.currentIndexChanged.connect(self._tint_mode_changed)
         tint_form.addRow("Mode", self.cmb_tint_mode)
-        self.btn_tint = QPushButton("Choose overlay color…")
+        self.btn_tint = WrapButton("Choose overlay color…")
         self.btn_tint.clicked.connect(self._pick_tint)
         tint_form.addRow("Overlay", self.btn_tint)
         self.sl_tint = QSlider(Qt.Orientation.Horizontal)
@@ -260,7 +264,7 @@ class PropertiesPanel(QWidget):
 
         # ---- optional outline for an individual image node ----
         self.node_border_box = QGroupBox("Node outline")
-        bf = QFormLayout(self.node_border_box)
+        bf = FitFormLayout(self.node_border_box)
         self.cmb_border_mode = QComboBox()
         self.cmb_border_mode.addItem("Inherit project", "inherit")
         self.cmb_border_mode.addItem("Override", "override")
@@ -273,14 +277,14 @@ class PropertiesPanel(QWidget):
         self.cmb_border_shape.addItem("Alpha silhouette", "alpha")
         self.cmb_border_shape.currentIndexChanged.connect(self._border_shape_changed)
         bf.addRow("Outline shape", self.cmb_border_shape)
-        self.btn_node_border_color = QPushButton("Use project border color")
+        self.btn_node_border_color = WrapButton("Use project border color")
         self.btn_node_border_color.clicked.connect(self._pick_node_border_color)
         bf.addRow("Override color", self.btn_node_border_color)
         self.sl_node_border_opacity = QSlider(Qt.Orientation.Horizontal)
         self.sl_node_border_opacity.setRange(0, 100)
         self.sl_node_border_opacity.valueChanged.connect(self._node_border_opacity_changed)
         bf.addRow("Override opacity", self.sl_node_border_opacity)
-        edge_row = QHBoxLayout()
+        edge_row = FlowLayout()
         self.node_border_edges = []
         for label in ("Top", "Right", "Bottom", "Left"):
             check = QCheckBox(label)
@@ -288,19 +292,19 @@ class PropertiesPanel(QWidget):
                 lambda value, i=len(self.node_border_edges):
                     self._node_border_edge_changed(i, value))
             self.node_border_edges.append(check)
-            edge_row.addWidget(check)
+            edge_row.add(check)
         bf.addRow("Bounds sides", edge_row)
         root.addWidget(self.node_border_box)
 
         # ---- separate cover patch for rasterized image lettering ----
-        self.patch_box = QGroupBox("Non-destructive raster-label patch")
-        pf = QFormLayout(self.patch_box)
+        self.patch_box = QGroupBox("Raster-label patch")
+        pf = FitFormLayout(self.patch_box)
         self.lbl_patch_help = QLabel(
             "This fill is a separate node over the image; it never changes the source file. "
             "Sample nearby artwork for a matching color, then add editable text above it.")
         self.lbl_patch_help.setWordWrap(True)
         pf.addRow(self.lbl_patch_help)
-        self.btn_patch_color = QPushButton("Choose patch fill…")
+        self.btn_patch_color = WrapButton("Choose patch fill…")
         self.btn_patch_color.clicked.connect(self._pick_patch_color)
         pf.addRow("Fill color", self.btn_patch_color)
         self.sl_patch_opacity = QSlider(Qt.Orientation.Horizontal)
@@ -308,13 +312,13 @@ class PropertiesPanel(QWidget):
         self.sl_patch_opacity.setValue(100)
         self.sl_patch_opacity.valueChanged.connect(self._patch_opacity_changed)
         pf.addRow("Fill opacity", self.sl_patch_opacity)
-        self.btn_patch_add_text = QPushButton("Add editable text over patch")
+        self.btn_patch_add_text = WrapButton("Add editable text over patch")
         self.btn_patch_add_text.clicked.connect(self._add_text_over_patch)
         pf.addRow(self.btn_patch_add_text)
         root.addWidget(self.patch_box)
 
         self.scale_box = QGroupBox("Static scale bar")
-        scale_form = QFormLayout(self.scale_box)
+        scale_form = FitFormLayout(self.scale_box)
         self.spin_scale_distance = QDoubleSpinBox()
         self.spin_scale_distance.setRange(0.01, 1_000_000)
         self.spin_scale_distance.setDecimals(2)
@@ -331,21 +335,21 @@ class PropertiesPanel(QWidget):
         self.edit_scale_caption.setPlaceholderText("Auto: distance + units")
         self.edit_scale_caption.editingFinished.connect(self._scale_caption_changed)
         scale_form.addRow("Custom caption", self.edit_scale_caption)
-        self.btn_scale_color = QPushButton("Scale color…")
+        self.btn_scale_color = WrapButton("Scale color…")
         self.btn_scale_color.clicked.connect(self._pick_scale_color)
         scale_form.addRow("Color", self.btn_scale_color)
         root.addWidget(self.scale_box)
 
-        self.connector_box = QGroupBox("Connection / transition marker")
-        connector_form = QFormLayout(self.connector_box)
+        self.connector_box = QGroupBox("Connection marker")
+        connector_form = FitFormLayout(self.connector_box)
         self.edit_connector_label = QLineEdit()
         self.edit_connector_label.setPlaceholderText("e.g. To level 2 / airlock")
         self.edit_connector_label.editingFinished.connect(self._connector_label_changed)
         connector_form.addRow("Label", self.edit_connector_label)
-        self.btn_connector_color = QPushButton("Marker color…")
+        self.btn_connector_color = WrapButton("Marker color…")
         self.btn_connector_color.clicked.connect(self._pick_connector_color)
         connector_form.addRow("Color", self.btn_connector_color)
-        self.chk_connector_arrow = QCheckBox("Arrow at endpoint")
+        self.chk_connector_arrow = WrapCheckBox("Arrow at endpoint")
         self.chk_connector_arrow.toggled.connect(self._connector_arrow_changed)
         connector_form.addRow(self.chk_connector_arrow)
         self.spin_connector_width = QDoubleSpinBox()
@@ -357,12 +361,10 @@ class PropertiesPanel(QWidget):
 
         # ---- multi piece ----
         self.multi = QGroupBox("Multiple selected")
-        mf = QFormLayout(self.multi)
+        mf = FitFormLayout(self.multi)
         self.lbl_count = QLabel("0")
         mf.addRow("Count", self.lbl_count)
-        align = QHBoxLayout()
-        align.setContentsMargins(0, 0, 0, 0)
-        align.setSpacing(3)
+        align = FlowLayout(spacing=3)
         align_actions = [
             ("L", "Align left edges", "left"),
             ("R", "Align right edges", "right"),
@@ -379,56 +381,56 @@ class PropertiesPanel(QWidget):
             button.setAccessibleName(tooltip)
             button.clicked.connect(
                 lambda _checked=False, fn=action: self.canvas.align(fn))
-            align.addWidget(button)
+            align.add(button)
         mf.addRow("Align", align)
-        dist = QHBoxLayout()
-        dh = QPushButton("Horizontal")
+        dist = FlowLayout()
+        dh = WrapButton("Horizontal")
         dh.setToolTip("Space selected nodes evenly from left to right.")
         dh.clicked.connect(lambda: self.canvas.distribute("h"))
-        dv = QPushButton("Vertical")
+        dv = WrapButton("Vertical")
         dv.setToolTip("Space selected nodes evenly from top to bottom.")
         dv.clicked.connect(lambda: self.canvas.distribute("v"))
-        dist.addWidget(dh)
-        dist.addWidget(dv)
+        dist.add(dh)
+        dist.add(dv)
         mf.addRow("Distribute", dist)
-        self.chk_allow_overlap = QCheckBox("Allow overlap")
+        self.chk_allow_overlap = WrapCheckBox("Allow overlap")
         self.chk_allow_overlap.setToolTip(
             "Off (default): align and distribute never leave nodes overlapping — "
             "colliding nodes are stacked side by side instead.")
         self.chk_allow_overlap.toggled.connect(self._allow_overlap_toggled)
         mf.addRow(self.chk_allow_overlap)
-        grp = QHBoxLayout()
+        grp = FlowLayout()
         bg = QPushButton("Group"); bg.clicked.connect(self.canvas.group)
-        bu = QPushButton("Ungroup"); bu.clicked.connect(self.canvas.ungroup)
-        grp.addWidget(bg); grp.addWidget(bu); mf.addRow("Glue", grp)
+        bu = WrapButton("Ungroup"); bu.clicked.connect(self.canvas.ungroup)
+        grp.add(bg); grp.add(bu); mf.addRow("Glue", grp)
         root.addWidget(self.multi)
 
         # ---- grid ----
-        g = QGroupBox("Canvas size & grid")
-        gf = QFormLayout(g)
-        self.chk_grid = QCheckBox("Show grid"); self.chk_grid.toggled.connect(self._apply_grid)
+        g = QGroupBox("Canvas size && grid")
+        gf = FitFormLayout(g)
+        self.chk_grid = WrapCheckBox("Show grid"); self.chk_grid.toggled.connect(self._apply_grid)
         gf.addRow(self.chk_grid)
-        self.chk_grid_top = QCheckBox("Grid over nodes")
+        self.chk_grid_top = WrapCheckBox("Grid over nodes")
         self.chk_grid_top.setToolTip(
             "Draw the grid above the artwork so it is always visible (this is "
             "how exports draw it). Turn off to keep the grid underneath.")
         self.chk_grid_top.toggled.connect(self._apply_grid)
         gf.addRow(self.chk_grid_top)
-        self.chk_centerlines = QCheckBox("Canvas centerlines (middle of the map)")
+        self.chk_centerlines = WrapCheckBox("Canvas centerlines (middle of the map)")
         self.chk_centerlines.setToolTip(
             "Draw a dashed horizontal and vertical line through the exact middle "
             "of the canvas. Nodes snap to them, and Edit → Center selection on "
             "canvas moves the selection onto them.")
         self.chk_centerlines.toggled.connect(self._apply_grid)
         gf.addRow(self.chk_centerlines)
-        self.chk_guides = QCheckBox("Show guides")
+        self.chk_guides = WrapCheckBox("Show guides")
         self.chk_guides.setToolTip(
             "Thin magenta guide lines. Drag one out of the rails along the "
             "canvas edges, drag it back onto a rail to remove it. Nodes and "
             "drawing tools snap to guides (hold Alt to ignore snapping).")
         self.chk_guides.toggled.connect(self._apply_guide_options)
         gf.addRow(self.chk_guides)
-        self.chk_coordinates = QCheckBox("Grid coordinates on rails (A1, B2…)")
+        self.chk_coordinates = WrapCheckBox("Grid coordinates on rails (A1, B2…)")
         self.chk_coordinates.setToolTip(
             "Label grid columns with letters and rows with numbers along the "
             "guide rails. Export dialogs can add the same labels as a border.")
@@ -452,16 +454,16 @@ class PropertiesPanel(QWidget):
         self.cmb_feet = QComboBox(); self.cmb_feet.addItems(["5 ft", "10 ft"])
         self.cmb_feet.currentTextChanged.connect(self._apply_grid)
         gf.addRow("Square =", self.cmb_feet)
-        self.btn_color = QPushButton("Grid color"); self.btn_color.clicked.connect(self._pick_color)
+        self.btn_color = WrapButton("Grid color"); self.btn_color.clicked.connect(self._pick_color)
         gf.addRow(self.btn_color)
-        row = QHBoxLayout()
+        row = FlowLayout()
         self.spin_cols = QSpinBox(); self.spin_cols.setRange(1, 200); self.spin_cols.setValue(30)
         self.spin_rows = QSpinBox(); self.spin_rows.setRange(1, 200); self.spin_rows.setValue(30)
         self.spin_cols.setToolTip("Canvas width in grid squares.")
         self.spin_rows.setToolTip("Canvas height in grid squares.")
         self.spin_cols.valueChanged.connect(self._apply_size)
         self.spin_rows.valueChanged.connect(self._apply_size)
-        row.addWidget(self.spin_cols); row.addWidget(QLabel("×")); row.addWidget(self.spin_rows)
+        row.add(self.spin_cols); row.add(fixed_label("×")); row.add(self.spin_rows, stick=True)
         gf.addRow("Canvas size (squares)", row)
         self.lbl_canvas_dimensions = QLabel("")
         self.lbl_canvas_dimensions.setWordWrap(True)
@@ -470,7 +472,7 @@ class PropertiesPanel(QWidget):
 
         # ---- backdrop (per level) ----
         self.backdrop_box = QGroupBox("Backdrop (this level)")
-        bdf = QFormLayout(self.backdrop_box)
+        bdf = FitFormLayout(self.backdrop_box)
         self.cmb_backdrop = QComboBox()
         for label, mode in (("Solid color", "color"), ("Floor texture", "texture"),
                             ("None (transparent)", "none")):
@@ -481,7 +483,7 @@ class PropertiesPanel(QWidget):
             "checkerboard; PNG exports keep the transparency).")
         self.cmb_backdrop.currentIndexChanged.connect(self._backdrop_mode_changed)
         bdf.addRow("Backdrop", self.cmb_backdrop)
-        self.btn_backdrop_color = QPushButton("Color…")
+        self.btn_backdrop_color = WrapButton("Color…")
         self.btn_backdrop_color.setToolTip(
             "The solid color, and the color under a floor texture.")
         self.btn_backdrop_color.clicked.connect(self._pick_backdrop_color)
@@ -489,14 +491,14 @@ class PropertiesPanel(QWidget):
         self.lbl_backdrop_texture = QLabel("No texture chosen")
         self.lbl_backdrop_texture.setWordWrap(True)
         bdf.addRow("Texture", self.lbl_backdrop_texture)
-        self.btn_backdrop_upload = QPushButton("Upload an image…")
+        self.btn_backdrop_upload = WrapButton("Upload an image…")
         self.btn_backdrop_upload.setToolTip(
             "Pick a floor texture from your computer (PNG, JPG, WEBP, BMP or TIFF). "
             "A copy goes into the library's Backdrops folder, so the map keeps "
             "finding it even if the original file moves.")
         self.btn_backdrop_upload.clicked.connect(self._upload_texture)
         bdf.addRow(self.btn_backdrop_upload)
-        self.btn_backdrop_texture = QPushButton("Use the highlighted library image")
+        self.btn_backdrop_texture = WrapButton("Use the highlighted library image")
         self.btn_backdrop_texture.setToolTip(
             "Click a floor texture in the library, then this button. (Or right-click "
             "an image in the library → Use as backdrop.)")
@@ -520,15 +522,15 @@ class PropertiesPanel(QWidget):
             "lighter floors).")
         self.sl_backdrop_opacity.valueChanged.connect(self._backdrop_value_changed)
         bdf.addRow("Texture strength", self.sl_backdrop_opacity)
-        self.btn_backdrop_all = QPushButton("Use this backdrop on every level")
+        self.btn_backdrop_all = WrapButton("Use this backdrop on every level")
         self.btn_backdrop_all.clicked.connect(self._backdrop_to_all_levels)
         bdf.addRow(self.btn_backdrop_all)
         root.addWidget(self.backdrop_box)
 
         # ---- reference overlay ----
         r = QGroupBox("Reference floor overlay")
-        rf = QFormLayout(r)
-        self.chk_ref = QCheckBox("Show reference floor"); self.chk_ref.toggled.connect(self._apply_ref)
+        rf = FitFormLayout(r)
+        self.chk_ref = WrapCheckBox("Show reference floor"); self.chk_ref.toggled.connect(self._apply_ref)
         rf.addRow(self.chk_ref)
         self.cmb_ref = QComboBox(); self.cmb_ref.addItems(["Floor below", "Floor above"])
         self.cmb_ref.currentIndexChanged.connect(self._apply_ref)
@@ -705,7 +707,7 @@ class PropertiesPanel(QWidget):
                 self.lbl_node_type.setText(
                     "Image node — lettering inside the source image is rasterized, "
                     "not editable text.")
-            self.lbl_name.setText(p.name)
+            self.lbl_name.setText(breakable(p.name))      # long file names wrap too
             self.lbl_name.setToolTip(p.name)
             position_controls = (self.spin_x, self.spin_y, self.spin_rot,
                                  self.spin_scale, self.sl_op,
@@ -1337,8 +1339,8 @@ class PropertiesPanel(QWidget):
         name = texture.replace("\\", "/").split("/")[-1] if texture else ""
         missing = bool(texture and self.project and not os.path.isfile(
             self.project.resolve_asset(texture)))
-        self.lbl_backdrop_texture.setText(
-            (f"{name} (missing)" if missing else name) if name else "No texture chosen")
+        self.lbl_backdrop_texture.setText(breakable(
+            (f"{name} (missing)" if missing else name) if name else "No texture chosen"))
         self.lbl_backdrop_texture.setToolTip(texture)
         mode = level.backdrop
         self.btn_backdrop_color.setEnabled(mode != "none")

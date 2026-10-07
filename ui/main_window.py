@@ -90,6 +90,14 @@ def save_recent(items: list, path: Optional[str] = None) -> bool:
 # right-click menu) and can be added back via View → Customize toolbar.
 COMPACT_TOOLBAR = ("new", "open", "save", "export", "undo", "redo", "generate")
 
+# The inspector (Node / Layers / Zones / History) can be dragged this narrow
+# at the normal text size; its rows wrap to fit. Larger text needs more room.
+INSPECTOR_MIN_WIDTH = 220
+
+
+def inspector_min_width(text_scale: float) -> int:
+    return max(INSPECTOR_MIN_WIDTH, int(round(INSPECTOR_MIN_WIDTH * float(text_scale or 1.0))))
+
 
 class GripSplitterHandle(QSplitterHandle):
     """Splitter bar with three grip dots so it is obviously draggable."""
@@ -550,7 +558,7 @@ class MainWindow(QMainWindow):
         right.addTab(self.layers, "Layers")
         right.addTab(self.zones, "Zones")
         right.addTab(self.hist, "History")
-        right.setMinimumWidth(220)
+        right.setMinimumWidth(INSPECTOR_MIN_WIDTH)
         right.tabBar().setUsesScrollButtons(False)
         right.tabBar().setExpanding(True)
         right.tabBar().setElideMode(Qt.TextElideMode.ElideNone)
@@ -1319,6 +1327,8 @@ class MainWindow(QMainWindow):
         text_scale = self.project.text_scale
         thememod.apply_stylesheet(app, self.theme_accent, text_scale,
                                   self.theme_mode)
+        # bigger text needs a wider inspector before its rows can fit
+        self.inspector.setMinimumWidth(inspector_min_width(text_scale))
         self.canvas.set_theme(self.theme_mode, self.theme_accent)
         self.minimap.set_theme(self.theme_mode, self.theme_accent)
         self.layers.set_theme(self.theme_mode, self.theme_accent)

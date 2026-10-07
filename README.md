@@ -433,6 +433,11 @@ bulk. Your choices (★) are saved with the asset store and always win.
   Minimap F5, Library F2, Inspector F3, floating node buttons), has
   **Workspace → Standard / Minimal / Canvas only**, and **Ctrl+\\** hides
   everything for a clean canvas (press again to restore). Choices are remembered.
+- The **inspector** (Node / Layers / Zones / History) can be dragged as narrow
+  as 220 px — wider with a bigger **Text size** — and stays readable: when a
+  section gets tight its labels move above the fields, long buttons, checkboxes
+  and file names wrap onto more lines, and rows of buttons continue on the next
+  line, so nothing is cut off.
 - Levels: right-click a tab (add, rename, move, delete) or **Edit → Levels**.
   Layers: right-click the list. Library: the **☰** button next to search holds
   import, collections, thumbnail size (presets up to 360 px, a custom slider, or
