@@ -6,7 +6,8 @@ import math
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QTimer, pyqtSignal
+from PyQt6.QtCore import (Qt, QObject, QPoint, QPointF, QRectF, QRunnable, QSize,
+                          QThreadPool, QTimer, pyqtSignal)
 from PyQt6.QtGui import (
     QImageReader, QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont,
     QPolygonF,
@@ -28,6 +29,38 @@ RESIZE_HANDLES = {
     "se": (1, 1), "s": (0, 1), "sw": (-1, 1), "w": (-1, 0),
 }
 GUIDE_DIST = 12  # screen px threshold for smart guides
+
+
+class _BoundsSignals(QObject):
+    done = pyqtSignal(str, object)       # piece id, bounds or None
+
+
+class _BoundsTask(QRunnable):
+    """Find the visible-pixel bounds of one image off the GUI thread."""
+
+    def __init__(self, piece_id: str, path: str, embedded: str,
+                 signals: _BoundsSignals):
+        super().__init__()
+        self.piece_id, self.path, self.embedded = piece_id, path, embedded
+        self.signals = signals
+
+    def run(self):
+        from ui.image_utils import visible_bounds_for_file, visible_bounds_for_image
+        bounds = None
+        try:
+            if self.embedded:
+                from PyQt6.QtGui import QImage
+                from core.project import decode_embed
+                bounds = visible_bounds_for_image(
+                    QImage.fromData(decode_embed(self.embedded)))
+            elif self.path:
+                bounds = visible_bounds_for_file(self.path)
+        except Exception:
+            bounds = None
+        try:
+            self.signals.done.emit(self.piece_id, bounds)
+        except RuntimeError:
+            pass
 
 
 class CanvasView(QWidget):
@@ -85,6 +118,14 @@ class CanvasView(QWidget):
         self._marquee: Optional[QRectF] = None
         self._cursor_world = (-1.0, -1.0)
         self._guides: list[tuple[str, float]] = []  # ("v", x) or ("h", y)
+        self.quick_enabled = False   # floating node buttons; right-click covers them
+        self.auto_tighten = True     # trim transparent margins when nodes are placed
+        self._suppress_history = False
+        self._bounds_signals = _BoundsSignals()
+        self._bounds_signals.done.connect(self._bounds_ready)
+        self._bounds_pool = QThreadPool(self)
+        self._bounds_pool.setMaxThreadCount(1)
+        self._bounds_wait: dict[str, bool] = {}   # piece id -> only if still untouched
         self.allow_overlap = False   # align/distribute may overlap nodes only when on
         self.free_transform = False
         self._ft_backup: dict | None = None
@@ -464,6 +505,8 @@ class CanvasView(QWidget):
     def push_history(self, label: str, coalesce: bool = False):
         """Snapshot before an edit. ``coalesce`` merges rapid repeats of the
         same label (slider drags, held keys) into one undo step."""
+        if self._suppress_history:
+            return
         if self.free_transform and label in ("Resize", "Rotate", "Move"):
             # a whole free-transform session is a single undo step
             if self._ft_pushed:
@@ -860,8 +903,11 @@ class CanvasView(QWidget):
                 else:
                     lock_button.setText("L")
                     lock_button.setToolTip("Lock all selected nodes")
-            self.quick.show()
-            self.quick.move(self.width() - self.quick.width() - 6, 6)
+            if self.quick_enabled:
+                self.quick.show()
+                self.quick.move(self.width() - self.quick.width() - 6, 6)
+            else:
+                self.quick.hide()
         else:
             self.quick.hide()
 
@@ -926,8 +972,12 @@ class CanvasView(QWidget):
         feet = max(1, int(getattr(self.project, "feet_per_square", 5) or 5))
         if named and named[0] > 0 and named[1] > 0 and (
                 px_w >= named[0] * 4 or px_h >= named[1] * 4):
-            w = named[0] / feet * cell
-            h = named[1] / feet * cell
+            # One uniform factor, so the image keeps its own proportions even
+            # when the nominal name and the pixels disagree slightly.
+            fx = named[0] / feet * cell / max(1, px_w)
+            fy = named[1] / feet * cell / max(1, px_h)
+            factor = math.sqrt(fx * fy)
+            w, h = px_w * factor, px_h * factor
         limit = 0.34 * min(self.project.canvas_w, self.project.canvas_h)
         if max(w, h) > limit and not (named and px_w >= named[0] * 4):
             f = limit / max(w, h)
@@ -952,7 +1002,79 @@ class CanvasView(QWidget):
         self.level.add(p)
         self.select([p])
         self.dirty.emit()
+        if self.auto_tighten and not is_overlay:
+            self.tighten_piece_async(p, only_if_untouched=True)
         return p
+
+    # -- tighten to visible pixels ---------------------------------------
+    def tighten_piece_async(self, piece: Piece, only_if_untouched=False) -> bool:
+        """Trim a node to its visible pixels (non-destructive crop). Cached
+        results apply immediately; otherwise the image is analysed in the
+        background and the node is trimmed when that finishes."""
+        if piece.is_text or piece.is_patch or piece.is_connector or piece.is_scale_bar:
+            return False
+        path = ("" if piece.embedded else
+                (self.project.resolve_asset(piece.asset_path) if piece.asset_path else ""))
+        if path:
+            from ui.image_utils import peek_visible_bounds
+            cached = peek_visible_bounds(path)
+            if cached is not None:
+                return self._apply_tighten(piece, cached, only_if_untouched)
+        elif not piece.embedded:
+            return False
+        self._bounds_wait[piece.id] = only_if_untouched
+        self._bounds_pool.start(_BoundsTask(
+            piece.id, path, piece.embedded, self._bounds_signals))
+        return True
+
+    def tighten_selected(self) -> int:
+        """Trim every selected image node to its visible pixels."""
+        count = 0
+        for piece in self.selected_pieces():
+            if self.tighten_piece_async(piece):
+                count += 1
+        if count:
+            self.statusMessage.emit(
+                f"Tightening {count} node(s) to their visible pixels…")
+        return count
+
+    def _bounds_ready(self, piece_id: str, bounds):
+        only_if_untouched = self._bounds_wait.pop(piece_id, False)
+        if bounds is None or not self.project:
+            return
+        for level in self.project.levels:
+            for piece in level.pieces:
+                if piece.id == piece_id:
+                    self._apply_tighten(piece, bounds, only_if_untouched)
+                    return
+
+    def _apply_tighten(self, piece: Piece, bounds, only_if_untouched=False) -> bool:
+        crop = piece.crop_rect
+        if only_if_untouched and list(crop) != [0.0, 0.0, 1.0, 1.0]:
+            return False
+        left, top = max(bounds[0], crop[0]), max(bounds[1], crop[1])
+        right, bottom = min(bounds[2], crop[2]), min(bounds[3], crop[3])
+        crop_w, crop_h = crop[2] - crop[0], crop[3] - crop[1]
+        if right <= left or bottom <= top or crop_w <= 0 or crop_h <= 0:
+            return False
+        fractions = ((left - crop[0]) / crop_w, (top - crop[1]) / crop_h,
+                     (right - crop[0]) / crop_w, (bottom - crop[1]) / crop_h)
+        if (fractions[0] < 0.002 and fractions[1] < 0.002
+                and fractions[2] > 0.998 and fractions[3] > 0.998):
+            return False          # already as tight as it gets
+        if only_if_untouched:
+            self._suppress_history = True   # part of the placement, not its own step
+        try:
+            if not self._apply_crop(piece, fractions):
+                return False
+        finally:
+            self._suppress_history = False
+        if only_if_untouched and piece.snap and piece.rotation == 0:
+            cell = max(1, self.project.cell_size)
+            piece.x = snap_value(piece.x, cell)
+            piece.y = snap_value(piece.y, cell)
+        self.update()
+        return True
 
     def add_embedded(self, b64: str, world_x, world_y, name="Custom") -> Piece:
         size = exporter.embedded_size(b64)
@@ -1004,7 +1126,9 @@ class CanvasView(QWidget):
         cx, cy = p.center
         scx, scy = self.world_to_screen(cx, cy)
         ang = math.radians(p.rotation)
-        ux = -math.sin(ang)
+        # the node's local "up" (0, -1) after the same clockwise rotation the
+        # painter applies, so the handle always sits on the box's top edge
+        ux = math.sin(ang)
         uy = -math.cos(ang)
         half_h = (p.vis_h / 2.0) * self.zoom
         return QPointF(scx + ux * (half_h + HANDLE_DIST), scy + uy * (half_h + HANDLE_DIST))
@@ -1322,8 +1446,22 @@ class CanvasView(QWidget):
         for gy in range(int(start_y), int(wy1) + cell, cell):
             _, sy = self.world_to_screen(0, gy)
             painter.drawLine(0, int(sy), vw, int(sy))
+        if getattr(self.project, "show_centerlines", False):
+            half = cell / 2.0
+            mid_pen = QPen(QColor(color))
+            mid_pen.setWidthF(1)
+            mid_pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setOpacity(opacity * 0.45)
+            painter.setPen(mid_pen)
+            for gx in range(int(start_x), int(wx1) + cell, cell):
+                sx, _ = self.world_to_screen(gx + half, 0)
+                painter.drawLine(int(sx), 0, int(sx), vh)
+            for gy in range(int(start_y), int(wy1) + cell, cell):
+                _, sy = self.world_to_screen(0, gy + half)
+                painter.drawLine(0, int(sy), vw, int(sy))
         pen.setWidthF(max(2.0, self.zoom * 1.4))
         painter.setOpacity(opacity)
+        painter.setPen(pen)
         step = cell * max(1, self.project.grid_major)
         for gx in range(int(start_x), int(wx1) + cell, step):
             sx, _ = self.world_to_screen(gx, 0)
@@ -1574,11 +1712,13 @@ class CanvasView(QWidget):
         hp = self._rotate_handle_screen(p)
         painter.setPen(QPen(QColor(self.theme_accent), 2))
         painter.setBrush(QBrush(QColor(self.theme_accent)))
-        painter.drawEllipse(hp, HANDLE_R, HANDLE_R)
+        scx, scy = self.world_to_screen(*p.center)
         ang = math.radians(p.rotation)
-        ex = (p.center[0] * self.zoom + self.pan_x) + (-math.sin(ang)) * (p.vis_h / 2 * self.zoom + 6)
-        ey = (p.center[1] * self.zoom + self.pan_y) + (-math.cos(ang)) * (p.vis_h / 2 * self.zoom + 6)
-        painter.drawLine(int(ex), int(ey), int(hp.x()), int(hp.y()))
+        half_h = p.vis_h / 2.0 * self.zoom
+        # stem starts exactly on the middle of the box's top edge
+        edge = QPointF(scx + math.sin(ang) * half_h, scy - math.cos(ang) * half_h)
+        painter.drawLine(edge, hp)
+        painter.drawEllipse(hp, HANDLE_R, HANDLE_R)
 
     def _draw_group_arrows(self, painter):
         sel = self.selected_pieces()
@@ -2072,7 +2212,7 @@ class CanvasView(QWidget):
                                   r.width() / self.zoom, r.height() / self.zoom)
             self.update()
         elif mode == "group_rotate":
-            self._apply_group_rotate(sx, sy)
+            self._apply_group_rotate(sx, sy, e.modifiers())
             self.update()
         wx, wy = self.screen_to_world(sx, sy)
         self._cursor_world = (wx, wy)
@@ -2107,8 +2247,9 @@ class CanvasView(QWidget):
             y_edges += [by0, (by0 + by1) / 2.0, by1]
 
         grid = cell if primary.snap else None
-        tgt_x, guide_x = self._nearest_target(raw_x, x_offs, x_edges, thr, grid)
-        tgt_y, guide_y = self._nearest_target(raw_y, y_offs, y_edges, thr, grid)
+        mid = bool(getattr(self.project, "show_centerlines", False))
+        tgt_x, guide_x = self._nearest_target(raw_x, x_offs, x_edges, thr, grid, mid)
+        tgt_y, guide_y = self._nearest_target(raw_y, y_offs, y_edges, thr, grid, mid)
 
         # rigid delta from the primary, applied to the whole selection
         dx = tgt_x - primary.x
@@ -2141,12 +2282,13 @@ class CanvasView(QWidget):
                 (y0 - p.y, (y0 + y1) / 2.0 - p.y, y1 - p.y))
 
     @staticmethod
-    def _nearest_target(raw, offsets, edges, threshold, grid_step):
+    def _nearest_target(raw, offsets, edges, threshold, grid_step, center_half=False):
         """Pick the closest snap target for a dragged edge-set.
 
         offsets:   this piece's edge positions relative to its x (or y).
         edges:     absolute edge positions of neighboring pieces.
         grid_step: grid size (None when the piece does not snap to the grid).
+        center_half: the piece's center may also land on centerlines (half steps).
         Any edge of the piece may land on a grid line or on any neighbor edge
         within ``threshold``; the nearest wins and neighbors win ties. When
         nothing is in range a gridded piece still rounds its origin to the grid.
@@ -2154,8 +2296,9 @@ class CanvasView(QWidget):
         """
         best_d, best_t, best_g = None, raw, None
         if grid_step:
-            for off in offsets:
-                line = round((raw + off) / grid_step) * grid_step
+            for index, off in enumerate(offsets):
+                step = grid_step / 2.0 if (center_half and index == 1) else grid_step
+                line = round((raw + off) / step) * step
                 t = line - off
                 d = abs(t - raw)
                 if d <= threshold and (best_d is None or d < best_d - 1e-9):
@@ -2172,19 +2315,32 @@ class CanvasView(QWidget):
             best_t = round(raw / grid_step) * grid_step
         return best_t, best_g
 
+    ROTATE_STEP = 15.0        # degrees between snap stops
+    ROTATE_SNAP_RANGE = 5.0   # how close counts as "on" a stop
+
+    def _snap_angle(self, angle: float, mods) -> float:
+        """Rotation snapping. Default: pull to the nearest 15° stop (so 0, 45,
+        90… are easy to hit) when within a few degrees. Shift: always step by
+        15°. Alt: fully free."""
+        if mods & Qt.KeyboardModifier.AltModifier:
+            return angle % 360
+        stop = round(angle / self.ROTATE_STEP) * self.ROTATE_STEP
+        if (mods & Qt.KeyboardModifier.ShiftModifier
+                or abs(angle - stop) <= self.ROTATE_SNAP_RANGE):
+            angle = stop
+        return angle % 360
+
     def _rotate_primary(self, sx, sy, e):
         p = next(iter(self.selected_pieces()))
         cx, cy = p.center
         scx, scy = self.world_to_screen(cx, cy)
         ang = math.degrees(math.atan2(sy - scy, sx - scx)) + 90
-        if e.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-            ang = round(ang / 15.0) * 15.0
-        p.rotation = ang % 360
+        p.rotation = self._snap_angle(ang, e.modifiers())
 
     def _begin_group_rotate(self, sx, sy):
         self._drag = {"mode": "group_rotate", "center": self._centroid()}
 
-    def _apply_group_rotate(self, sx, sy):
+    def _apply_group_rotate(self, sx, sy, mods=Qt.KeyboardModifier.NoModifier):
         sel = self.selected_pieces()
         if not sel:
             return
@@ -2196,7 +2352,9 @@ class CanvasView(QWidget):
             self._gr_base = ang
             self._gr_start = {p.id: p.rotation for p in sel}
             return
-        delta = ang - self._gr_base
+        delta = self._snap_angle(ang - self._gr_base, mods)
+        if delta > 180:
+            delta -= 360
         for p in sel:
             p.rotation = (self._gr_start[p.id] + delta) % 360
 
@@ -2292,6 +2450,10 @@ class CanvasView(QWidget):
             self.clear_selection()
         self.update()
         self.contextMenuRequested.emit(e.globalPosition().toPoint(), hit)
+
+    def set_quick_enabled(self, on: bool):
+        self.quick_enabled = bool(on)
+        self._update_quick()
 
     def set_solo_layer(self, layer_id: str | None):
         self.solo_layer_id = layer_id

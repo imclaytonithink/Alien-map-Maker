@@ -54,6 +54,7 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         add(menu, "Select similar", main._select_similar)
         add(menu, "Copy style…", main._start_copy_style)
         add(menu, "Replace image…", main._replace_selected_image)
+        add(menu, "Tighten to visible pixels", canvas.tighten_selected)
     else:
         add(menu, "Paste", canvas.paste, bool(canvas._clipboard))
         add(menu, "Add text", main._add_text)

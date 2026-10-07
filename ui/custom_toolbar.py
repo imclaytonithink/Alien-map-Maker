@@ -177,11 +177,23 @@ class CustomizableToolBar(QToolBar):
     customizeRequested = pyqtSignal()
 
     def __init__(self, title: str, actions: dict[str, object], settings,
-                 parent=None):
+                 parent=None, default_visible=None, layout_version=1):
         super().__init__(title, parent)
         self._actions = dict(actions)
         self._settings = settings
         self._default_order = list(actions)
+        # Only a compact set shows by default; everything else stays one click
+        # away in the menus, or can be switched on via Customize toolbar.
+        self._default_visible = [tool_id for tool_id in self._default_order
+                                 if default_visible is None
+                                 or tool_id in default_visible]
+        try:
+            saved_version = int(settings.value("toolbar/layout_version", 0))
+        except (TypeError, ValueError):
+            saved_version = 0
+        if saved_version < layout_version:
+            settings.setValue("toolbar/visible", self._default_visible)
+            settings.setValue("toolbar/layout_version", layout_version)
         self.setMovable(False)
         self.setFloatable(False)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -218,7 +230,7 @@ class CustomizableToolBar(QToolBar):
         return valid
 
     def _load_visible_ids(self) -> set[str]:
-        saved = self._read_string_list("toolbar/visible", self._default_order)
+        saved = self._read_string_list("toolbar/visible", self._default_visible)
         return {tool_id for tool_id in saved if tool_id in self._actions}
 
     def _save_order(self, order):
@@ -238,14 +250,15 @@ class CustomizableToolBar(QToolBar):
 
     def reset_to_default(self):
         self.order = list(self._default_order)
-        self.visible_ids = set(self._default_order)
+        self.visible_ids = set(self._default_visible)
         self.contents.order = list(self.order)
         self.contents.visible_ids = set(self.visible_ids)
-        for button in self.contents.buttons.values():
-            button.setVisible(True)
+        for tool_id, button in self.contents.buttons.items():
+            button.setVisible(tool_id in self.visible_ids)
         self.contents._sync_layout()
         self._settings.setValue("toolbar/order", self.order)
-        self._settings.setValue("toolbar/visible", self.order)
+        self._settings.setValue("toolbar/visible", [
+            tool_id for tool_id in self.order if tool_id in self.visible_ids])
         self._settings.sync()
 
     def _show_context_menu(self, position):

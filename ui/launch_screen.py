@@ -92,12 +92,10 @@ class LaunchScreen(QDialog):
 
         tog = QHBoxLayout()
         self.cb_scan = QCheckBox("Scanlines")
-        self.cb_boot = QCheckBox("Boot text")
         self.cb_cur = QCheckBox("Blink cursor")
         self.cb_scan.setChecked(False)
-        self.cb_boot.setChecked(False)
         self.cb_cur.setChecked(False)
-        tog.addWidget(self.cb_scan); tog.addWidget(self.cb_boot); tog.addWidget(self.cb_cur)
+        tog.addWidget(self.cb_scan); tog.addWidget(self.cb_cur)
         root.addLayout(tog)
 
         ts = QHBoxLayout()
@@ -129,5 +127,4 @@ class LaunchScreen(QDialog):
         return {"theme_mode": self.theme_mode,
                 "accent": self.accent, "text_scale": self.sl_ts.value() / 11.0,
                 "scanlines": alien and self.cb_scan.isChecked(),
-                "boot": alien and self.cb_boot.isChecked(),
                 "cursor": alien and self.cb_cur.isChecked()}

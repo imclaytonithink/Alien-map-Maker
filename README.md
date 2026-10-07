@@ -25,7 +25,7 @@ canvas properties or from **View → Canvas size**. No placeholder art ships in
 the library (older builds copied demo images into the store; those untouched
 copies are removed automatically). Choose a persistent app-wide appearance: **Dark**,
 **Light**, or **Alien / MU-TH-UR**. The Alien appearance includes optional
-scanlines and boot text, and Green / Amber / Red accents. Press **ESC** any time
+scanlines and Green / Amber / Red accents. Press **ESC** any time
 to bring the menu back up — it has Save, Open, PNG/PDF/Tabletop
 Simulator/project-pack export, recent-map management, appearance, and auto-save
 settings.
@@ -240,6 +240,24 @@ clearly reports skipped GUI checks.
   on placement, so a 100x100 ft tile is 20x20 squares. New maps default to
   60x60 squares. Library previews are cached on disk after the first decode.
 
+### Workspace, menus and right-click
+- The screen is kept clear for the canvas: the toolbar shows only New / Open /
+  Save / Export / Undo / Redo / Generate by default; everything else is in the
+  menus, the right-click menu and the command palette (Ctrl+Shift+P).
+- **View** toggles every bar and panel (Toolbar F4, Status bar, Level tabs,
+  Minimap F5, Library F2, Inspector F3, floating node buttons), has
+  **Workspace → Standard / Minimal / Canvas only**, and **Ctrl+\\** hides
+  everything for a clean canvas (press again to restore). Choices are remembered.
+- Levels: right-click a tab (add, rename, move, delete) or **Edit → Levels**.
+  Layers: right-click the list. Library: the **☰** button next to search holds
+  import, collections, thumbnail size (presets up to 360 px, a custom slider, or
+  Ctrl+wheel over the list), the folder-tree toggle and store tools.
+- Rotation snaps to 15° stops (hold **Shift** to always step, **Alt** for free).
+- **Centerlines** (Node panel → grid) draw a dashed line through each square;
+  node centers snap to them. New nodes are **auto-tightened** to their visible
+  pixels (a non-destructive crop, so transparent margins no longer spoil grid
+  snapping); use Edit → Tighten selected, or turn auto-tighten off in the Edit menu.
+
 ### Keyboard reference
 | Key | Action |
 |---|---|
@@ -250,7 +268,7 @@ clearly reports skipped GUI checks.
 | Ctrl+Z / Ctrl+Y | Undo / Redo |
 | Ctrl+S / Ctrl+O / Ctrl+N | Save / Open / New |
 | Ctrl+Shift+P | Command palette (search every menu command) |
-| F2 / F3 / Ctrl+\\ | Toggle Library / Inspector / both panels |
+| F2 / F3 / F4 / F5 / Ctrl+\\ | Library / Inspector / Toolbar / Minimap / everything |
 | Right-click (no drag) | Context menu; right-drag still pans |
 | Drag a handle | Resize: corners keep proportions, **Shift** frees them; edges stretch one axis; **Alt** resizes from the center |
 | Ctrl+T | Free transform: corners are free (Shift locks), Enter applies, Esc cancels; the whole session is one undo step |

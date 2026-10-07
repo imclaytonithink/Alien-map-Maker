@@ -55,6 +55,11 @@ def save_recent(items: list):
         pass
 
 
+# Tools shown on the toolbar by default; the rest live in the menus (and the
+# right-click menu) and can be added back via View → Customize toolbar.
+COMPACT_TOOLBAR = ("new", "open", "save", "export", "undo", "redo", "generate")
+
+
 class GripSplitterHandle(QSplitterHandle):
     """Splitter bar with three grip dots so it is obviously draggable."""
 
@@ -86,7 +91,7 @@ class Minimap(QWidget):
         super().__init__(parent)
         self.canvas = canvas
         self._drag = False
-        self.setFixedSize(170, 170)
+        self.setFixedSize(150, 150)
         self.setToolTip("Map overview. Click or drag to center the main view.")
         self.set_theme("dark", "#69b7f5")
         canvas.dirty.connect(self.update)
@@ -268,20 +273,35 @@ class LevelBar(QWidget):
         self.tabs.currentChanged.connect(self._on_current)
         self.tabs.tabBarDoubleClicked.connect(self._rename)
         layout.addWidget(self.tabs, 1)
-        level_actions = [
-            ("+", "Add a level", self._add),
-            ("–", "Delete the selected level", self._remove),
-            ("▲", "Move the selected level earlier", lambda: self._shift(-1)),
-            ("▼", "Move the selected level later", lambda: self._shift(1)),
-        ]
-        for label, tooltip, callback in level_actions:
-            button = QPushButton(label)
-            button.setObjectName("PanelIconButton")
-            button.setFixedSize(38, 34)
-            button.setToolTip(tooltip)
-            button.setAccessibleName(tooltip)
-            button.clicked.connect(callback)
-            layout.addWidget(button)
+        # One small "+" button; everything else is on the tabs' right-click menu
+        # (and Edit → Levels), which keeps the strip slim.
+        button = QPushButton("+")
+        button.setObjectName("PanelIconButton")
+        button.setFixedSize(34, 30)
+        button.setToolTip("Add a level (right-click a tab for more)")
+        button.setAccessibleName("Add a level")
+        button.clicked.connect(self._add)
+        layout.addWidget(button)
+        self.tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tabs.customContextMenuRequested.connect(self._tab_menu)
+
+    def _tab_menu(self, pos):
+        index = self.tabs.tabAt(pos)
+        if index >= 0:
+            self.tabs.setCurrentIndex(index)
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.addAction("Add level", self._add)
+        if index >= 0:
+            menu.addAction("Rename…", lambda: self._rename(index))
+            menu.addSeparator()
+            earlier = menu.addAction("Move earlier", lambda: self._shift(-1))
+            earlier.setEnabled(index > 0)
+            later = menu.addAction("Move later", lambda: self._shift(1))
+            later.setEnabled(index < self.tabs.count() - 1)
+            menu.addSeparator()
+            menu.addAction("Delete level", self._remove)
+        menu.exec(self.tabs.mapToGlobal(pos))
 
     def set_project(self, project: Project):
         self.project = project
@@ -370,8 +390,6 @@ class MainWindow(QMainWindow):
             self.theme_accent = thememod.DEFAULT_ACCENT
         self.alien_scanlines = self.settings.value(
             "appearance/alien_scanlines", True, type=bool)
-        self.alien_boot_text = self.settings.value(
-            "appearance/alien_boot_text", True, type=bool)
         try:
             self.autosave_interval_minutes = int(
                 self.settings.value("autosave/interval_minutes", 5))
@@ -435,32 +453,23 @@ class MainWindow(QMainWindow):
         self.canvas.dirty.connect(self._mark_dirty)
         self.canvas.cursorMoved.connect(self._on_cursor)
         self.canvas.historyPush.connect(self._push_history)
+        self.canvas.auto_tighten = self.settings.value(
+            "editing/auto_tighten", True, type=bool)
         self.canvas.contextMenuRequested.connect(self._show_canvas_menu)
         self.canvas.historyDiscardLast.connect(self._discard_last_history)
         center_col.addWidget(self.canvas, 1)
 
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(4, 4, 4, 4)
-        zoom_actions = [
-            ("−", "Zoom out", lambda: self.canvas.set_zoom(self.canvas.zoom / 1.2)),
-            ("+", "Zoom in", lambda: self.canvas.set_zoom(self.canvas.zoom * 1.2)),
-            ("Fit", "Fit the whole map in the canvas", self.canvas.fit_to_view),
-            ("50%", "Set zoom to 50%", lambda: self.canvas.set_zoom(0.5)),
-            ("100%", "Set zoom to 100%", lambda: self.canvas.set_zoom(1.0)),
-            ("200%", "Set zoom to 200%", lambda: self.canvas.set_zoom(2.0)),
-        ]
-        for label, tooltip, callback in zoom_actions:
-            button = QPushButton(label)
-            button.setToolTip(tooltip)
-            button.clicked.connect(callback)
-            bottom.addWidget(button)
+        # The map overview floats over a corner of the canvas (View → Minimap)
+        # instead of taking a permanent strip; zoom lives in the status bar,
+        # the View menu and the mouse wheel.
         self.minimap = Minimap(self.canvas)
-        bottom.addWidget(self.minimap)
-        bottom.addStretch(1)
+        self.minimap.setParent(self.canvas)
+        self.minimap.raise_()
+        self.canvas.installEventFilter(self)
         center_widget = QWidget()
         cb = QVBoxLayout(center_widget)
+        cb.setContentsMargins(0, 0, 0, 0)
         cb.addLayout(center_col, 1)
-        cb.addLayout(bottom)
         self.splitter.addWidget(center_widget)
 
         right = QTabWidget()
@@ -493,9 +502,11 @@ class MainWindow(QMainWindow):
         self._build_status()
 
         self.scanlines = thememod.ScanlineOverlay(self, self.theme_accent)
-        self.boot = thememod.BootOverlay(self, self.theme_accent)
         # in-window system menu (ESC) — created last so it stacks on top
         self.overlay = MenuOverlay(self)
+        self._restore_view()
+        self._sync_view_actions()
+        self.splitter.splitterMoved.connect(lambda *_: self._sync_view_actions())
 
     # -- panel layout -------------------------------------------------------
     def _save_layout(self):
@@ -515,34 +526,127 @@ class MainWindow(QMainWindow):
         self.splitter.setSizes(self.DEFAULT_PANEL_SIZES)
         self._save_layout()
 
-    def _toggle_panel(self, index):
+    def _panel_visible(self, index) -> bool:
+        return self.splitter.sizes()[index] > 0
+
+    def _set_panel(self, index, on: bool, save=True):
         sizes = self.splitter.sizes()
-        if sizes[index] > 0:
+        if on and sizes[index] == 0:
+            want = self._panel_memory.get(index, self.DEFAULT_PANEL_SIZES[index])
+            sizes[1] = max(200, sizes[1] - want)
+            sizes[index] = want
+        elif not on and sizes[index] > 0:
             self._panel_memory[index] = sizes[index]
             sizes[1] += sizes[index]
             sizes[index] = 0
         else:
-            want = self._panel_memory.get(
-                index, self.DEFAULT_PANEL_SIZES[index])
-            sizes[1] = max(200, sizes[1] - want)
-            sizes[index] = want
+            return
         self.splitter.setSizes(sizes)
-        self._save_layout()
+        if save:
+            self._save_layout()
+
+    def _toggle_panel(self, index):
+        self._set_panel(index, not self._panel_visible(index))
+        self._sync_view_actions()
+
+    # -- view toggles (Photoshop-style Window menu) ------------------------
+    VIEW_ITEMS = ("toolbar", "status", "levels", "minimap", "quick",
+                  "library", "inspector")
+    VIEW_DEFAULTS = {"toolbar": True, "status": True, "levels": True,
+                     "minimap": True, "quick": False, "library": True,
+                     "inspector": True}
+    VIEW_LABELS = {"toolbar": "Toolbar", "status": "Status bar",
+                   "levels": "Level tabs", "minimap": "Minimap",
+                   "quick": "Floating node buttons", "library": "Library panel",
+                   "inspector": "Inspector panel"}
+    WORKSPACES = {
+        "Standard": dict(VIEW_DEFAULTS),
+        "Minimal": {**VIEW_DEFAULTS, "toolbar": False, "minimap": False},
+        "Canvas only": {name: False for name in VIEW_DEFAULTS},
+    }
+
+    def _view_get(self, name: str) -> bool:
+        if name == "toolbar":
+            return self.toolbar.isVisibleTo(self)
+        if name == "status":
+            return self.statusBar().isVisibleTo(self)
+        if name == "levels":
+            return self.level_bar.isVisibleTo(self)
+        if name == "minimap":
+            return self.minimap.isVisibleTo(self.canvas)
+        if name == "quick":
+            return self.canvas.quick_enabled
+        if name == "library":
+            return self._panel_visible(0)
+        return self._panel_visible(2)
+
+    def _view_set(self, name: str, on: bool, save=True):
+        on = bool(on)
+        if name == "toolbar":
+            self.toolbar.setVisible(on)
+        elif name == "status":
+            self.statusBar().setVisible(on)
+        elif name == "levels":
+            self.level_bar.setVisible(on)
+        elif name == "minimap":
+            self.minimap.setVisible(on)
+            self._place_minimap()
+        elif name == "quick":
+            self.canvas.set_quick_enabled(on)
+        elif name == "library":
+            self._set_panel(0, on, save=False)
+        elif name == "inspector":
+            self._set_panel(2, on, save=False)
+        if save:
+            self.settings.setValue(f"view/{name}", on)
+            if name in ("library", "inspector"):
+                self._save_layout()
+        self._sync_view_actions()
+
+    def _view_snapshot(self) -> dict:
+        return {name: self._view_get(name) for name in self.VIEW_ITEMS}
+
+    def _apply_view(self, state: dict):
+        for name in self.VIEW_ITEMS:
+            self._view_set(name, state.get(name, self.VIEW_DEFAULTS[name]))
+
+    def _restore_view(self):
+        state = {}
+        for name in self.VIEW_ITEMS:
+            state[name] = self.settings.value(
+                f"view/{name}", self.VIEW_DEFAULTS[name], type=bool)
+        # panels are restored from the saved splitter sizes instead
+        for name in ("library", "inspector"):
+            state[name] = self._view_get(name)
+        for name in self.VIEW_ITEMS:
+            if name not in ("library", "inspector"):
+                self._view_set(name, state[name], save=False)
+
+    def _sync_view_actions(self):
+        for name, action in getattr(self, "view_actions", {}).items():
+            action.blockSignals(True)
+            action.setChecked(self._view_get(name))
+            action.blockSignals(False)
+
+    def _place_minimap(self):
+        margin = 10
+        self.minimap.move(margin, self.canvas.height() - self.minimap.height() - margin)
+        self.minimap.raise_()
+
+    def eventFilter(self, obj, event):
+        if obj is self.canvas and event.type() == QEvent.Type.Resize:
+            self._place_minimap()
+        return super().eventFilter(obj, event)
 
     def _toggle_focus_canvas(self):
-        sizes = self.splitter.sizes()
-        if sizes[0] or sizes[2]:
-            for i in (0, 2):
-                if sizes[i]:
-                    self._panel_memory[i] = sizes[i]
-            self.splitter.setSizes([0, sum(sizes), 0])
+        """Hide every bar and panel for a clean canvas; press again to restore."""
+        if any(self._view_get(n) for n in ("toolbar", "status", "levels",
+                                           "minimap", "library", "inspector")):
+            self._focus_restore = self._view_snapshot()
+            self._apply_view(self.WORKSPACES["Canvas only"])
         else:
-            self.splitter.setSizes([
-                self._panel_memory.get(0, self.DEFAULT_PANEL_SIZES[0]),
-                max(200, sum(sizes) - self._panel_memory.get(0, self.DEFAULT_PANEL_SIZES[0])
-                    - self._panel_memory.get(2, self.DEFAULT_PANEL_SIZES[2])),
-                self._panel_memory.get(2, self.DEFAULT_PANEL_SIZES[2])])
-        self._save_layout()
+            self._apply_view(getattr(self, "_focus_restore", None)
+                             or self.WORKSPACES["Standard"])
 
     # -- command discovery --------------------------------------------------
     def _open_palette(self):
@@ -603,6 +707,18 @@ class MainWindow(QMainWindow):
         e.addAction("Select similar", self._select_similar)
         e.addAction("Copy style…", self._start_copy_style)
         e.addAction("Replace selected image…", self._replace_selected_image)
+        levels_menu = e.addMenu("Levels")
+        levels_menu.addAction("Add level", lambda: self.level_bar._add())
+        levels_menu.addAction("Delete current level", lambda: self.level_bar._remove())
+        levels_menu.addAction("Move current level earlier", lambda: self.level_bar._shift(-1))
+        levels_menu.addAction("Move current level later", lambda: self.level_bar._shift(1))
+        e.addAction(self._act("Tighten selected to visible pixels",
+                              self.canvas.tighten_selected))
+        self.act_auto_tighten = QAction("Auto-tighten new nodes to visible pixels", self)
+        self.act_auto_tighten.setCheckable(True)
+        self.act_auto_tighten.setChecked(self.canvas.auto_tighten)
+        self.act_auto_tighten.toggled.connect(self._set_auto_tighten)
+        e.addAction(self.act_auto_tighten)
         self.act_allow_overlap = QAction("Allow overlap when aligning / distributing", self)
         self.act_allow_overlap.setCheckable(True)
         self.act_allow_overlap.toggled.connect(self._set_allow_overlap)
@@ -612,22 +728,40 @@ class MainWindow(QMainWindow):
         e.addAction("Group rotate…", self._toggle_group_rotate)
 
         v = mb.addMenu("&View")
-        v.addAction("Zoom 50%", lambda: self.canvas.set_zoom(0.5))
-        v.addAction("Zoom 100%", lambda: self.canvas.set_zoom(1.0))
-        v.addAction("Zoom 200%", lambda: self.canvas.set_zoom(2.0))
-        v.addAction("Fit", self.canvas.fit_to_view)
         v.addAction("Canvas size…", self._edit_canvas_size)
         v.addSeparator()
-        self.act_toggle_library = self._act(
-            "Library panel", lambda: self._toggle_panel(0), "F2")
-        self.act_toggle_inspector = self._act(
-            "Inspector panel", lambda: self._toggle_panel(2), "F3")
+        # Window-style toggles: everything on screen can be switched off.
+        self.view_actions = {}
+        shortcuts = {"library": "F2", "inspector": "F3", "toolbar": "F4",
+                     "minimap": "F5"}
+        for name in self.VIEW_ITEMS:
+            action = QAction(self.VIEW_LABELS[name], self)
+            action.setCheckable(True)
+            if name in shortcuts:
+                action.setShortcut(QKeySequence(shortcuts[name]))
+            action.toggled.connect(
+                lambda checked, n=name: self._view_set(n, checked))
+            v.addAction(action)
+            self.view_actions[name] = action
+        workspace_menu = v.addMenu("Workspace")
+        for label in self.WORKSPACES:
+            workspace_menu.addAction(
+                label, lambda checked=False, k=label: self._apply_view(self.WORKSPACES[k]))
         self.act_focus_canvas = self._act(
-            "Focus canvas (hide both panels)", self._toggle_focus_canvas, "Ctrl+\\")
-        for a in (self.act_toggle_library, self.act_toggle_inspector,
-                  self.act_focus_canvas):
-            v.addAction(a)
-        v.addAction("Reset panel layout", self._reset_layout)
+            "Canvas only (toggle everything else)", self._toggle_focus_canvas, "Ctrl+\\")
+        v.addAction(self.act_focus_canvas)
+        v.addAction("Reset panel layout", lambda: (self._reset_layout(),
+                                                   self._sync_view_actions()))
+        v.addSeparator()
+        zoom_menu = v.addMenu("Zoom")
+        for label, shortcut, fn in (
+                ("Zoom in", "Ctrl+=", lambda: self.canvas.set_zoom(self.canvas.zoom * 1.25)),
+                ("Zoom out", "Ctrl+-", lambda: self.canvas.set_zoom(self.canvas.zoom / 1.25)),
+                ("Fit map in view", "Ctrl+0", self.canvas.fit_to_view),
+                ("Zoom 50%", None, lambda: self.canvas.set_zoom(0.5)),
+                ("Zoom 100%", "Ctrl+1", lambda: self.canvas.set_zoom(1.0)),
+                ("Zoom 200%", None, lambda: self.canvas.set_zoom(2.0))):
+            zoom_menu.addAction(self._act(label, fn, shortcut))
         v.addSeparator()
         v.addAction("Customize toolbar…", self._customize_toolbar)
         v.addAction("Reset toolbar", self._reset_toolbar)
@@ -660,8 +794,7 @@ class MainWindow(QMainWindow):
             self.alien_accent_actions[hexc] = action
         t.addSeparator()
         self.flourish_actions = {}
-        for label, attr in (("Scanlines", "flourish_scanlines"),
-                            ("Boot text", "flourish_boot")):
+        for label, attr in (("Scanlines", "flourish_scanlines"),):
             action = QAction(label, self)
             action.setCheckable(True)
             action.triggered.connect(lambda checked=False, key=attr: self._toggle_flourish(key))
@@ -743,7 +876,8 @@ class MainWindow(QMainWindow):
                 lambda checked=False, fn=callback: fn())
             actions[tool_id] = action
         self.toolbar = CustomizableToolBar(
-            "Main toolbar", actions, self.settings, self)
+            "Main toolbar", actions, self.settings, self,
+            default_visible=COMPACT_TOOLBAR, layout_version=2)
         self.toolbar.customizeRequested.connect(self._customize_toolbar)
         self.addToolBar(self.toolbar)
 
@@ -765,6 +899,16 @@ class MainWindow(QMainWindow):
         self.lbl_hist = QLabel("")
         self.status.addPermanentWidget(self.lbl_sel, 2)
         self.status.addPermanentWidget(self.lbl_cursor, 1)
+        for text, tip, fn in (("−", "Zoom out", lambda: self.canvas.set_zoom(self.canvas.zoom / 1.25)),
+                              ("+", "Zoom in", lambda: self.canvas.set_zoom(self.canvas.zoom * 1.25)),
+                              ("Fit", "Fit the whole map in view", self.canvas.fit_to_view)):
+            zoom_button = QPushButton(text)
+            zoom_button.setObjectName("StatusZoomButton")
+            zoom_button.setFlat(True)
+            zoom_button.setToolTip(tip)
+            zoom_button.setMinimumWidth(30)
+            zoom_button.clicked.connect(lambda checked=False, f=fn: f())
+            self.status.addPermanentWidget(zoom_button, 0)
         self.status.addPermanentWidget(self.lbl_zoom, 0)
         self.status.addPermanentWidget(self.lbl_hist, 1)
         self.canvas.colorPickStateChanged.connect(self._on_color_pick_state)
@@ -787,9 +931,6 @@ class MainWindow(QMainWindow):
         self._apply_theme()
         if os.path.exists(self._recovery_file):
             QTimer.singleShot(0, self._offer_recovery)
-        elif self.theme_mode == "alien" and self.alien_boot_text:
-            self.boot.show_boot(1600)
-            QTimer.singleShot(1650, self.overlay.open_menu)
         else:
             QTimer.singleShot(0, self.overlay.open_menu)
 
@@ -911,14 +1052,8 @@ class MainWindow(QMainWindow):
         self.minimap.set_theme(self.theme_mode, self.theme_accent)
         self.layers.set_theme(self.theme_mode, self.theme_accent)
         self.scanlines.set_accent(accent)
-        self.boot.accent = accent
-        self.boot.label.setStyleSheet(
-            f"color:{accent}; background:transparent;")
         self.scanlines.setVisible(
             self.theme_mode == "alien" and self.alien_scanlines)
-        if self.theme_mode != "alien":
-            self.boot.timer.stop()
-            self.boot.hide()
         if hasattr(self, "overlay"):
             self.overlay._sync_theme()
         self._sync_theme_actions()
@@ -930,7 +1065,6 @@ class MainWindow(QMainWindow):
         for attr, action in getattr(self, "flourish_actions", {}).items():
             action.setChecked({
                 "flourish_scanlines": self.alien_scanlines,
-                "flourish_boot": self.alien_boot_text,
             }.get(attr, False))
             action.setEnabled(self.theme_mode == "alien")
         for hexc, action in getattr(self, "alien_accent_actions", {}).items():
@@ -945,8 +1079,6 @@ class MainWindow(QMainWindow):
             return
         self.theme_mode = mode
         self.settings.setValue("appearance/theme", mode)
-        if mode == "alien" and self.alien_boot_text:
-            self.boot.show_boot(1600)
         self._apply_theme()
 
     def _set_accent(self, hexc):
@@ -957,18 +1089,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("appearance/alien_accent", self.theme_accent)
         self._set_theme_mode("alien")
 
-    def _set_alien_effects(self, scanlines: bool, boot_text: bool):
-        old_boot_text = self.alien_boot_text
+    def _set_alien_effects(self, scanlines: bool):
         self.alien_scanlines = bool(scanlines)
-        self.alien_boot_text = bool(boot_text)
         self.settings.setValue("appearance/alien_scanlines", self.alien_scanlines)
-        self.settings.setValue("appearance/alien_boot_text", self.alien_boot_text)
         self._apply_theme()
-        if self.theme_mode == "alien" and self.alien_boot_text and not old_boot_text:
-            self.boot.show_boot(1600)
-        elif old_boot_text and not self.alien_boot_text:
-            self.boot.timer.stop()
-            self.boot.hide()
 
     def _set_autosave_interval(self, minutes: int):
         if minutes not in self.AUTOSAVE_CHOICES:
@@ -990,13 +1114,8 @@ class MainWindow(QMainWindow):
     def _toggle_flourish(self, attr):
         if self.theme_mode != "alien":
             return
-        scanlines = self.alien_scanlines
-        boot_text = self.alien_boot_text
         if attr == "flourish_scanlines":
-            scanlines = not scanlines
-        elif attr == "flourish_boot":
-            boot_text = not boot_text
-        self._set_alien_effects(scanlines, boot_text)
+            self._set_alien_effects(not self.alien_scanlines)
 
     # ------------------------------------------------------------------
     # Project lifecycle
@@ -1558,6 +1677,10 @@ class MainWindow(QMainWindow):
         self.history.drop_last()
         self._resync_history()
 
+    def _set_auto_tighten(self, on: bool):
+        self.canvas.auto_tighten = bool(on)
+        self.settings.setValue("editing/auto_tighten", bool(on))
+
     def _set_allow_overlap(self, on: bool):
         self.canvas.allow_overlap = bool(on)
         self.props.chk_allow_overlap.blockSignals(True)
@@ -1635,7 +1758,6 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self.scanlines.setGeometry(self.rect())
-        self.boot.setGeometry(self.rect())
         if hasattr(self, "overlay") and self.overlay.isVisible():
             self.overlay.setGeometry(self.rect())
 
