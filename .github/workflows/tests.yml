@@ -87,15 +87,8 @@ jobs:
           import time
           import zipfile
 
-          target_terms = (
-              "landscap", "concorde", "space shuttle", "xb-70", "boeing",
-              "holosuite", "holopit", "holodeck", "promenade", "barbette",
-              "shooting range", "helipad", "landing pad",
-          )
+          target_terms = ("landscap",)
           bundle_paths = [("full", os.environ["BUNDLE_PATH"])]
-          large_path = os.environ["LARGE_BUNDLE_PATH"]
-          if os.path.isfile(large_path):
-              bundle_paths.append(("large", large_path))
 
           review = io.BytesIO()
           manifest = io.StringIO(newline="")
@@ -148,9 +141,8 @@ jobs:
               output.writestr("manifest.tsv", manifest.getvalue())
               output.writestr(
                   "README.txt",
-                  "Full-pack previews show sheets containing newly refined "
-                  "taxonomy examples; large-*.jpg sheets show every source "
-                  "image above the very-large-image threshold.\n"
+                  "This focused preview shows the Symbols sheet containing "
+                  "the newly classified Landscaping and Vegetation assets.\n"
                   "Each sheet shows up to 100 images. manifest.tsv maps every "
                   "thumbnail index to its original ZIP path and dimensions.\n")
 
@@ -186,9 +178,9 @@ jobs:
               summary.write(
                   f"Published {len(encoded_chunks)} temporary commit-comment "
                   f"chunks for a {len(payload):,}-byte thumbnail-only ZIP "
-                  f"(SHA-256 `{digest}`). The bundle contains focused sheets "
-                  "for refined taxonomy terms plus every very-large-image "
-                  "sheet; `manifest.tsv` maps thumbnails to source paths.\n")
+                  f"(SHA-256 `{digest}`). It contains the sheet that "
+                  "matches Landscaping paths; `manifest.tsv` maps thumbnails "
+                  "to original source paths.\n")
           print(f"Published {len(encoded_chunks)} visual-review chunks "
                 f"(SHA-256 {digest}).")
           PY
