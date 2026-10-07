@@ -442,6 +442,55 @@ def write_summary(report: Report, path: str, exe: str, store: str | None) -> Non
         fh.write("\n".join(lines))
 
 
+def _escape_command(value: str, property_value: bool = False) -> str:
+    value = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    if property_value:
+        value = value.replace(":", "%3A").replace(",", "%2C")
+    return value
+
+
+def emit_github_annotations(report: Report, exe: str) -> None:
+    """Surface the results at the top of the GitHub Actions run page."""
+    def annotate(level: str, title: str, message: str):
+        print(f"::{level} title={_escape_command(title, True)}::"
+              f"{_escape_command(message)}", flush=True)
+
+    for name, info in report.packs.items():
+        parts = []
+        if "source_images" in info:
+            parts.append(f"{info['source_images']:,} images in the "
+                         f"{_mb(info['source_size'])} release ZIP")
+        if info.get("embedded"):
+            parts.append(f"embedded in the EXE byte-for-byte "
+                         f"({_mb(info.get('filtered_size', 0))})")
+        elif "embedded" in info:
+            parts.append("NOT embedded correctly in the EXE")
+        installed = info.get("installed")
+        if installed == "missing":
+            parts.append("NOT installed on first launch")
+        elif installed is not None:
+            parts.append(f"{installed:,}/{info.get('expected', 0):,} installed "
+                         f"byte-for-byte on first launch")
+        if info.get("listed") is not None:
+            parts.append(f"library lists {info['listed']:,}")
+        if info.get("skipped"):
+            parts.append("left out as non-images: " + ", ".join(
+                f"{count:,} {ext}" for ext, count in sorted(info["skipped"].items())))
+        annotate("notice", name, "; ".join(parts) or "no details")
+    for note in report.notes:
+        annotate("warning", "EXE asset verification note", note)
+    failures = [message for ok, message in report.checks if not ok]
+    for message in failures[:10]:
+        annotate("error", "EXE asset verification failed", message)
+    passed = len(report.checks) - len(failures)
+    timing = (f"; first-launch install took {report.install_seconds:,.0f} s"
+              if report.install_seconds is not None else "")
+    annotate("notice" if report.ok else "error",
+             f"EXE asset verification {'PASSED' if report.ok else 'FAILED'}",
+             f"{passed}/{len(report.checks)} checks passed for "
+             f"{os.path.basename(exe)} ({_mb(os.path.getsize(exe))}){timing}.")
+
+
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -520,6 +569,8 @@ def main() -> int:
 
     if args.summary:
         write_summary(report, args.summary, args.exe, store)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        emit_github_annotations(report, args.exe)
     passed = sum(ok for ok, _ in report.checks)
     print(f"\n{'ALL CHECKS PASSED' if report.ok else 'VERIFICATION FAILED'}: "
           f"{passed}/{len(report.checks)} checks passed.")
