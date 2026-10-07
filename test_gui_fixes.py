@@ -197,6 +197,23 @@ cached = [f for _r, _d, fs in os.walk(_thumb_dir()) for f in fs]
 assert cached, "a disk thumbnail should exist"
 print("thumbnail cache ok")
 
+# ---- library previews: results are stored under the asset's store-relative path
+import time
+lib = win.library.library
+project.asset_store = tmp
+lib.scan(tmp)
+win.library.set_project(project, lib, win._add_at_center)
+model = win.library.list.asset_model
+assert model.rowCount() == 1
+deadline = time.time() + 20
+while time.time() < deadline and not (model._icons and not model._pending):
+    app.processEvents(); time.sleep(0.02)
+asset = model.assets[0]
+assert asset.path in model._icons, "preview must be keyed by the relative asset path"
+assert not model._pending, "finished thumbnail requests must free their slot"
+assert not model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole).isNull()
+print("library previews ok")
+
 # ---- generator dialog shows only relevant options and never greys Output
 from ui.generator_dialog import GeneratorDialog
 dlg = GeneratorDialog(project, win.library, canvas, lambda opts: {"pieces": []}, win)

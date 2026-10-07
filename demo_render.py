@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 
+from sample_fixtures import sample_assets_dir
 from PyQt6.QtWidgets import QApplication
 
 from core.asset_manager import AssetLibrary
@@ -20,7 +21,7 @@ from core import exporter
 def render_demo(output_path: str | None = None) -> str:
     app = QApplication.instance() or QApplication(sys.argv)
     _ = app  # retain the wrapper until QImage/QPixmap rendering is complete
-    root = os.path.join(os.path.dirname(__file__), "sample_assets")
+    root = sample_assets_dir()
     output_path = output_path or os.path.join(
         tempfile.gettempdir(), "sceneboard-demo.png")
 

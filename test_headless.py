@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import sys
 
+from sample_fixtures import sample_assets_dir
 from PyQt6.QtWidgets import QApplication
 
 # ensure a QApplication exists before any QPixmap use
@@ -17,7 +18,7 @@ from core.project import Project, Piece
 from ui.canvas import CanvasView
 from core import exporter
 
-ROOT = os.path.join(os.path.dirname(__file__), "sample_assets")
+ROOT = sample_assets_dir()
 OUT = os.path.join(os.path.dirname(__file__), "test_output.png")
 
 # 1) scan + size parsing

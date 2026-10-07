@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 
+from sample_fixtures import sample_assets_dir
 from PyQt6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication(sys.argv)
@@ -34,7 +35,9 @@ ls.LaunchScreen.exec = lambda self: (setattr(self, "result_action", ("new", None
 win = MainWindow()
 win.show()
 
-root = os.path.join(os.path.dirname(__file__), "sample_assets")
+root = sample_assets_dir()
+import tempfile
+win.project.asset_store = tempfile.mkdtemp(prefix="sceneboard-store-")   # not the default store
 win._ensure_store()
 win.library.set_project(win.project, win.library.library, win._add_at_center)
 lib = win.library.library

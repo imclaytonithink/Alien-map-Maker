@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import struct
 import sys
 import tempfile
@@ -79,11 +80,14 @@ def main():
             else:
                 del sys._MEIPASS
 
-        # In a source checkout, the tracked starter assets seed the ordinary
-        # library path and subsequent startup does not overwrite the store.
-        source_branding = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "ui", "branding.py")
+        # A source checkout that ships starter art seeds the ordinary library
+        # path once, and subsequent startup does not overwrite the store.
+        fake_checkout = os.path.join(temp, "source-checkout")
+        os.makedirs(os.path.join(fake_checkout, "ui"))
+        source_branding = os.path.join(fake_checkout, "ui", "branding.py")
         source_payload = bundled_asset_directory(source_branding)
+        from sample_fixtures import sample_assets_dir
+        shutil.copytree(sample_assets_dir(), source_payload)
         built_in_count = sum(
             1 for root, _dirs, files in os.walk(source_payload)
             for name in files if name.lower().endswith(
@@ -92,6 +96,23 @@ def main():
         assert seed_bundled_assets(source_seed_store, source_branding) == built_in_count
         assert built_in_count > 0
         assert seed_bundled_assets(source_seed_store, source_branding) == 0
+
+        # Previously seeded placeholder art is removed from a user's store, but
+        # only when it is byte-identical; edited copies and real assets stay.
+        from ui.branding import DEMO_ASSET_HASHES, prune_demo_assets
+        assert prune_demo_assets(os.path.join(temp, "missing")) == 0
+        user_asset = os.path.join(source_seed_store, "mine", "keep_me.png")
+        os.makedirs(os.path.dirname(user_asset))
+        with open(user_asset, "wb") as image:
+            image.write(b"real art")
+        edited = os.path.join(source_seed_store, "walls", "wall_10x50.png")
+        with open(edited, "ab") as image:
+            image.write(b"edited by the user")
+        removed = prune_demo_assets(source_seed_store)
+        assert removed == len(DEMO_ASSET_HASHES) - 1, removed
+        assert os.path.isfile(user_asset) and os.path.isfile(edited)
+        assert not os.path.exists(os.path.join(source_seed_store, "floors"))
+        assert prune_demo_assets(source_seed_store) == 0
 
         source_core = os.path.join(temp, "download", "100x100 Core")
         os.makedirs(source_core)

@@ -21,9 +21,9 @@ python main.py
 On first launch the **project menu** opens over the editor (blurred backdrop):
 pick *New map* or open a *Recent* map. Creating a map lets you choose its width,
 height, and grid-square pixel size; these can also be changed later in the
-canvas properties or from **View → Canvas size**. The tracked starter art in
-`sample_assets/` is bundled with the Windows executable and seeded into the
-library on first launch. Choose a persistent app-wide appearance: **Dark**,
+canvas properties or from **View → Canvas size**. No placeholder art ships in
+the library (older builds copied demo images into the store; those untouched
+copies are removed automatically). Choose a persistent app-wide appearance: **Dark**,
 **Light**, or **Alien / MU-TH-UR**. The Alien appearance includes optional
 scanlines and boot text, and Green / Amber / Red accents. Press **ESC** any time
 to bring the menu back up — it has Save, Open, PNG/PDF/Tabletop
@@ -265,5 +265,5 @@ core/   project (data model) · history (undo/redo) · asset_manager (internal
 ui/     main_window · canvas · library · properties · layers_panel · zones_panel ·
         menu_overlay (ESC project menu) · generator_dialog · theme (Dark/Light/Alien) ·
         export_dialog
-sample_assets/   demo pieces
+sample_fixtures.py   demo images for tests, generated on demand (generate_samples.py)
 ```
