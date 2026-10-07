@@ -130,6 +130,10 @@ row = win.layers.list.itemWidget(win.layers.list.item(1))
 assert row.layer is walls and not row.btn_visible.icon().isNull()
 assert not row.btn_export.icon().isNull() and not row.btn_lock.icon().isNull()
 assert "Included in PNG/PDF exports" in row.btn_export.toolTip()
+row._fit_controls(220)                    # narrow inspector: the name keeps its room
+assert row.sl.isHidden() and row.btn_solo.isHidden() and not row.lbl.isHidden()
+row._fit_controls(400)
+assert not row.sl.isHidden() and not row.btn_solo.isHidden()
 red = Piece(name="red", x=0, y=0, w=200, h=200, layer=walls.id, is_patch=True,
             patch_color="#ff0000", snap=False)
 level.add(red)
@@ -161,6 +165,8 @@ assert canvas.level.layers[1].visible is False
 img = exporter.render_level(project, canvas.level, False, 1.0)
 assert img.pixelColor(100, 100) == QColor(canvas.level.background), "hidden layers never export"
 win.layers._set_all("visible", True)
+win.layers._set_opacity(canvas.level.layers[2].id, 0.5)    # right-click → Opacity
+assert canvas.level.layers[2].opacity == 0.5 and labels()[-1] == "Layer opacity"
 win.layers.set_theme("light", "#2563a6")
 print("layer buttons ok")
 

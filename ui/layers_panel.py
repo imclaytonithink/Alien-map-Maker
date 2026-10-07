@@ -16,6 +16,11 @@ from ui.theme import theme_colors
 
 ROW_BUTTON = (28, 30)      # layer row icon buttons (width, height)
 ICON_PX = 17
+# Narrow inspector: the layer name keeps its room; the opacity slider (also in
+# the right-click menu) and then the solo button step aside below these widths.
+SLIDER_MIN_ROW = 262
+SOLO_MIN_ROW = 228
+OPACITY_PRESETS = (100, 75, 50, 25)
 
 
 LABEL_COLORS = (("Red", "#e5534b"), ("Orange", "#e5933b"), ("Yellow", "#d8c43a"),
@@ -138,6 +143,8 @@ class LayerRow(QWidget):
 
     def eventFilter(self, obj, event):
         if obj is self.lbl:
+            if event.type() == event.Type.Resize:
+                self._elide_name()          # the label's final width is known now
             if event.type() == event.Type.MouseButtonDblClick:
                 self.begin_rename()
                 return True
@@ -166,9 +173,18 @@ class LayerRow(QWidget):
         super().resizeEvent(event)
         if not hasattr(self, "lbl"):
             return
+        self._fit_controls(event.size().width())
+        self._elide_name()
+
+    def _elide_name(self):
         self.lbl.setText(self.lbl.fontMetrics().elidedText(
             self._full_name, Qt.TextElideMode.ElideRight,
-            max(0, self.lbl.width())))
+            max(0, self.lbl.width() - 6)))
+
+    def _fit_controls(self, width: int):
+        """Keep the layer name readable in a narrow panel."""
+        self.sl.setVisible(width >= SLIDER_MIN_ROW)
+        self.btn_solo.setVisible(width >= SOLO_MIN_ROW or self.btn_solo.isChecked())
 
     def _update_visibility_button(self):
         visible = self.layer.visible
@@ -430,6 +446,13 @@ class LayersPanel(QWidget):
         exported.setCheckable(True)
         exported.setChecked(getattr(layer, "export", True))
         exported.triggered.connect(lambda: self._toggle_flag(lid, "export"))
+        opacity = menu.addMenu(f"Opacity ({round(layer.opacity * 100)}%)")
+        for percent in OPACITY_PRESETS:
+            action = opacity.addAction(f"{percent}%")
+            action.setCheckable(True)
+            action.setChecked(round(layer.opacity * 100) == percent)
+            action.triggered.connect(
+                lambda _=False, value=percent: self._set_opacity(lid, value / 100.0))
         solo = menu.addAction("Solo" if self.canvas.solo_layer_id != lid else "Un-solo")
         solo.triggered.connect(lambda: self._toggle_solo(lid))
         colors = menu.addMenu("Color label")
@@ -440,6 +463,14 @@ class LayersPanel(QWidget):
         menu.addAction("Duplicate layer (with its pieces)", lambda: self._duplicate(lid))
         menu.addAction("Delete layer", lambda: self._delete_id(lid))
         menu.exec(pos)
+
+    def _set_opacity(self, lid, value: float):
+        layer = self._layer(lid)
+        if layer is None or abs(layer.opacity - value) < 1e-6:
+            return
+        self.canvas.push_history("Layer opacity")
+        layer.opacity = max(0.0, min(1.0, float(value)))
+        self.rebuild(); self._changed()
 
     def _toggle_flag(self, lid, attr: str):
         layer = self._layer(lid)
