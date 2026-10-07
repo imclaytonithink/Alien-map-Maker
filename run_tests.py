@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent
-PURE_TESTS = [f"test_batch{number}.py" for number in range(1, 14)]
+PURE_TESTS = [f"test_batch{number}.py" for number in range(1, 15)]
 GUI_TESTS = [
     "test_generator.py",
     "test_gui2.py",

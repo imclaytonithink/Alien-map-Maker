@@ -26,7 +26,9 @@ CASES = [
     ("M101 [200x100] Tractor Beam Bay.png", "Pack/200x100 Mega", "deck_plan"),
     ("M006 [200x100] Flight Deck - Vertical.png", "Pack/200x100 Mega", "deck_plan"),
     ("B004 [200x100] Blank.png", "Pack/200x100 Mega", "empty_room"),
-    ("M007 [200x100] Cargo Deck Empty.png", "Pack/200x100 Mega", "empty_room"),
+    # A 150 ft+ *named* deck that happens to be empty is still a deck plan
+    # (Megamorph 'Cargo Deck - Empty'); only the B-series stays a blank shell.
+    ("M007 [200x100] Cargo Deck Empty.png", "Pack/200x100 Mega", "deck_plan"),
     ("A123 [100x50] Nose, Fuel, 100' to 50' Transition Corridor.png", "Pack/Aero", "ship_part"),
     ("A124 [100x200] Port (Concorde).png", "Pack/Aero", "ship_part"),
     ("A126 [100x200] Starboard (XB-70 Valkyrie).png", "Pack/Aero", "ship_part"),
