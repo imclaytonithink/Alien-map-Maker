@@ -1,16 +1,14 @@
-"""Launch screen: new / recent / open / templates, with theme picker."""
+"""Legacy launch dialog with new/open/recent actions and theme options."""
 from __future__ import annotations
 
 import os
-from typing import Optional
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QIcon, QColor
 from ui.branding import APP_NAME, APP_DESCRIPTOR, APP_TAGLINE
 from ui import theme as thememod
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget,
-    QListWidgetItem, QFrame, QSlider, QCheckBox,
+    QListWidgetItem, QSlider, QCheckBox,
 )
 
 
@@ -19,7 +17,7 @@ class LaunchScreen(QDialog):
         super().__init__(parent)
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(520, 460)
-        self.result_action = None     # ("new"|"open"|"template", path_or_None)
+        self.result_action = None     # ("new"|"open", path_or_None)
         self.recent = recent
         self._build()
         self._apply_style()
@@ -61,15 +59,6 @@ class LaunchScreen(QDialog):
             self.recent_list.itemDoubleClicked.connect(
                 lambda it: self._choose("open", self.recent[self.recent_list.row(it)]))
         root.addWidget(self.recent_list, 1)
-
-        # templates
-        tpl = QHBoxLayout()
-        tpl.addWidget(QLabel("Template:"))
-        for name in ("Blank 30×30", "Blank 40×40", "Sci-Fi Room"):
-            b = QPushButton(name)
-            b.clicked.connect(lambda _, n=name: self._choose("template", n))
-            tpl.addWidget(b)
-        root.addLayout(tpl)
 
         # actions
         act = QHBoxLayout()

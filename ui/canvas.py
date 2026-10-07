@@ -34,6 +34,7 @@ class CanvasView(QWidget):
     selectionChanged = pyqtSignal(object)   # list[Piece]
     zoneSelectionChanged = pyqtSignal(object)  # ZoneRegion or None
     dirty = pyqtSignal()
+    viewChanged = pyqtSignal()  # zoom, pan, or viewport size changed
     cursorMoved = pyqtSignal(float, float)
     historyPush = pyqtSignal(str, bool)   # label, coalesce
     colorPickStateChanged = pyqtSignal(bool)
@@ -113,15 +114,30 @@ class CanvasView(QWidget):
         # quick toolbar (J3)
         self.quick = QFrame(self)
         self.quick.setObjectName("CanvasQuickToolbar")
+        self.quick.setToolTip(
+            "Quick actions for the selected node(s). Hover over each button for details.")
         ql = QHBoxLayout(self.quick)
         ql.setContentsMargins(2, 2, 2, 2)
         ql.setSpacing(2)
         self._qb = {}
-        for name, lbl in [("rotL", "⟲"), ("rotR", "⟳"), ("fh", "H"), ("fv", "V"),
-                         ("up", "▲"), ("down", "▼"), ("lock", "■"), ("copy", "C"),
-                         ("dup", "+"), ("del", "×")]:
+        quick_actions = [
+            ("rotL", "⟲", "Rotate selected node(s) 90° left"),
+            ("rotR", "⟳", "Rotate selected node(s) 90° right"),
+            ("fh", "H", "Flip selected node(s) horizontally"),
+            ("fv", "V", "Flip selected node(s) vertically"),
+            ("up", "▲", "Bring selected node(s) forward"),
+            ("down", "▼", "Send selected node(s) backward"),
+            ("lock", "L", "Toggle the lock state of selected node(s)"),
+            ("copy", "C", "Copy selected node(s)"),
+            ("dup", "+", "Duplicate selected node(s)"),
+            ("del", "×", "Delete selected node(s)"),
+        ]
+        for name, lbl, tooltip in quick_actions:
             b = QPushButton(lbl)
-            b.setMaximumWidth(26); b.setMinimumHeight(22)
+            b.setObjectName("CanvasQuickButton")
+            b.setFixedSize(28, 26)
+            b.setToolTip(tooltip)
+            b.setAccessibleName(tooltip)
             b.clicked.connect(lambda _, n=name: self._quick(n))
             ql.addWidget(b)
             self._qb[name] = b
@@ -174,6 +190,7 @@ class CanvasView(QWidget):
         self._zone_edit_drag = None
         self.zoom = 1.0
         self.pan_x = self.pan_y = 0.0
+        self._update_quick()
         self.fit_to_view()
         self.selectionChanged.emit([])
         self.zoneSelectionChanged.emit(None)
@@ -186,6 +203,7 @@ class CanvasView(QWidget):
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
             self.selection.clear()
             self.selected_zone_id = None
+            self._update_quick()
             self.selectionChanged.emit([])
             self.zoneSelectionChanged.emit(None)
             self.update()
@@ -718,6 +736,7 @@ class CanvasView(QWidget):
         self.pan_x = (vw - self.project.canvas_w * self.zoom) / 2.0
         self.pan_y = (vh - self.project.canvas_h * self.zoom) / 2.0
         self.update()
+        self.viewChanged.emit()
 
     def set_zoom(self, z):
         cx, cy = self.width() / 2, self.height() / 2
@@ -729,6 +748,14 @@ class CanvasView(QWidget):
         self.pan_x = sx - wx * self.zoom
         self.pan_y = sy - wy * self.zoom
         self.update()
+        self.viewChanged.emit()
+
+    def center_on_world(self, wx, wy):
+        """Center the canvas viewport on a world-space point."""
+        self.pan_x = self.width() / 2.0 - wx * self.zoom
+        self.pan_y = self.height() / 2.0 - wy * self.zoom
+        self.update()
+        self.viewChanged.emit()
 
     # ------------------------------------------------------------------
     def selected_pieces(self) -> list[Piece]:
@@ -752,6 +779,20 @@ class CanvasView(QWidget):
 
     def _update_quick(self):
         if self.selection:
+            selected = self.selected_pieces()
+            lock_button = self._qb.get("lock")
+            if selected and lock_button:
+                locked = [piece.locked for piece in selected]
+                if all(locked):
+                    lock_button.setText("U")
+                    lock_button.setToolTip("Unlock all selected nodes")
+                elif any(locked):
+                    lock_button.setText("±")
+                    lock_button.setToolTip(
+                        "Toggle the lock state of each selected node")
+                else:
+                    lock_button.setText("L")
+                    lock_button.setToolTip("Lock all selected nodes")
             self.quick.show()
             self.quick.move(self.width() - self.quick.width() - 6, 6)
         else:
@@ -787,6 +828,7 @@ class CanvasView(QWidget):
             self.duplicate()
         elif name == "del":
             self.delete_selected()
+        self._update_quick()
         self.update()
         self.dirty.emit()
 
@@ -1831,6 +1873,7 @@ class CanvasView(QWidget):
             if abs(sx - ox) + abs(sy - oy) > 4:
                 self._drag["moved"] = True
             self.update()
+            self.viewChanged.emit()
         elif mode == "move":
             self._move_selected(sx, sy)
             self.update()
@@ -2091,6 +2134,7 @@ class CanvasView(QWidget):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._update_quick()
+        self.viewChanged.emit()
 
     # ------------------------------------------------------------------
     def dragEnterEvent(self, e):

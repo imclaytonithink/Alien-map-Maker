@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QInputDialog, QMessageBox, QLabel, QStatusBar, QToolBar,
     QTabWidget, QListWidget, QListWidgetItem, QGroupBox, QSlider, QCheckBox,
     QApplication, QDoubleSpinBox, QLineEdit, QTextEdit, QComboBox,
-    QAbstractSpinBox, QSplitter,
+    QAbstractSpinBox, QDialog, QSplitter,
 )
 
 from core.project import Project, Level, Piece, new_project, uuid
@@ -25,7 +25,7 @@ from ui.library import LibraryPanel
 from ui.properties import PropertiesPanel
 from ui.layers_panel import LayersPanel
 from ui.zones_panel import ZonesPanel
-from ui.launch_screen import LaunchScreen
+from ui.canvas_size_dialog import CanvasSizeDialog
 from ui.menu_overlay import MenuOverlay
 from ui.generator_dialog import GeneratorDialog
 from ui import theme as thememod
@@ -59,10 +59,13 @@ class Minimap(QWidget):
     def __init__(self, canvas, parent=None):
         super().__init__(parent)
         self.canvas = canvas
+        self._drag = False
         self.setFixedSize(170, 170)
+        self.setToolTip("Map overview. Click or drag to center the main view.")
         self.set_theme("dark", "#69b7f5")
         canvas.dirty.connect(self.update)
         canvas.selectionChanged.connect(lambda _: self.update())
+        canvas.viewChanged.connect(self.update)
 
     def set_theme(self, mode: str, accent: str):
         colors = thememod.theme_colors(mode, accent)
@@ -71,60 +74,105 @@ class Minimap(QWidget):
             f"background:{colors['panel']}; border:1px solid {colors['border_hot']};")
         self.update()
 
+    def _map_geometry(self):
+        project = self.canvas.project
+        if not project:
+            return None
+        map_w = max(1.0, float(project.canvas_w))
+        map_h = max(1.0, float(project.canvas_h))
+        available_w = max(1.0, float(self.width() - 2))
+        available_h = max(1.0, float(self.height() - 2))
+        scale = min(available_w / map_w, available_h / map_h)
+        width, height = map_w * scale, map_h * scale
+        ox = (self.width() - width) / 2.0
+        oy = (self.height() - height) / 2.0
+        return map_w, map_h, scale, ox, oy
+
     def _world_from_pos(self, px, py):
-        sx = self.width() / max(self.canvas.project.canvas_w, 1)
-        sy = self.height() / max(self.canvas.project.canvas_h, 1)
-        s = min(sx, sy)
-        wx = (px - (self.width() - self.canvas.project.canvas_w * s) / 2) / s
-        wy = (py - (self.height() - self.canvas.project.canvas_h * s) / 2) / s
-        return wx, wy
+        geometry = self._map_geometry()
+        if not geometry:
+            return 0.0, 0.0
+        map_w, map_h, scale, ox, oy = geometry
+        wx = (px - ox) / scale
+        wy = (py - oy) / scale
+        return min(map_w, max(0.0, wx)), min(map_h, max(0.0, wy))
 
     def mousePressEvent(self, e):
-        self._pan(e)
-        self._drag = True
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag = True
+            self._pan(e)
+            e.accept()
+            return
+        super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
-        if getattr(self, "_drag", False):
+        if self._drag:
             self._pan(e)
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
         self._drag = False
+        super().mouseReleaseEvent(e)
 
     def _pan(self, e):
         wx, wy = self._world_from_pos(e.position().x(), e.position().y())
-        cv = self.canvas
-        cv.pan_x = cv.width() / 2 - wx * cv.zoom
-        cv.pan_y = cv.height() / 2 - wy * cv.zoom
-        cv.update()
-        self.update()
+        self.canvas.center_on_world(wx, wy)
 
     def paintEvent(self, e):
         p = QPainter(self)
         colors = getattr(self, "_theme_colors", thememod.theme_colors("dark"))
         p.fillRect(self.rect(), QColor(colors["panel"]))
-        if not self.canvas.project:
+        geometry = self._map_geometry()
+        if not geometry or not self.canvas.level:
             p.end()
             return
-        proj = self.canvas.project
-        sx = self.width() / proj.canvas_w
-        sy = self.height() / proj.canvas_h
-        s = min(sx, sy)
-        ox = (self.width() - proj.canvas_w * s) / 2
-        oy = (self.height() - proj.canvas_h * s) / 2
-        p.setPen(QColor(colors["accent"]))
-        p.drawRect(int(ox), int(oy), int(proj.canvas_w * s), int(proj.canvas_h * s))
-        for pc in self.canvas.level.paint_order():
-            p.setBrush(QColor(colors["accent"]))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRect(int(ox + pc.x * s), int(oy + pc.y * s),
-                       max(1, int(pc.w * s)), max(1, int(pc.h * s)))
-        # viewport rect
+
+        map_w, map_h, scale, ox, oy = geometry
+        frame = QRectF(ox, oy, map_w * scale, map_h * scale)
+        p.fillRect(frame, QColor(colors["bg"]))
+
+        # Keep map contents inside the map frame. Account for visual scale and
+        # rotation so oversized or rotated nodes appear where they are drawn.
+        p.save()
+        p.setClipRect(frame)
+        selected = self.canvas.selection
+        for piece in self.canvas.level.paint_order():
+            cx, cy = piece.center
+            angle = math.radians(piece.rotation)
+            c, s = abs(math.cos(angle)), abs(math.sin(angle))
+            node_w = max(1.0, c * piece.vis_w + s * piece.vis_h)
+            node_h = max(1.0, s * piece.vis_w + c * piece.vis_h)
+            rect = QRectF(
+                ox + (cx - node_w / 2.0) * scale,
+                oy + (cy - node_h / 2.0) * scale,
+                max(1.0, node_w * scale), max(1.0, node_h * scale))
+            color = QColor(colors["accent"])
+            color.setAlpha(225 if piece.id in selected else 155)
+            p.fillRect(rect, color)
+
+        # Clip the viewport marker to the project canvas. Without this, panning
+        # past an edge can draw a huge red rectangle over the minimap margins.
         vx0, vy0 = self.canvas.screen_to_world(0, 0)
-        vx1, vy1 = self.canvas.screen_to_world(self.canvas.width(), self.canvas.height())
-        p.setPen(QPen(QColor("#ff5a5a"), 1))
+        vx1, vy1 = self.canvas.screen_to_world(
+            self.canvas.width(), self.canvas.height())
+        viewport = QRectF(vx0, vy0, vx1 - vx0, vy1 - vy0).normalized()
+        visible_viewport = viewport.intersected(QRectF(0, 0, map_w, map_h))
+        if not visible_viewport.isEmpty():
+            marker = QRectF(
+                ox + visible_viewport.x() * scale,
+                oy + visible_viewport.y() * scale,
+                visible_viewport.width() * scale,
+                visible_viewport.height() * scale)
+            p.setPen(QPen(QColor("#ff5a5a"), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(marker)
+        p.restore()
+
+        p.setPen(QPen(QColor(colors["accent"]), 1))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRect(int(ox + vx0 * s), int(oy + vy0 * s),
-                   int((vx1 - vx0) * s), int((vy1 - vy0) * s))
+        p.drawRect(frame.adjusted(0.5, 0.5, -0.5, -0.5))
         p.end()
 
 
@@ -169,11 +217,20 @@ class LevelBar(QWidget):
         self.tabs.currentChanged.connect(self._on_current)
         self.tabs.tabBarDoubleClicked.connect(self._rename)
         layout.addWidget(self.tabs, 1)
-        b_add = QPushButton("+"); b_add.setMaximumWidth(28); b_add.clicked.connect(self._add)
-        b_del = QPushButton("–"); b_del.setMaximumWidth(28); b_del.clicked.connect(self._remove)
-        b_up = QPushButton("▲"); b_up.setMaximumWidth(28); b_up.clicked.connect(lambda: self._shift(-1))
-        b_down = QPushButton("▼"); b_down.setMaximumWidth(28); b_down.clicked.connect(lambda: self._shift(1))
-        layout.addWidget(b_add); layout.addWidget(b_del); layout.addWidget(b_up); layout.addWidget(b_down)
+        level_actions = [
+            ("+", "Add a level", self._add),
+            ("–", "Delete the selected level", self._remove),
+            ("▲", "Move the selected level earlier", lambda: self._shift(-1)),
+            ("▼", "Move the selected level later", lambda: self._shift(1)),
+        ]
+        for label, tooltip, callback in level_actions:
+            button = QPushButton(label)
+            button.setObjectName("PanelIconButton")
+            button.setFixedSize(30, 28)
+            button.setToolTip(tooltip)
+            button.setAccessibleName(tooltip)
+            button.clicked.connect(callback)
+            layout.addWidget(button)
 
     def set_project(self, project: Project):
         self.project = project
@@ -333,13 +390,19 @@ class MainWindow(QMainWindow):
 
         bottom = QHBoxLayout()
         bottom.setContentsMargins(4, 4, 4, 4)
-        for lbl, fn in [("−", lambda: self.canvas.set_zoom(self.canvas.zoom / 1.2)),
-                        ("+", lambda: self.canvas.set_zoom(self.canvas.zoom * 1.2)),
-                        ("Fit", self.canvas.fit_to_view),
-                        ("50%", lambda: self.canvas.set_zoom(0.5)),
-                        ("100%", lambda: self.canvas.set_zoom(1.0)),
-                        ("200%", lambda: self.canvas.set_zoom(2.0))]:
-            b = QPushButton(lbl); b.clicked.connect(fn); bottom.addWidget(b)
+        zoom_actions = [
+            ("−", "Zoom out", lambda: self.canvas.set_zoom(self.canvas.zoom / 1.2)),
+            ("+", "Zoom in", lambda: self.canvas.set_zoom(self.canvas.zoom * 1.2)),
+            ("Fit", "Fit the whole map in the canvas", self.canvas.fit_to_view),
+            ("50%", "Set zoom to 50%", lambda: self.canvas.set_zoom(0.5)),
+            ("100%", "Set zoom to 100%", lambda: self.canvas.set_zoom(1.0)),
+            ("200%", "Set zoom to 200%", lambda: self.canvas.set_zoom(2.0)),
+        ]
+        for label, tooltip, callback in zoom_actions:
+            button = QPushButton(label)
+            button.setToolTip(tooltip)
+            button.clicked.connect(callback)
+            bottom.addWidget(button)
         self.minimap = Minimap(self.canvas)
         bottom.addWidget(self.minimap)
         bottom.addStretch(1)
@@ -495,6 +558,7 @@ class MainWindow(QMainWindow):
         v.addAction("Zoom 100%", lambda: self.canvas.set_zoom(1.0))
         v.addAction("Zoom 200%", lambda: self.canvas.set_zoom(2.0))
         v.addAction("Fit", self.canvas.fit_to_view)
+        v.addAction("Canvas size…", self._edit_canvas_size)
         v.addSeparator()
         self.act_toggle_library = self._act(
             "Library panel", lambda: self._toggle_panel(0), "F2")
@@ -660,7 +724,7 @@ class MainWindow(QMainWindow):
     def _show_launch(self):
         """Open the in-window system menu over the editor (replaces the old
         modal launcher; the map behind it starts as a fresh empty project)."""
-        self._new_project(preserve_recovery=True)
+        self._new_project(preserve_recovery=True, choose_canvas_size=False)
         self._apply_theme()
         if os.path.exists(self._recovery_file):
             QTimer.singleShot(0, self._offer_recovery)
@@ -762,6 +826,9 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _apply_project(self):
+        # Generated-output ownership is session-local and must never point into
+        # levels from a project that was just replaced or reloaded.
+        self._gen_output = None
         if not self.project.asset_store:
             self._ensure_store()
         self.canvas.set_project(self.project, self.library.library)
@@ -875,7 +942,17 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Project lifecycle
     # ------------------------------------------------------------------
-    def _new_project(self, preserve_recovery=False):
+    def _new_project(self, preserve_recovery=False, choose_canvas_size=True):
+        canvas_size = None
+        if choose_canvas_size:
+            dialog = CanvasSizeDialog(
+                title="New map canvas", accept_label="Create map", parent=self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return False
+            canvas_size = dialog.canvas_size()
+
+        if not preserve_recovery and self._dirty and not self._confirm_discard():
+            return False
         if not preserve_recovery:
             self._remove_recovery()
         self.project = new_project()
@@ -884,50 +961,38 @@ class MainWindow(QMainWindow):
                 "appearance/text_scale", self.project.text_scale))
         except (TypeError, ValueError):
             pass
-        self._current_file = None
-        self._apply_project()
-        self._mark_dirty(False)
-        self._update_window_title()
-
-    def _template(self, name):
-        self._remove_recovery()
-        self.project = new_project()
-        try:
-            self.project.text_scale = float(self.settings.value(
-                "appearance/text_scale", self.project.text_scale))
-        except (TypeError, ValueError):
-            pass
-        if name and name.startswith("Blank 40"):
-            self.project.map_cols = 40
-            self.project.map_rows = 40
+        if canvas_size:
+            self.project.map_cols = canvas_size["map_cols"]
+            self.project.map_rows = canvas_size["map_rows"]
+            self.project.cell_size = canvas_size["cell_size"]
             self.project._sync_canvas()
-        if name == "Sci-Fi Room":
-            self._ensure_store()
-            n = self.library.library.import_folder(
-                os.path.join(os.path.dirname(__file__), "..", "sample_assets"))
-            if n:
-                self.library.library.scan(self.project.asset_store)
-                self._place_template_room()
         self._current_file = None
         self._apply_project()
         self._mark_dirty(False)
         self._update_window_title()
+        return True
 
-    def _place_template_room(self):
-        by_name = {os.path.splitext(a.name)[0]: a for a in self.library.library.assets}
-        def add(nm, x, y, rot=0):
-            a = by_name.get(nm)
-            if a:
-                self.canvas.add_asset(a.path, x, y)
-                sel = self.canvas.selected_pieces()
-                if sel:
-                    sel[0].rotation = rot
-        add("room_200x100", 200, 150)
-        add("corridor_40x120", 420, 200, 90)
-        add("wall_10x50", 210, 160)
-        add("terminal_25x50", 260, 190)
-        add("computer_10x50", 360, 190)
-        add("overlay_glow_100x100", 300, 210, 30)
+    def _edit_canvas_size(self):
+        """Resize the existing canvas without removing or moving any nodes."""
+        dialog = CanvasSizeDialog(
+            self.project.map_cols, self.project.map_rows, self.project.cell_size,
+            title="Resize canvas", accept_label="Apply", parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        canvas_size = dialog.canvas_size()
+        if (canvas_size["map_cols"] == self.project.map_cols
+                and canvas_size["map_rows"] == self.project.map_rows
+                and canvas_size["cell_size"] == self.project.cell_size):
+            return False
+        self.canvas.push_history("Resize canvas")
+        self.project.map_cols = canvas_size["map_cols"]
+        self.project.map_rows = canvas_size["map_rows"]
+        self.project.cell_size = canvas_size["cell_size"]
+        self.project._sync_canvas()
+        self.props.refresh_canvas_size()
+        self.canvas.fit_to_view()
+        self.canvas.dirty.emit()
+        return True
 
     def _ensure_store(self):
         default_store = default_asset_store_path(__file__, self._app_data_dir)
@@ -1113,9 +1178,9 @@ class MainWindow(QMainWindow):
     def _run_generator(self, opts):
         """Generate a map into a new level or the selection's area.
 
-        With opts['replace_prev'] the level/pieces created by the previous
-        Generate press are replaced instead of piling up (Regenerate).
-        Returns the generator result dict (for the dialog status line).
+        Generate keeps earlier generated outputs. Regenerate sends
+        ``replace_prev=True`` and replaces all tracked output for the selected
+        destination only after a non-empty new map has been generated.
         """
         cs = self.project.cell_size
         generator_mode = opts.get("generator_mode", "tiles")
@@ -1133,8 +1198,8 @@ class MainWindow(QMainWindow):
                                 "Geomorphs or Custom Tiles ZIP first.")
             return None
 
-        # capture the target region FIRST — discarding the previous output
-        # may remove the level the selection lives on (mode switches).
+        # Capture the target region before replacement: it may include a
+        # selection on the output that Regenerate is about to remove.
         mode = opts.get("mode") or "new"
         sel = self.canvas.selected_pieces()
         if mode == "area" and sel:
@@ -1148,59 +1213,89 @@ class MainWindow(QMainWindow):
             new_level = False
         else:
             new_level = True
-            if geomorph_mode:
-                grid = opts.get("geomorph_grid", 3)
-                grid = max(1, int(grid or 3))
-                core = geomorph_cats.get("core", [])
-                core_w = int(core[0].get("core_w", 20)) if core else 20
-                core_h = int(core[0].get("core_h", 20)) if core else 20
-                old_size = (self.project.map_cols, self.project.map_rows)
-                self.project.map_cols = max(self.project.map_cols, grid * core_w)
-                self.project.map_rows = max(self.project.map_rows, grid * core_h)
-                if old_size != (self.project.map_cols, self.project.map_rows):
-                    self.project._sync_canvas()
-                    self.props.set_project(self.project)
-            region = (0, 0, self.project.map_cols - 1, self.project.map_rows - 1)
 
-        # replace only THIS mode's previous output (new-level vs area fills
-        # are tracked separately so switching modes never eats the other one)
-        if opts.get("replace_prev"):
-            prev = (self._gen_output or {}).get(mode)
-            if prev:
-                self._discard_gen_output(mode)
-        if opts.get("replace_prev") is None:
-            self._gen_output = None
-        else:
-            if self._gen_output is None:
-                self._gen_output = {}
-            self._gen_output[mode] = {"ids": [], "level": None}
+        # Geomorph assemblies can be larger than the current project canvas.
+        # Keep the original dimensions so a failed/empty generation is harmless.
+        old_map_size = (self.project.map_cols, self.project.map_rows)
+        if new_level and geomorph_mode:
+            grid = max(1, int(opts.get("geomorph_grid", 3) or 3))
+            core = geomorph_cats.get("core", [])
+            core_w = int(core[0].get("core_w", 20)) if core else 20
+            core_h = int(core[0].get("core_h", 20)) if core else 20
+            self.project.map_cols = max(self.project.map_cols, grid * core_w)
+            self.project.map_rows = max(self.project.map_rows, grid * core_h)
+            if old_map_size != (self.project.map_cols, self.project.map_rows):
+                self.project._sync_canvas()
+                self.props.set_project(self.project)
+        if new_level:
+            region = (0, 0, self.project.map_cols - 1,
+                      self.project.map_rows - 1)
 
         W = region[2] - region[0] + 1
         H = region[3] - region[1] + 1
         rooms = max(3, (W * H) // 220)
         opts2 = dict(opts)
         opts2.update(cell_size=cs, region=region, rooms=rooms)
-        result = (gen.generate_geomorphs(opts2) if geomorph_mode
-                  else gen.generate(opts2))
-        if not result.get("pieces"):
+        try:
+            result = (gen.generate_geomorphs(opts2) if geomorph_mode
+                      else gen.generate(opts2))
+        except Exception:
+            if old_map_size != (self.project.map_cols, self.project.map_rows):
+                self.project.map_cols, self.project.map_rows = old_map_size
+                self.project._sync_canvas()
+                self.props.set_project(self.project)
+            raise
+
+        if not isinstance(result, dict):
+            if old_map_size != (self.project.map_cols, self.project.map_rows):
+                self.project.map_cols, self.project.map_rows = old_map_size
+                self.project._sync_canvas()
+                self.props.set_project(self.project)
+            raise TypeError("The map generator returned an invalid result.")
+        pieces = result.get("pieces") or []
+        if not pieces:
+            if old_map_size != (self.project.map_cols, self.project.map_rows):
+                self.project.map_cols, self.project.map_rows = old_map_size
+                self.project._sync_canvas()
+                self.props.set_project(self.project)
             return result
 
+        # Only discard the old result after generation succeeded. This keeps a
+        # working map intact if the new seed or asset set produces no output.
+        if opts.get("replace_prev"):
+            self._discard_gen_output(mode)
+        track_output = opts.get("replace_prev") is not None
+        if track_output:
+            if self._gen_output is None:
+                self._gen_output = {}
+            self._gen_output.setdefault(mode, {"ids": [], "levels": []})
+        else:
+            self._gen_output = None
+
         if new_level:
-            lvl = self.project.add_level(
-                f"{result.get('setting', opts.get('setting', 'Map'))} "
-                f"{result['seed']}")
+            setting = result.get("setting", opts.get("setting", "Map"))
+            seed = result.get("seed", opts.get("seed", ""))
+            base_name = f"{setting} {seed}".strip()
+            existing_names = {level.name for level in self.project.levels}
+            level_name = base_name
+            suffix = 2
+            while level_name in existing_names:
+                level_name = f"{base_name} ({suffix})"
+                suffix += 1
+            level = self.project.add_level(level_name)
             self.level_bar.refresh()
             self.level_bar.tabs.setCurrentIndex(len(self.project.levels) - 1)
             self.canvas.set_level(len(self.project.levels) - 1)
-            self.layers.set_project(self.project, self.project.levels[self.canvas.level_index])
+            self.layers.set_project(
+                self.project, self.project.levels[self.canvas.level_index])
         else:
             self.project._sync_canvas()
-        level = self.canvas.level
+            level = self.canvas.level
 
         layer_map = {"Base": "Floor", "Props": "Props", "Overlay": "Overlay",
                      "Geomorphs": "Floor", "Overlays": "Overlay",
                      "Symbols": "Symbols"}
-        output_layers = {piece["layer_name"] for piece in result["pieces"]}
+        output_layers = {piece["layer_name"] for piece in pieces}
         lid = {}
         for orig in ("Base", "Props", "Overlay", "Geomorphs", "Overlays", "Symbols"):
             if orig in output_layers:
@@ -1208,19 +1303,20 @@ class MainWindow(QMainWindow):
 
         from core.project import Piece
         created = []
-        for d in result["pieces"]:
-            p = Piece(asset_path=d["asset_path"], name=d["name"], x=d["x"], y=d["y"],
-                      w=d["w"], h=d["h"], scale=d["scale"], rotation=d["rotation"],
-                      layer=lid[d["layer_name"]], snap=True)
-            level.add(p)
-            created.append(p)
+        for data in pieces:
+            piece = Piece(
+                asset_path=data["asset_path"], name=data["name"],
+                x=data["x"], y=data["y"], w=data["w"], h=data["h"],
+                scale=data["scale"], rotation=data["rotation"],
+                layer=lid[data["layer_name"]], snap=True)
+            level.add(piece)
+            created.append(piece)
 
-        if opts.get("replace_prev") is not None:
-            out = self._gen_output.get(mode)
-            if out is not None:
-                out["ids"].extend(p.id for p in created)
-                if new_level:
-                    out["level"] = level
+        if track_output:
+            output = self._gen_output[mode]
+            output["ids"].extend(piece.id for piece in created)
+            if new_level:
+                output.setdefault("levels", []).append(level)
 
         self.canvas.fit_to_view()
         self.level_bar.refresh()
@@ -1230,39 +1326,73 @@ class MainWindow(QMainWindow):
         return result
 
     def _discard_gen_output(self, mode=None):
-        """Remove pieces/level produced by the previous Generate press.
+        """Remove tracked generated pieces and levels.
 
-        mode=None discards every tracked output; otherwise only that mode's.
+        With a mode, discard only outputs made for that destination; without
+        one, discard every generated output still tracked by this window.
         """
         out_all = self._gen_output
         if not out_all:
             return
-        keys = [mode] if mode else list(out_all.keys())
+
+        keys = [mode] if mode is not None else list(out_all.keys())
+        ids = set()
+        levels_to_remove = []
         for key in keys:
-            out = out_all.get(key)
-            if not out:
+            output = out_all.get(key)
+            if not output:
                 continue
-            ids = set(out.get("ids", []))
-            # a record owns a whole level whenever it created one (even if
-            # requested as "area" with nothing selected -> fallback full map)
-            if out.get("level") is not None and out.get("level") in self.project.levels:
-                idx = self.project.levels.index(out["level"])
-                if len(self.project.levels) > 1:
-                    self.project.remove_level(idx)
-                    idx = min(idx, len(self.project.levels) - 1)
-                    self.level_bar.refresh()
-                    self.level_bar.tabs.setCurrentIndex(idx)
-                    self.canvas.set_level(idx)
-                    self.layers.set_project(self.project,
-                                            self.project.levels[self.canvas.level_index])
-            else:
-                for lvl in self.project.levels:
-                    lvl.pieces = [p for p in lvl.pieces if p.id not in ids]
+            ids.update(output.get("ids", []))
+            tracked_levels = output.get("levels")
+            if tracked_levels is None:
+                old_level = output.get("level")
+                tracked_levels = [old_level] if old_level is not None else []
+            for level in tracked_levels:
+                if level is None:
+                    continue
+                in_project = any(level is current
+                                 for current in self.project.levels)
+                already_listed = any(level is existing
+                                     for existing in levels_to_remove)
+                if in_project and not already_listed:
+                    levels_to_remove.append(level)
             out_all.pop(key, None)
+
+        active_level = self.canvas.level
+        removed_level = False
+        for level in levels_to_remove:
+            index = next((i for i, current in enumerate(self.project.levels)
+                          if current is level), -1)
+            if index >= 0 and len(self.project.levels) > 1:
+                self.project.remove_level(index)
+                removed_level = True
+
+        # Remove generated area-fill nodes and clean up any output level that
+        # could not be removed because the project was down to its last level.
+        if ids:
+            for level in self.project.levels:
+                level.pieces = [piece for piece in level.pieces
+                                if piece.id not in ids]
+
         if not out_all:
             self._gen_output = None
+
         self.canvas.selection.clear()
-        self.canvas.selectionChanged.emit([])
+        self.canvas.selected_zone_id = None
+        self.canvas._update_quick()
+        if removed_level:
+            index = next((i for i, current in enumerate(self.project.levels)
+                          if current is active_level), -1)
+            if index < 0:
+                index = min(self.canvas.level_index,
+                            len(self.project.levels) - 1)
+            self.level_bar.refresh()
+            self.level_bar.tabs.setCurrentIndex(index)
+            self.canvas.set_level(index)
+            self.layers.set_project(self.project, self.project.levels[index])
+        else:
+            self.project._sync_canvas()
+            self.canvas.selectionChanged.emit([])
         self.zones.refresh_level()
         self.canvas.update()
 
@@ -1376,24 +1506,31 @@ class MainWindow(QMainWindow):
             self.canvas.begin_free_transform()
 
     def undo(self):
-        if self.history.undo(self.project):
-            self._after_history()
+        label = self.history.undo(self.project)
+        if label:
+            self._after_history(fit_canvas=label == "Resize canvas")
 
     def redo(self):
-        if self.history.redo(self.project):
-            self._after_history()
+        label = self.history.redo(self.project)
+        if label:
+            self._after_history(fit_canvas=label == "Resize canvas")
 
-    def _after_history(self):
+    def _after_history(self, fit_canvas=False):
         self.canvas.selection.clear()
         self.canvas.selectionChanged.emit([])
         idx = min(self.canvas.level_index, len(self.project.levels) - 1)
         self.canvas.level_index = idx
         self.level_bar.refresh()
         self.layers.set_project(self.project, self.project.levels[idx])
+        self.props.refresh_canvas_size()
         if self.canvas.selected_zone_id and not self.canvas.selected_zone:
             self.canvas.select_zone(None)
         self.zones.set_project(self.project)
-        self.canvas.update()
+        if fit_canvas:
+            self.canvas.fit_to_view()
+        else:
+            self.canvas.update()
+        self.canvas.dirty.emit()
         self._resync_history()
 
     def _resync_history(self):

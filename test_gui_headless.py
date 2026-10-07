@@ -9,7 +9,20 @@ from PyQt6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication(sys.argv)
 
 from ui.main_window import MainWindow
+from ui.canvas_size_dialog import CanvasSizeDialog
 from core import exporter
+
+size_dialog = CanvasSizeDialog()
+assert size_dialog.canvas_size() == {
+    "map_cols": 30, "map_rows": 30, "cell_size": 70
+}
+size_dialog.spin_columns.setValue(40)
+size_dialog.spin_rows.setValue(25)
+size_dialog.spin_cell_size.setValue(50)
+assert size_dialog.canvas_size() == {
+    "map_cols": 40, "map_rows": 25, "cell_size": 50
+}
+assert "2,000 × 1,250" in size_dialog.lbl_dimensions.text()
 
 # don't block on dialogs in headless mode
 import ui.main_window as mw
@@ -53,6 +66,21 @@ sel = win.canvas.selected_pieces()
 if sel:
     sel[0].rotation = 45
     sel[0].opacity = 0.7
+
+# The minimap maps its frame back to world coordinates and refreshes when the
+# canvas viewport changes (zoom/pan), not just when a node is edited.
+geometry = win.minimap._map_geometry()
+map_w, map_h, mini_scale, mini_x, mini_y = geometry
+center = win.minimap._world_from_pos(
+    mini_x + map_w * mini_scale / 2,
+    mini_y + map_h * mini_scale / 2)
+assert abs(center[0] - win.project.canvas_w / 2) < 1
+assert abs(center[1] - win.project.canvas_h / 2) < 1
+view_changes = []
+win.canvas.viewChanged.connect(lambda: view_changes.append(True))
+win.canvas.set_zoom(win.canvas.zoom * 1.1)
+assert view_changes, "zoom should notify the minimap"
+assert not win.minimap.grab().isNull(), "minimap should paint a frame"
 
 # collections
 win.project.collections.setdefault("Favorites", []).append(paths[2])

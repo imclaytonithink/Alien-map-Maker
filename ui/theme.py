@@ -131,8 +131,25 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
                                     stop:0 {c['panel3']}, stop:1 {c['panel2']});
         border: 1px solid {c['border']};
         border-radius: {radius};
-        padding: 6px 12px;
+        padding: 4px 8px;
         color: {c['text']};
+    }}
+    QPushButton#CanvasQuickButton,
+    QPushButton#LayerIconButton,
+    QPushButton#PanelIconButton,
+    QPushButton#PropertyIconButton {{
+        padding: 0px;
+        min-width: 0px;
+    }}
+    QPushButton#LayerNameButton {{
+        background: transparent;
+        border: none;
+        padding: 0px;
+        text-align: left;
+    }}
+    QPushButton#LayerNameButton:hover {{
+        color: {c['accent']};
+        border: none;
     }}
     QPushButton:hover {{
         background: {c['hover']};
@@ -140,7 +157,7 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
     }}
     QPushButton:pressed {{
         background: {c['selection']};
-        padding-top: 7px; padding-bottom: 5px;
+        padding-top: 5px; padding-bottom: 3px;
     }}
     QPushButton:focus {{ border: 1px solid {c['border_hot']}; }}
     QPushButton:disabled {{ color: {c['disabled']}; border-color: {c['panel3']}; }}

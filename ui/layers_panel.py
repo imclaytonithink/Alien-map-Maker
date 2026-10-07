@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QListWidget,
-    QListWidgetItem, QLineEdit, QMenu, QAbstractItemView, QColorDialog,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSlider, QLabel,
+    QListWidget, QListWidgetItem, QSizePolicy, QLineEdit, QMenu,
+    QAbstractItemView,
 )
 from core.project import Project, Level, Layer
 from ui.theme import theme_colors
@@ -46,51 +46,77 @@ class LayerRow(QWidget):
                  theme_accent="#69b7f5", theme_muted="#9aa9b8", soloed=False):
         super().__init__(parent)
         self.layer = layer
+        self._full_name = layer.name
+        self._is_active = is_active
         self.theme_accent = theme_accent
         self.theme_muted = theme_muted
+        self.setMinimumHeight(34)
         self.setStyleSheet("background: transparent;")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(2, 2, 2, 2)
+        lay.setContentsMargins(2, 1, 2, 1)
         lay.setSpacing(3)
         self.stripe = QLabel()
         self.stripe.setFixedWidth(4)
         self.stripe.setStyleSheet(
             f"background:{layer.color or 'transparent'}; border-radius:2px;")
         lay.addWidget(self.stripe)
-        self.btn_active = QPushButton("●" if is_active else "○")
-        self.btn_active.setMaximumWidth(20)
-        self._apply_active_style(is_active)
+
+        self.btn_active = QPushButton()
+        self.btn_active.setObjectName("LayerIconButton")
+        self.btn_active.setFixedSize(27, 26)
         self.btn_active.clicked.connect(lambda: self.active.emit(layer.id))
-        self.btn_visible = QPushButton("●" if layer.visible else "○")
-        self.btn_visible.setToolTip("Show / hide this layer")
-        self.btn_visible.setMaximumWidth(24)
+        self._set_active_state(is_active)
+
+        self.btn_visible = QPushButton()
+        self.btn_visible.setObjectName("LayerIconButton")
+        self.btn_visible.setFixedSize(27, 26)
         self.btn_visible.clicked.connect(self._toggle_vis)
-        self.btn_lock = QPushButton("■" if layer.locked else "□")
-        self.btn_lock.setToolTip("Lock / unlock this layer")
-        self.btn_lock.setMaximumWidth(24)
+        self._update_visibility_button()
+
+        self.btn_lock = QPushButton()
+        self.btn_lock.setObjectName("LayerIconButton")
+        self.btn_lock.setFixedSize(27, 26)
         self.btn_lock.clicked.connect(self._toggle_lock)
         self.btn_solo = QPushButton("S")
+        self.btn_solo.setObjectName("LayerIconButton")
+        self.btn_solo.setFixedSize(27, 26)
         self.btn_solo.setCheckable(True)
         self.btn_solo.setChecked(soloed)
-        self.btn_solo.setMaximumWidth(24)
         self.btn_solo.setToolTip("Solo: show only this layer while editing (not exported)")
         self.btn_solo.clicked.connect(lambda: self.solo.emit(layer.id))
+        self._update_lock_button()
+
         self.lbl = QPushButton(layer.name)
-        self.lbl.setStyleSheet("text-align:left;")
-        self.lbl.setToolTip("Click to make active · double-click to rename · right-click for more")
+        self.lbl.setObjectName("LayerNameButton")
+        self.lbl.setFlat(True)
+        self.lbl.setMinimumWidth(0)
+        self.lbl.setSizePolicy(QSizePolicy.Policy.Ignored,
+                               QSizePolicy.Policy.Preferred)
+        self.lbl.setToolTip(
+            f"{layer.name} — click to make active · double-click to rename · "
+            "right-click for more")
+        self.lbl.setAccessibleName(f"Set {layer.name} as the active layer")
         self.lbl.clicked.connect(lambda: self.active.emit(layer.id))
         self.lbl.installEventFilter(self)
         self.editor = QLineEdit(layer.name)
         self.editor.hide()
         self.editor.editingFinished.connect(self._finish_rename)
+
         self.sl = QSlider(Qt.Orientation.Horizontal)
         self.sl.setRange(0, 100)
         self.sl.setValue(int(layer.opacity * 100))
+        self.sl.setMinimumWidth(42)
         self.sl.setMaximumWidth(70)
+        self.sl.setToolTip("Layer opacity")
         self.sl.valueChanged.connect(self._op)
-        lay.addWidget(self.btn_active); lay.addWidget(self.btn_visible)
-        lay.addWidget(self.btn_lock); lay.addWidget(self.btn_solo)
-        lay.addWidget(self.lbl, 1); lay.addWidget(self.editor, 1); lay.addWidget(self.sl)
+
+        lay.addWidget(self.btn_active)
+        lay.addWidget(self.btn_visible)
+        lay.addWidget(self.btn_lock)
+        lay.addWidget(self.btn_solo)
+        lay.addWidget(self.lbl, 1)
+        lay.addWidget(self.editor, 1)
+        lay.addWidget(self.sl)
 
     def eventFilter(self, obj, event):
         if obj is self.lbl:
@@ -118,16 +144,36 @@ class LayerRow(QWidget):
         if new and new != self.layer.name:
             self.renameRequested.emit(self.layer.id, new)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, "lbl"):
+            return
+        self.lbl.setText(self.lbl.fontMetrics().elidedText(
+            self._full_name, Qt.TextElideMode.ElideRight,
+            max(0, self.lbl.width())))
+
+    def _update_visibility_button(self):
+        self.btn_visible.setText("V" if self.layer.visible else "H")
+        state = "visible — click to hide" if self.layer.visible else "hidden — click to show"
+        self.btn_visible.setToolTip(f"Layer is {state}.")
+        self.btn_visible.setAccessibleName(f"{self.layer.name} layer {state}")
+
+    def _update_lock_button(self):
+        self.btn_lock.setText("L" if self.layer.locked else "U")
+        state = "locked — click to unlock" if self.layer.locked else "unlocked — click to lock"
+        self.btn_lock.setToolTip(f"Layer is {state}.")
+        self.btn_lock.setAccessibleName(f"{self.layer.name} layer {state}")
+
     def _toggle_vis(self):
         self.committed.emit("Toggle layer visibility", False)
         self.layer.visible = not self.layer.visible
-        self.btn_visible.setText("●" if self.layer.visible else "○")
+        self._update_visibility_button()
         self.changed.emit()
 
     def _toggle_lock(self):
         self.committed.emit("Toggle layer lock", False)
         self.layer.locked = not self.layer.locked
-        self.btn_lock.setText("■" if self.layer.locked else "□")
+        self._update_lock_button()
         self.changed.emit()
 
     def _op(self, v):
@@ -139,14 +185,26 @@ class LayerRow(QWidget):
         color = self.theme_accent if active else self.theme_muted
         self.btn_active.setStyleSheet(f"color:{color};")
 
+    def _set_active_state(self, active: bool):
+        self._is_active = active
+        self.btn_active.setText("●" if active else "○")
+        if active:
+            self.btn_active.setToolTip(
+                "Active layer — new pieces are added here.")
+            self.btn_active.setAccessibleName("Active layer")
+        else:
+            self.btn_active.setToolTip(
+                "Make this the active layer for new pieces.")
+            self.btn_active.setAccessibleName("Set as active layer")
+        self._apply_active_style(active)
+
     def set_theme_colors(self, accent: str, muted: str):
         self.theme_accent = accent
         self.theme_muted = muted
-        self._apply_active_style(self.btn_active.text() == "●")
+        self._apply_active_style(self._is_active)
 
     def set_active_style(self, active: bool):
-        self.btn_active.setText("●" if active else "○")
-        self._apply_active_style(active)
+        self._set_active_state(active)
 
 
 class LayersPanel(QWidget):
@@ -171,13 +229,26 @@ class LayersPanel(QWidget):
         self.list = ReorderList()
         self.list.setStyleSheet("QListWidget{border:none;}")
         self.list.orderChanged.connect(self._reordered)
+        self.list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setUniformItemSizes(True)
         root.addWidget(self.list, 1)
         row = QHBoxLayout()
-        b_add = QPushButton("+"); b_add.setMaximumWidth(28); b_add.clicked.connect(self._add)
-        b_del = QPushButton("–"); b_del.setMaximumWidth(28); b_del.clicked.connect(self._del)
-        b_up = QPushButton("▲"); b_up.setMaximumWidth(28); b_up.clicked.connect(lambda: self._move(-1))
-        b_dn = QPushButton("▼"); b_dn.setMaximumWidth(28); b_dn.clicked.connect(lambda: self._move(1))
-        row.addWidget(b_add); row.addWidget(b_del); row.addWidget(b_up); row.addWidget(b_dn)
+        actions = [
+            ("+", "Add a layer", self._add),
+            ("–", "Delete the active layer", self._del),
+            ("▲", "Move the active layer up", lambda: self._move(-1)),
+            ("▼", "Move the active layer down", lambda: self._move(1)),
+        ]
+        for label, tooltip, callback in actions:
+            button = QPushButton(label)
+            button.setObjectName("PanelIconButton")
+            button.setFixedSize(30, 28)
+            button.setToolTip(tooltip)
+            button.setAccessibleName(tooltip)
+            button.clicked.connect(callback)
+            row.addWidget(button)
+        row.addStretch(1)
         root.addLayout(row)
 
     def set_theme(self, mode: str, accent: str):
@@ -208,11 +279,13 @@ class LayersPanel(QWidget):
             row.renameRequested.connect(self._rename)
             row.menuRequested.connect(self._show_menu)
             row.committed.connect(self._commit)
-            it = QListWidgetItem(self.list)
-            it.setSizeHint(row.sizeHint())
-            it.setData(Qt.ItemDataRole.UserRole, l.id)
-            self.list.addItem(it)
-            self.list.setItemWidget(it, row)
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, l.id)
+            self.list.addItem(item)
+            self.list.setItemWidget(item, row)
+            item.setSizeHint(QSize(
+                max(0, self.list.viewport().width()),
+                max(34, row.sizeHint().height())))
         self.list.blockSignals(False)
         self._apply_filter(self.filter.text())
 
@@ -308,6 +381,17 @@ class LayersPanel(QWidget):
             self.level.add(clone)
         self.level.current_layer = new.id
         self.rebuild(); self._changed()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, "list"):
+            return
+        width = max(0, self.list.viewport().width())
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            row = self.list.itemWidget(item)
+            height = max(34, row.sizeHint().height()) if row else 34
+            item.setSizeHint(QSize(width, height))
 
     def _changed(self):
         self.canvas.update()
