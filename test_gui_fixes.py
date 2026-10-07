@@ -214,15 +214,39 @@ assert not model._pending, "finished thumbnail requests must free their slot"
 assert not model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole).isNull()
 print("library previews ok")
 
-# ---- generator dialog shows only relevant options and never greys Output
+# ---- images larger than Qt's default 256 MB decode limit still load
+huge = os.path.join(tmp, "huge.png")
+big = QImage(8400, 8400, QImage.Format.Format_ARGB32)       # ~282 MB decoded
+big.fill(QColor("#224466")); big.save(huge); del big
+from ui.image_utils import load_scaled_image
+assert not load_scaled_image(huge, 110).isNull(), "huge tile must produce a preview"
+hp = Piece(asset_path="huge.png", x=0, y=0, w=400, h=400, snap=False)
+assert not canvas.pixmap(hp, (300, 300)).isNull(), "huge tile must draw on the canvas"
+os.remove(huge)
+print("huge image decode ok")
+
+# unreadable images get a distinct "no preview" tile instead of loading forever
+model._failed.clear()
+asset = model.assets[0]
+model._pending[(model._generation, asset.path)] = object()
+model._thumbnail_ready(asset.path, model.thumb_size, model._generation, QImage())
+assert asset.path in model._failed and not model._pending
+failed_icon = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
+assert not failed_icon.isNull()
+assert "could not be generated" in model.data(model.index(0, 0), Qt.ItemDataRole.ToolTipRole)
+print("failed preview state ok")
+
+# ---- generator dialog: one window, options follow the chosen strategy
 from ui.generator_dialog import GeneratorDialog
 dlg = GeneratorDialog(project, win.library, canvas, lambda opts: {"pieces": []}, win)
 dlg.show(); app.processEvents()
-dlg.cmb_asset_mode.setCurrentIndex(0); app.processEvents()
-assert dlg.cmb_setting.isVisibleTo(dlg) and not dlg.cmb_geomorph_grid.isVisibleTo(dlg)
-dlg.cmb_asset_mode.setCurrentIndex(1); app.processEvents()
-assert dlg.cmb_geomorph_grid.isVisibleTo(dlg) and not dlg.cmb_setting.isVisibleTo(dlg)
-assert dlg.cmb_mode.isEnabled()
+dlg.strategy_radios["assembly"].setChecked(True); app.processEvents()
+assert dlg.cmb_packing.isVisibleTo(dlg) and not dlg.cmb_setting.isVisibleTo(dlg)
+dlg.strategy_radios["tiles"].setChecked(True); app.processEvents()
+assert dlg.cmb_setting.isVisibleTo(dlg) and not dlg.cmb_packing.isVisibleTo(dlg)
+dlg.strategy_radios["furnish"].setChecked(True); app.processEvents()
+assert dlg.cmb_scope.isVisibleTo(dlg) and not dlg.cmb_mode.isVisibleTo(dlg)
+dlg.strategy_radios["assembly"].setChecked(True)
 dlg.cmb_mode.setCurrentIndex(1)
 canvas.clear_selection()
 assert dlg._generate() is False and "Select" in dlg.lbl_status.text()
@@ -265,15 +289,35 @@ class Odd:
 w, h = canvas.asset_world_size("x.png", Odd())
 assert abs(w / h - 2.0) < 1e-6, (w, h)
 level.pieces.clear()
-kept = canvas._nearest_target(12, (0, 25, 50), [], 12, 70, True)[0]
-plain = canvas._nearest_target(12, (0, 25, 50), [], 12, 70, False)[0]
-assert abs(kept - 10) < 1e-6 and abs(plain - 20) < 1e-6, (kept, plain)
+# canvas-middle centerlines: snap targets, and centering commands
+project.show_centerlines = True
+assert canvas._canvas_middle_lines() == ([project.canvas_w / 2.0], [project.canvas_h / 2.0])
+project.show_centerlines = False
+assert canvas._canvas_middle_lines() == ([], [])
+project.show_centerlines = True
+level.pieces.clear()
+mover = Piece(x=100, y=100, w=100, h=100, snap=False); level.add(mover)
+canvas.zoom, canvas.pan_x, canvas.pan_y = 1.0, 0.0, 0.0
+canvas.select([mover])
+canvas.center_selection_on_canvas("both")
+assert abs(mover.center[0] - project.canvas_w / 2) < 1e-6
+assert abs(mover.center[1] - project.canvas_h / 2) < 1e-6
+mover.x, mover.y = 100, 100
+canvas.center_selection_on_canvas("h")
+assert abs(mover.center[0] - project.canvas_w / 2) < 1e-6 and mover.y == 100
+# a node dragged near the middle line snaps its center onto it
+mid_x = project.canvas_w / 2.0
+mover.snap = False
+mover.x, mover.y = mid_x - 50 - 300, 300
+drag_piece(mover, 300 - 6, 0)          # center ends 6px short of the middle line
+assert abs(mover.center[0] - mid_x) < 1e-6, mover.center
+level.pieces.clear()
 from core.project import Project
 assert Project.from_dict(project.to_dict()).show_centerlines is True
 project.show_centerlines = False
 assert Project.from_dict(project.to_dict()).show_centerlines is False
 project.show_centerlines = True
-canvas.fit_to_view(); canvas.grab()       # paints with centerlines
+canvas.fit_to_view(); canvas.grab()       # paints with the canvas centerlines
 print("ratio + centerlines ok")
 
 # ---- tighten to visible pixels
@@ -304,6 +348,39 @@ deadline = time.time() + 15
 while time.time() < deadline and loose.crop_rect == [0.0, 0.0, 1.0, 1.0]:
     app.processEvents(); time.sleep(0.02)
 assert abs(loose.w - 200) < 4
+# options: higher cut-off ignores faint glow, padding keeps a margin, sides can be skipped
+glow = QImage(400, 400, QImage.Format.Format_ARGB32)
+glow.fill(Qt.GlobalColor.transparent)
+gp = QPainter(glow)
+gp.fillRect(50, 50, 300, 300, QColor(255, 255, 255, 12))      # faint halo (~5%)
+gp.fillRect(150, 150, 100, 100, QColor("#ffffff"))             # solid core
+gp.end()
+glow.save(os.path.join(tight_dir, "glow.png"))
+halo = canvas.add_asset("glow.png", 600, 300)
+app.processEvents()
+canvas.select([halo])
+canvas.tighten_selected({"threshold": 8, "padding": 0.0, "sides": (True,) * 4})
+deadline = time.time() + 15
+while time.time() < deadline and halo.crop_rect == [0.0, 0.0, 1.0, 1.0]:
+    app.processEvents(); time.sleep(0.02)
+assert abs(halo.w - 300) < 4, halo.w                          # halo kept at a low cut-off
+canvas.tighten_selected({"threshold": 64, "padding": 0.0, "sides": (True,) * 4})
+app.processEvents()
+assert abs(halo.w - 100) < 4 and abs(halo.h - 100) < 4, (halo.w, halo.h)
+core_center = halo.center
+canvas.tighten_selected({"threshold": 64, "padding": 20.0, "sides": (True,) * 4})
+app.processEvents()
+assert abs(halo.w - 140) < 4, halo.w                          # 20px margin on each side
+canvas.tighten_selected({"threshold": 64, "padding": 0.0, "sides": (True, False, False, True)})
+app.processEvents()
+assert abs(halo.w - 250) < 6 and abs(halo.h - 250) < 6, (halo.w, halo.h)   # right/top left untrimmed
+canvas.restore_selected_images()
+assert halo.crop_rect == [0.0, 0.0, 1.0, 1.0] and abs(halo.w - 400) < 1e-6
+# the artwork never moves when it is trimmed or restored
+canvas.tighten_selected({"threshold": 64, "padding": 0.0, "sides": (True,) * 4})
+app.processEvents()
+core_after = halo.center
+assert abs(core_after[0] - core_center[0]) < 1.0 and abs(core_after[1] - core_center[1]) < 1.0
 canvas.auto_tighten = True
 level.pieces.clear(); canvas.clear_selection()
 print("tighten ok")
@@ -347,7 +424,7 @@ assert panel.sl_thumb.value() < before
 panel.sl_thumb.setValue(THUMB_MAX + 100)
 assert panel.sl_thumb.value() == THUMB_MAX
 panel._sync_library_menu()
-assert any(a.isChecked() for a in panel._size_actions.values()) or True
+assert any(a.isChecked() for a in panel._size_actions.values()) or panel.sl_thumb.value() not in panel._size_actions
 panel.sl_thumb.setValue(160)
 assert int(panel._settings.value("library/thumb_size")) == 160
 print("library controls ok")

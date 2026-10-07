@@ -32,7 +32,7 @@ GUIDE_DIST = 12  # screen px threshold for smart guides
 
 
 class _BoundsSignals(QObject):
-    done = pyqtSignal(str, object)       # piece id, bounds or None
+    done = pyqtSignal(str, object)       # piece id, {threshold: bounds}
 
 
 class _BoundsTask(QRunnable):
@@ -45,20 +45,20 @@ class _BoundsTask(QRunnable):
         self.signals = signals
 
     def run(self):
-        from ui.image_utils import visible_bounds_for_file, visible_bounds_for_image
-        bounds = None
+        from ui.image_utils import all_bounds_for_image, bounds_table_for_file
+        table = None
         try:
             if self.embedded:
                 from PyQt6.QtGui import QImage
                 from core.project import decode_embed
-                bounds = visible_bounds_for_image(
+                table = all_bounds_for_image(
                     QImage.fromData(decode_embed(self.embedded)))
             elif self.path:
-                bounds = visible_bounds_for_file(self.path)
+                table = bounds_table_for_file(self.path)
         except Exception:
-            bounds = None
+            table = None
         try:
-            self.signals.done.emit(self.piece_id, bounds)
+            self.signals.done.emit(self.piece_id, table)
         except RuntimeError:
             pass
 
@@ -125,7 +125,9 @@ class CanvasView(QWidget):
         self._bounds_signals.done.connect(self._bounds_ready)
         self._bounds_pool = QThreadPool(self)
         self._bounds_pool.setMaxThreadCount(1)
-        self._bounds_wait: dict[str, bool] = {}   # piece id -> only if still untouched
+        self._bounds_wait: dict[str, tuple] = {}   # piece id -> (options, only_if_untouched)
+        self.tighten_options = {"threshold": 16, "padding": 0.0,
+                                "sides": (True, True, True, True)}
         self.allow_overlap = False   # align/distribute may overlap nodes only when on
         self.free_transform = False
         self._ft_backup: dict | None = None
@@ -1007,72 +1009,136 @@ class CanvasView(QWidget):
         return p
 
     # -- tighten to visible pixels ---------------------------------------
-    def tighten_piece_async(self, piece: Piece, only_if_untouched=False) -> bool:
-        """Trim a node to its visible pixels (non-destructive crop). Cached
-        results apply immediately; otherwise the image is analysed in the
-        background and the node is trimmed when that finishes."""
+    def tighten_piece_async(self, piece: Piece, only_if_untouched=False,
+                            options: dict | None = None) -> bool:
+        """Trim a node to its visible pixels (non-destructive crop).
+
+        ``options``: threshold (alpha 1-255 below which a pixel counts as empty),
+        padding (map px of margin to keep) and sides (left, top, right, bottom
+        flags for which edges may be trimmed). Cached analysis applies at once;
+        otherwise the image is analysed in the background first."""
         if piece.is_text or piece.is_patch or piece.is_connector or piece.is_scale_bar:
             return False
+        opts = dict(self.tighten_options)
+        if options:
+            opts.update(options)
         path = ("" if piece.embedded else
                 (self.project.resolve_asset(piece.asset_path) if piece.asset_path else ""))
         if path:
-            from ui.image_utils import peek_visible_bounds
-            cached = peek_visible_bounds(path)
-            if cached is not None:
-                return self._apply_tighten(piece, cached, only_if_untouched)
+            from ui.image_utils import has_cached_bounds, bounds_table_for_file
+            if has_cached_bounds(path):
+                return self._apply_tighten(
+                    piece, bounds_table_for_file(path), opts, only_if_untouched)
         elif not piece.embedded:
             return False
-        self._bounds_wait[piece.id] = only_if_untouched
+        self._bounds_wait[piece.id] = (opts, only_if_untouched)
         self._bounds_pool.start(_BoundsTask(
             piece.id, path, piece.embedded, self._bounds_signals))
         return True
 
-    def tighten_selected(self) -> int:
+    def tighten_selected(self, options: dict | None = None) -> int:
         """Trim every selected image node to its visible pixels."""
         count = 0
         for piece in self.selected_pieces():
-            if self.tighten_piece_async(piece):
+            if self.tighten_piece_async(piece, options=options):
                 count += 1
         if count:
             self.statusMessage.emit(
                 f"Tightening {count} node(s) to their visible pixels…")
         return count
 
-    def _bounds_ready(self, piece_id: str, bounds):
-        only_if_untouched = self._bounds_wait.pop(piece_id, False)
-        if bounds is None or not self.project:
+    def restore_selected_images(self) -> int:
+        """Undo tightening/cropping: show the whole source image again."""
+        count = 0
+        for piece in self.selected_pieces():
+            if piece.crop_rect != [0.0, 0.0, 1.0, 1.0] and not (
+                    piece.is_text or piece.is_patch or piece.is_connector
+                    or piece.is_scale_bar):
+                if self._set_crop_rect(piece, [0.0, 0.0, 1.0, 1.0],
+                                       "Restore full image"):
+                    count += 1
+        return count
+
+    def _bounds_ready(self, piece_id: str, table):
+        opts, only_if_untouched = self._bounds_wait.pop(
+            piece_id, (dict(self.tighten_options), False))
+        if not table or not self.project:
             return
         for level in self.project.levels:
             for piece in level.pieces:
                 if piece.id == piece_id:
-                    self._apply_tighten(piece, bounds, only_if_untouched)
+                    self._apply_tighten(piece, table, opts, only_if_untouched)
                     return
 
-    def _apply_tighten(self, piece: Piece, bounds, only_if_untouched=False) -> bool:
+    def _apply_tighten(self, piece: Piece, table, opts: dict,
+                       only_if_untouched=False) -> bool:
+        if only_if_untouched and list(piece.crop_rect) != [0.0, 0.0, 1.0, 1.0]:
+            return False
+        from ui.image_utils import nearest_threshold
+        bounds = table.get(nearest_threshold(opts.get("threshold", 16)))
+        if bounds is None:
+            return False
         crop = piece.crop_rect
-        if only_if_untouched and list(crop) != [0.0, 0.0, 1.0, 1.0]:
-            return False
-        left, top = max(bounds[0], crop[0]), max(bounds[1], crop[1])
-        right, bottom = min(bounds[2], crop[2]), min(bounds[3], crop[3])
         crop_w, crop_h = crop[2] - crop[0], crop[3] - crop[1]
-        if right <= left or bottom <= top or crop_w <= 0 or crop_h <= 0:
+        if crop_w <= 0 or crop_h <= 0:
             return False
-        fractions = ((left - crop[0]) / crop_w, (top - crop[1]) / crop_h,
-                     (right - crop[0]) / crop_w, (bottom - crop[1]) / crop_h)
-        if (fractions[0] < 0.002 and fractions[1] < 0.002
-                and fractions[2] > 0.998 and fractions[3] > 0.998):
-            return False          # already as tight as it gets
-        if only_if_untouched:
-            self._suppress_history = True   # part of the placement, not its own step
-        try:
-            if not self._apply_crop(piece, fractions):
-                return False
-        finally:
-            self._suppress_history = False
+        # map px per source-image fraction at the node's current size
+        kx = piece.w * piece.scale / crop_w
+        ky = piece.h * piece.scale / crop_h
+        pad = max(0.0, float(opts.get("padding", 0.0)))
+        sides = tuple(opts.get("sides", (True, True, True, True)))
+        target = [
+            max(0.0, bounds[0] - pad / kx) if sides[0] else 0.0,
+            max(0.0, bounds[1] - pad / ky) if sides[1] else 0.0,
+            min(1.0, bounds[2] + pad / kx) if sides[2] else 1.0,
+            min(1.0, bounds[3] + pad / ky) if sides[3] else 1.0,
+        ]
+        if target[2] - target[0] < 0.02 or target[3] - target[1] < 0.02:
+            return False
+        if all(abs(a - b) < 0.0005 for a, b in zip(target, crop)):
+            return False                      # already exactly this tight
+        if not self._set_crop_rect(piece, target, "Tighten to visible pixels",
+                                   quiet=only_if_untouched):
+            return False
         if only_if_untouched and piece.snap and piece.rotation == 0:
             cell = max(1, self.project.cell_size)
             piece.x = snap_value(piece.x, cell)
             piece.y = snap_value(piece.y, cell)
+        self.update()
+        return True
+
+    def _set_crop_rect(self, piece: Piece, target, label: str, quiet=False) -> bool:
+        """Set the node's crop to ``target`` (0..1 source fractions) while the
+        visible artwork stays exactly where it is on the map."""
+        crop = piece.crop_rect
+        crop_w, crop_h = crop[2] - crop[0], crop[3] - crop[1]
+        if crop_w <= 1e-6 or crop_h <= 1e-6:
+            return False
+        kx = piece.w * piece.scale / crop_w
+        ky = piece.h * piece.scale / crop_h
+        dx = ((target[0] + target[2]) / 2.0 - (crop[0] + crop[2]) / 2.0) * kx
+        dy = ((target[1] + target[3]) / 2.0 - (crop[1] + crop[3]) / 2.0) * ky
+        if piece.flip_h:
+            dx = -dx
+        if piece.flip_v:
+            dy = -dy
+        angle = math.radians(piece.rotation)
+        cx, cy = piece.center
+        new_cx = cx + dx * math.cos(angle) - dy * math.sin(angle)
+        new_cy = cy + dx * math.sin(angle) + dy * math.cos(angle)
+        if quiet:
+            self._suppress_history = True    # part of the placement's own undo step
+        try:
+            self.push_history(label)
+        finally:
+            self._suppress_history = False
+        piece.w = (target[2] - target[0]) * kx / piece.scale
+        piece.h = (target[3] - target[1]) * ky / piece.scale
+        piece.crop_rect = [float(v) for v in target]
+        piece.x = new_cx - piece.w * piece.scale / 2.0
+        piece.y = new_cy - piece.h * piece.scale / 2.0
+        self.selectionChanged.emit(self.selected_pieces())
+        self.dirty.emit()
         self.update()
         return True
 
@@ -1274,6 +1340,9 @@ class CanvasView(QWidget):
             bx0, by0, bx1, by1 = self._aabb(o)
             xs += [bx0, (bx0 + bx1) / 2.0, bx1]
             ys += [by0, (by0 + by1) / 2.0, by1]
+        mid_x, mid_y = self._canvas_middle_lines()
+        xs += mid_x
+        ys += mid_y
 
         def pick(value, edges):
             best, guide = value, None
@@ -1315,11 +1384,9 @@ class CanvasView(QWidget):
 
         self._draw_pasteboard(painter, theme_bg)
         self._draw_bg(painter)
-        if self.project.show_grid:
-            painter.save()
-            painter.setClipRect(self._canvas_rect_screen())
+        grid_on_top = getattr(self.project, "grid_on_top", True)
+        if self.project.show_grid and not grid_on_top:
             self._draw_grid(painter, self.project.grid_color, self.project.grid_opacity)
-            painter.restore()
         self._draw_cell_highlight(painter)
         if self.ref_enabled:
             self._draw_reference(painter)
@@ -1328,7 +1395,10 @@ class CanvasView(QWidget):
             if self.solo_layer_id and p.layer != self.solo_layer_id:
                 continue
             self._draw_piece(painter, p, 1.0)
+        if self.project.show_grid and grid_on_top:
+            self._draw_grid(painter, self.project.grid_color, self.project.grid_opacity)
         self._draw_canvas_veil_and_frame(painter, theme_bg)
+        self._draw_canvas_centerlines(painter)
 
         if self.project.show_zones:
             draw_zone_borders(
@@ -1378,6 +1448,49 @@ class CanvasView(QWidget):
 
         painter.end()
 
+    def _canvas_middle_lines(self):
+        """World x / y of the canvas middle when centerlines are on (snap targets)."""
+        if not self.project or not getattr(self.project, "show_centerlines", False):
+            return [], []
+        return [self.project.canvas_w / 2.0], [self.project.canvas_h / 2.0]
+
+    def _draw_canvas_centerlines(self, painter):
+        """Vertical and horizontal lines through the middle of the canvas, for
+        aligning nodes to the map's center."""
+        if not getattr(self.project, "show_centerlines", False):
+            return
+        rect = self._canvas_rect_screen()
+        cx, cy = rect.center().x(), rect.center().y()
+        painter.save()
+        painter.setClipRect(rect)
+        pen = QPen(QColor("#ffb000"))
+        pen.setWidthF(1.5)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.setOpacity(0.85)
+        painter.drawLine(QPointF(round(cx) + 0.5, rect.top()),
+                         QPointF(round(cx) + 0.5, rect.bottom()))
+        painter.drawLine(QPointF(rect.left(), round(cy) + 0.5),
+                         QPointF(rect.right(), round(cy) + 0.5))
+        painter.restore()
+
+    def center_selection_on_canvas(self, axis: str = "both"):
+        """Move the selection so its bounds are centered on the canvas middle."""
+        sel = self.selected_pieces()
+        if not sel or not self.project:
+            return
+        boxes = [self._aabb(p) for p in sel]
+        left = min(b[0] for b in boxes); right = max(b[2] for b in boxes)
+        top = min(b[1] for b in boxes); bottom = max(b[3] for b in boxes)
+        dx = self.project.canvas_w / 2.0 - (left + right) / 2.0 if axis in ("both", "h") else 0.0
+        dy = self.project.canvas_h / 2.0 - (top + bottom) / 2.0 if axis in ("both", "v") else 0.0
+        self.push_history("Center on canvas")
+        for p in sel:
+            p.x += dx
+            p.y += dy
+        self.dirty.emit()
+        self.update()
+
     def _canvas_rect_screen(self) -> QRectF:
         x0, y0 = self.world_to_screen(0, 0)
         return QRectF(x0, y0, self.project.canvas_w * self.zoom,
@@ -1424,51 +1537,61 @@ class CanvasView(QWidget):
         painter.fillRect(QRectF(x0, y0, w, h), QColor(self.level.background))
 
     def _draw_grid(self, painter, color, opacity):
+        """Grid lines are anchored to the map origin (world x/y = 0), so they
+        stay put under the nodes while you pan and zoom. Major lines fall on
+        every Nth line counted from the origin, not from the screen edge."""
         cell = self.project.cell_size
         if cell <= 0:
             return
         vw, vh = self.width(), self.height()
+        canvas_w, canvas_h = self.project.canvas_w, self.project.canvas_h
         wx0, wy0 = self.screen_to_world(0, 0)
         wx1, wy1 = self.screen_to_world(vw, vh)
-        start_x = math.floor(wx0 / cell) * cell
-        start_y = math.floor(wy0 / cell) * cell
-        pen = QPen(QColor(color))
-        pen.setWidthF(1)
+        # only the part of the map that is on screen
+        wx0, wx1 = max(0.0, wx0), min(float(canvas_w), wx1)
+        wy0, wy1 = max(0.0, wy0), min(float(canvas_h), wy1)
+        if wx1 < wx0 or wy1 < wy0:
+            return
+        top = self.world_to_screen(0, max(0.0, wy0))[1]
+        bottom = self.world_to_screen(0, min(float(canvas_h), wy1))[1]
+        left = self.world_to_screen(max(0.0, wx0), 0)[0]
+        right = self.world_to_screen(min(float(canvas_w), wx1), 0)[0]
+
+        def crisp(value: float) -> float:
+            return math.floor(value) + 0.5       # whole-pixel aligned, no shimmer
+
+        def lines(step: int, pen: QPen, alpha: float):
+            painter.setOpacity(alpha)
+            painter.setPen(pen)
+            first_x = math.ceil(wx0 / step) * step
+            first_y = math.ceil(wy0 / step) * step
+            gx = first_x
+            while gx <= wx1 + 1e-6:
+                sx = crisp(self.world_to_screen(gx, 0)[0])
+                painter.drawLine(QPointF(sx, top), QPointF(sx, bottom))
+                gx += step
+            gy = first_y
+            while gy <= wy1 + 1e-6:
+                sy = crisp(self.world_to_screen(0, gy)[1])
+                painter.drawLine(QPointF(left, sy), QPointF(right, sy))
+                gy += step
+
+        minor = QPen(QColor(color))
+        minor.setCosmetic(True)
+        minor.setWidthF(1)
         if self.project.grid_style == "dashed":
-            pen.setStyle(Qt.PenStyle.DashLine)
+            minor.setStyle(Qt.PenStyle.DashLine)
         elif self.project.grid_style == "dotted":
-            pen.setStyle(Qt.PenStyle.DotLine)
-        painter.setOpacity(opacity * 0.6)
-        painter.setPen(pen)
-        for gx in range(int(start_x), int(wx1) + cell, cell):
-            sx, _ = self.world_to_screen(gx, 0)
-            painter.drawLine(int(sx), 0, int(sx), vh)
-        for gy in range(int(start_y), int(wy1) + cell, cell):
-            _, sy = self.world_to_screen(0, gy)
-            painter.drawLine(0, int(sy), vw, int(sy))
-        if getattr(self.project, "show_centerlines", False):
-            half = cell / 2.0
-            mid_pen = QPen(QColor(color))
-            mid_pen.setWidthF(1)
-            mid_pen.setStyle(Qt.PenStyle.DashLine)
-            painter.setOpacity(opacity * 0.45)
-            painter.setPen(mid_pen)
-            for gx in range(int(start_x), int(wx1) + cell, cell):
-                sx, _ = self.world_to_screen(gx + half, 0)
-                painter.drawLine(int(sx), 0, int(sx), vh)
-            for gy in range(int(start_y), int(wy1) + cell, cell):
-                _, sy = self.world_to_screen(0, gy + half)
-                painter.drawLine(0, int(sy), vw, int(sy))
-        pen.setWidthF(max(2.0, self.zoom * 1.4))
-        painter.setOpacity(opacity)
-        painter.setPen(pen)
-        step = cell * max(1, self.project.grid_major)
-        for gx in range(int(start_x), int(wx1) + cell, step):
-            sx, _ = self.world_to_screen(gx, 0)
-            painter.drawLine(int(sx), 0, int(sx), vh)
-        for gy in range(int(start_y), int(wy1) + cell, step):
-            _, sy = self.world_to_screen(0, gy)
-            painter.drawLine(0, int(sy), vw, int(sy))
+            minor.setStyle(Qt.PenStyle.DotLine)
+        # very dense grids (tiny cells at low zoom) would be a solid wash
+        if cell * self.zoom >= 3:
+            lines(cell, minor, opacity * 0.6)
+        major = QPen(QColor(color))
+        major.setCosmetic(True)
+        major.setWidthF(max(2.0, min(4.0, self.zoom * 1.4)))
+        major_step = cell * max(1, self.project.grid_major)
+        if major_step * self.zoom >= 6:
+            lines(major_step, major, opacity)
 
     def _draw_cell_highlight(self, painter):
         """Calibrated landing indicator.
@@ -2247,9 +2370,11 @@ class CanvasView(QWidget):
             y_edges += [by0, (by0 + by1) / 2.0, by1]
 
         grid = cell if primary.snap else None
-        mid = bool(getattr(self.project, "show_centerlines", False))
-        tgt_x, guide_x = self._nearest_target(raw_x, x_offs, x_edges, thr, grid, mid)
-        tgt_y, guide_y = self._nearest_target(raw_y, y_offs, y_edges, thr, grid, mid)
+        mid_x, mid_y = self._canvas_middle_lines()
+        x_edges += mid_x
+        y_edges += mid_y
+        tgt_x, guide_x = self._nearest_target(raw_x, x_offs, x_edges, thr, grid)
+        tgt_y, guide_y = self._nearest_target(raw_y, y_offs, y_edges, thr, grid)
 
         # rigid delta from the primary, applied to the whole selection
         dx = tgt_x - primary.x
@@ -2282,13 +2407,12 @@ class CanvasView(QWidget):
                 (y0 - p.y, (y0 + y1) / 2.0 - p.y, y1 - p.y))
 
     @staticmethod
-    def _nearest_target(raw, offsets, edges, threshold, grid_step, center_half=False):
+    def _nearest_target(raw, offsets, edges, threshold, grid_step):
         """Pick the closest snap target for a dragged edge-set.
 
         offsets:   this piece's edge positions relative to its x (or y).
         edges:     absolute edge positions of neighboring pieces.
         grid_step: grid size (None when the piece does not snap to the grid).
-        center_half: the piece's center may also land on centerlines (half steps).
         Any edge of the piece may land on a grid line or on any neighbor edge
         within ``threshold``; the nearest wins and neighbors win ties. When
         nothing is in range a gridded piece still rounds its origin to the grid.
@@ -2296,9 +2420,8 @@ class CanvasView(QWidget):
         """
         best_d, best_t, best_g = None, raw, None
         if grid_step:
-            for index, off in enumerate(offsets):
-                step = grid_step / 2.0 if (center_half and index == 1) else grid_step
-                line = round((raw + off) / step) * step
+            for off in offsets:
+                line = round((raw + off) / grid_step) * grid_step
                 t = line - off
                 d = abs(t - raw)
                 if d <= threshold and (best_d is None or d < best_d - 1e-9):

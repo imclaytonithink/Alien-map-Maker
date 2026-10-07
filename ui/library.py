@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.asset_manager import AssetLibrary
+from core.asset_roles import ROLE_ABOUT, ROLE_DEFS, ROLE_IDS, ROLE_LABELS
 from core.asset_taxonomy import (
     CATEGORY_GROUPS,
     CATEGORY_LABELS,
@@ -148,6 +149,7 @@ class AssetListModel(QAbstractListModel):
         self._path_to_row = {}
         self._icons = OrderedDict()
         self._attempted = set()
+        self._failed = set()          # decoded but unreadable: show "no preview"
         self._pending = {}
         self._thread_pool = QThreadPool(self)
         # Two decoders balance speed against peak memory for very large PNGs;
@@ -174,12 +176,18 @@ class AssetListModel(QAbstractListModel):
             if icon is not None:
                 self._icons.move_to_end(asset.path)
                 return icon
-            return self._placeholder_icon()
+            return self._placeholder_icon(failed=asset.path in self._failed)
         if role == Qt.ItemDataRole.ToolTipRole:
             tags = self.category_tags.get(asset.path, ())
             labels = sorted(CATEGORY_LABELS[tag] for tag in tags
                             if tag in CATEGORY_LABELS)
             tooltip = asset.path
+            roles = self.library.roles() if self.library else {}
+            info = roles.get(asset.path)
+            if info:
+                tooltip += f"\nGenerator role: {ROLE_LABELS[info.role]} — {info.reason}"
+            if asset.path in self._failed:
+                tooltip += "\nPreview could not be generated for this image."
             if labels:
                 tooltip += "\nSmart categories: " + ", ".join(labels)
             return tooltip
@@ -189,9 +197,13 @@ class AssetListModel(QAbstractListModel):
             return int(Qt.AlignmentFlag.AlignHCenter)
         return None
 
-    def _placeholder_icon(self):
-        """Neutral tile shown until the real preview has been decoded."""
-        cached = getattr(self, "_placeholder", None)
+    def _placeholder_icon(self, failed: bool = False):
+        """Neutral tile shown until the real preview has been decoded (or a
+        distinct one when the image could not be read at all)."""
+        cache = getattr(self, "_placeholders", None)
+        if cache is None:
+            cache = self._placeholders = {}
+        cached = cache.get(failed)
         if cached is not None and cached[0] == self.thumb_size:
             return cached[1]
         size = self.thumb_size
@@ -202,10 +214,11 @@ class AssetListModel(QAbstractListModel):
         pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(pen)
         painter.drawRect(2, 2, size - 5, size - 5)
-        painter.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "loading…")
+        painter.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter,
+                         "no preview" if failed else "loading…")
         painter.end()
         icon = QIcon(pm)
-        self._placeholder = (size, icon)
+        cache[failed] = (size, icon)
         return icon
 
     def set_assets(self, assets, category_tags=None, library=None):
@@ -218,6 +231,7 @@ class AssetListModel(QAbstractListModel):
                              for row, asset in enumerate(self.assets)}
         self._icons.clear()
         self._attempted.clear()
+        self._failed.clear()
         self.endResetModel()
 
     def set_thumb_size(self, size: int):
@@ -228,6 +242,7 @@ class AssetListModel(QAbstractListModel):
         self._generation += 1
         self._icons.clear()
         self._attempted.clear()
+        self._failed.clear()
 
     def asset_at(self, index):
         if index is None or not index.isValid():
@@ -276,7 +291,15 @@ class AssetListModel(QAbstractListModel):
             self.thumbnailLoaded.emit()
             return
         self._attempted.add(path)
-        if not image.isNull():
+        if image.isNull():
+            self._failed.add(path)
+            row = self._path_to_row.get(path)
+            if row is not None:
+                index = self.index(row, 0)
+                self.dataChanged.emit(
+                    index, index, [int(Qt.ItemDataRole.DecorationRole)])
+        else:
+            self._failed.discard(path)
             self._icons[path] = QIcon(QPixmap.fromImage(image))
             self._icons.move_to_end(path)
             while len(self._icons) > self.MAX_CACHED_ICONS:
@@ -312,7 +335,7 @@ class AssetList(QListView):
         self.setUniformItemSizes(True)
         self.setWordWrap(True)
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -472,6 +495,8 @@ class LibraryPanel(QWidget):
         self._category_group_counts = {}
         self._folder_counts = {}
         self._tree_items = {}
+        self._roles = {}
+        self._role_counts = {}
         self._folder_groups = []
         self._zip_worker = None
         self._zip_import_target_root = ""
@@ -735,6 +760,10 @@ class LibraryPanel(QWidget):
                     self._folder_counts[prefix] = \
                         self._folder_counts.get(prefix, 0) + 1
             self._library_stats_key = stats_key
+        self._roles = self.library.roles(self._category_tags)
+        self._role_counts = {role_id: 0 for role_id in ROLE_IDS}
+        for info in self._roles.values():
+            self._role_counts[info.role] = self._role_counts.get(info.role, 0) + 1
 
         self.group_tree.blockSignals(True)
         self.group_tree.clear()
@@ -756,6 +785,18 @@ class LibraryPanel(QWidget):
                     f"category:{category_id}")
             group_item.setExpanded(True)
         smart_root.setExpanded(True)
+
+        roles_root = self._new_tree_item(
+            None, f"Generator roles ({total:,})", "role-root")
+        roles_root.setToolTip(0, "What each asset is for when generating a map. "
+                                 "Sorted automatically; right-click assets or use "
+                                 "the ☰ menu → Sort assets to fix any mistakes.")
+        for role_id, label, about, use in ROLE_DEFS:
+            node = self._new_tree_item(
+                roles_root, f"{label} ({self._role_counts.get(role_id, 0):,})",
+                f"role:{role_id}")
+            node.setToolTip(0, f"{about}\n{use}")
+        roles_root.setExpanded(False)
 
         folders_root = self._new_tree_item(
             None, f"Folders / file paths ({total:,})", "folder-root")
@@ -811,8 +852,10 @@ class LibraryPanel(QWidget):
             self._update_folder_reorder_buttons()
             return
         token = cur.data(0, Qt.ItemDataRole.UserRole) or "all"
-        if token == "all" or token in {"smart-root", "folder-root"}:
+        if token == "all" or token in {"smart-root", "folder-root", "role-root"}:
             self._view = ("all", None)
+        elif token.startswith("role:"):
+            self._view = ("role", token.split(":", 1)[1])
         elif token.startswith("category-group:"):
             self._view = ("category_group", token.split(":", 1)[1])
         elif token.startswith("category:"):
@@ -912,6 +955,10 @@ class LibraryPanel(QWidget):
         elif mode == "category":
             assets = [asset for asset in self.library.assets
                       if val in self._category_tags.get(asset.path, set())]
+        elif mode == "role":
+            roles = getattr(self, "_roles", {})
+            assets = [asset for asset in self.library.assets
+                      if roles.get(asset.path) and roles[asset.path].role == val]
         elif mode == "category_group":
             category_ids = set(CATEGORY_GROUPS.get(val, ()))
             assets = [asset for asset in self.library.assets
@@ -940,6 +987,8 @@ class LibraryPanel(QWidget):
             scope = val
         elif mode == "category":
             scope = CATEGORY_LABELS.get(val, val)
+        elif mode == "role":
+            scope = "Role: " + ROLE_LABELS.get(val, val)
         elif mode == "category_group":
             scope = val
         elif mode == "collection":
@@ -1023,6 +1072,7 @@ class LibraryPanel(QWidget):
                        self._add_to_collection)
         coll.addAction("Remove selected asset from the chosen collection",
                        self._remove_from_collection)
+        menu.addAction("Sort assets for the generator…", self.open_sort_dialog)
         menu.addSeparator()
 
         size_menu = menu.addMenu("Thumbnail size")
@@ -1282,7 +1332,16 @@ class LibraryPanel(QWidget):
         if not asset:
             return
         from PyQt6.QtWidgets import QMenu
+        selected = [index.data(Qt.ItemDataRole.UserRole)
+                    for index in self.list.selectionModel().selectedIndexes()]
+        if path not in selected:
+            selected = [path]
         menu = QMenu(self)
+        info = getattr(self, "_roles", {}).get(path)
+        if info:
+            header = menu.addAction(f"Role: {ROLE_LABELS[info.role]}"
+                                    + (" ★" if info.overridden else ""))
+            header.setEnabled(False)
         act = menu.addAction("View larger…")
         act.triggered.connect(lambda: self._view_large(asset))
         act2 = menu.addAction("Add to canvas")
@@ -1290,9 +1349,50 @@ class LibraryPanel(QWidget):
         if self.project and self.project.collections:
             coll = menu.addMenu("Add to collection")
             for name in self.project.collections:
-                coll.addAction(name, lambda n=name, p=asset.path:
-                               self._add_path_to_collection(n, p))
+                coll.addAction(name, lambda n=name, ps=selected:
+                               [self._add_path_to_collection(n, p) for p in ps])
+        menu.addSeparator()
+        count = len(selected)
+        role_menu = menu.addMenu(
+            f"Set generator role ({count} selected)" if count > 1
+            else "Set generator role")
+        for role_id, label, about, _use in ROLE_DEFS:
+            action = role_menu.addAction(label)
+            action.setToolTip(about)
+            action.setCheckable(True)
+            action.setChecked(bool(info) and info.role == role_id)
+            action.triggered.connect(
+                lambda checked=False, r=role_id, ps=selected: self.set_roles(ps, r))
+        role_menu.addSeparator()
+        role_menu.addAction("Back to automatic",
+                            lambda ps=selected: self.set_roles(ps, None))
+        menu.addAction("Sort assets for the generator…", self.open_sort_dialog)
         menu.exec(self.list.mapToGlobal(pos))
+
+    # -- generator roles ----------------------------------------------------
+    def set_roles(self, paths, role):
+        """Give assets a generator role by hand (None = automatic)."""
+        if self.library.set_role(paths, role):
+            self.refresh_roles()
+            self.collectionsChanged.emit()      # marks the project dirty / refreshes dialogs
+
+    def refresh_roles(self):
+        """Recompute role counts and the current view after a role change."""
+        self._roles = self.library.roles(self._category_tags)
+        self._role_counts = {role_id: 0 for role_id in ROLE_IDS}
+        for info in self._roles.values():
+            self._role_counts[info.role] = self._role_counts.get(info.role, 0) + 1
+        for role_id, label, _about, _use in ROLE_DEFS:
+            item = self._tree_items.get(f"role:{role_id}")
+            if item is not None:
+                item.setText(0, f"{label} ({self._role_counts.get(role_id, 0):,})")
+        self.refresh()
+
+    def open_sort_dialog(self, initial_role=None):
+        from ui.sort_dialog import ALL_ROLES, SortDialog
+        dialog = SortDialog(self.library, on_changed=self.refresh_roles, parent=self,
+                            initial_role=initial_role or ALL_ROLES)
+        dialog.exec()
 
     def _view_large(self, asset):
         dlg = PreviewDialog(asset, self.assetActivated.emit)

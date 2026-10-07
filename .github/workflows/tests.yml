@@ -41,24 +41,35 @@ jobs:
         with:
           python-version: "3.12"
       - name: Download the published high-resolution asset packs
+        id: packs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/sceneboard-packs"
-          gh release download asset-intake-temp-20261006 \
-            --repo imclaytonithink/Alien-map-Maker \
-            --pattern 'RPG-Mobius-Geomorphs-*-High-Res-Teal.zip' \
-            --dir "$RUNNER_TEMP/sceneboard-packs"
+          if gh release view asset-intake-temp-20261006 \
+              --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' 2>/dev/null \
+              | grep -q 'RPG-Mobius-Geomorphs-.*-High-Res-Teal\.zip'; then
+            gh release download asset-intake-temp-20261006 \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern 'RPG-Mobius-Geomorphs-*-High-Res-Teal.zip' \
+              --dir "$RUNNER_TEMP/sceneboard-packs"
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Release asset-intake-temp-20261006 is no longer published; skipping the real-pack integration check."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Import real packs and generate a sample map
+        if: steps.packs.outputs.available == 'true'
         run: >-
           python test_pack_integration.py
           --packs-dir "$RUNNER_TEMP/sceneboard-packs"
           --taxonomy-report "$RUNNER_TEMP/asset-taxonomy-report.md"
       - name: Install Pillow for the visual audit
-        if: success() && github.event_name == 'push' && (contains(github.event.head_commit.message, '[asset-visual-audit]') || contains(github.event.head_commit.message, '[asset-large-visual-audit]'))
+        if: success() && github.event_name == 'push' && steps.packs.outputs.available == 'true' && (contains(github.event.head_commit.message, '[asset-visual-audit]') || contains(github.event.head_commit.message, '[asset-large-visual-audit]'))
         run: python -m pip install --disable-pip-version-check 'Pillow>=9.0'
       - name: Build contact sheets for manual review of every pack image
-        if: success() && github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-visual-audit]')
+        if: success() && github.event_name == 'push' && steps.packs.outputs.available == 'true' && contains(github.event.head_commit.message, '[asset-visual-audit]')
         run: |
           python visual_asset_audit.py \
             --packs-dir "$RUNNER_TEMP/sceneboard-packs" \
@@ -71,7 +82,7 @@ jobs:
             --output "$RUNNER_TEMP/large-image-visual-audit.zip" \
             --large-images-only
       - name: Publish representative contact sheets for direct visual review
-        if: success() && github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-visual-audit]')
+        if: success() && github.event_name == 'push' && steps.packs.outputs.available == 'true' && contains(github.event.head_commit.message, '[asset-visual-audit]')
         env:
           BUNDLE_PATH: ${{ runner.temp }}/asset-visual-audit.zip
           LARGE_BUNDLE_PATH: ${{ runner.temp }}/large-image-visual-audit.zip
@@ -185,7 +196,7 @@ jobs:
                 f"(SHA-256 {digest}).")
           PY
       - name: Upload the real-pack taxonomy audit
-        if: success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
+        if: success() && steps.packs.outputs.available == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
         uses: actions/upload-artifact@v4
         with:
           name: real-pack-taxonomy-audit
@@ -193,7 +204,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Publish the taxonomy audit on this commit
-        if: success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
+        if: success() && steps.packs.outputs.available == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
         env:
           GH_TOKEN: ${{ github.token }}
           REPORT_PATH: ${{ runner.temp }}/asset-taxonomy-report.md

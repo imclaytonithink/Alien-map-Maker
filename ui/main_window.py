@@ -455,6 +455,7 @@ class MainWindow(QMainWindow):
         self.canvas.historyPush.connect(self._push_history)
         self.canvas.auto_tighten = self.settings.value(
             "editing/auto_tighten", True, type=bool)
+        self._load_tighten_options()
         self.canvas.contextMenuRequested.connect(self._show_canvas_menu)
         self.canvas.historyDiscardLast.connect(self._discard_last_history)
         center_col.addWidget(self.canvas, 1)
@@ -707,13 +708,16 @@ class MainWindow(QMainWindow):
         e.addAction("Select similar", self._select_similar)
         e.addAction("Copy style…", self._start_copy_style)
         e.addAction("Replace selected image…", self._replace_selected_image)
+        center_menu = e.addMenu("Center selection on canvas")
+        center_menu.addAction("Horizontally", lambda: self.canvas.center_selection_on_canvas("h"))
+        center_menu.addAction("Vertically", lambda: self.canvas.center_selection_on_canvas("v"))
+        center_menu.addAction("Both", lambda: self.canvas.center_selection_on_canvas("both"))
         levels_menu = e.addMenu("Levels")
         levels_menu.addAction("Add level", lambda: self.level_bar._add())
         levels_menu.addAction("Delete current level", lambda: self.level_bar._remove())
         levels_menu.addAction("Move current level earlier", lambda: self.level_bar._shift(-1))
         levels_menu.addAction("Move current level later", lambda: self.level_bar._shift(1))
-        e.addAction(self._act("Tighten selected to visible pixels",
-                              self.canvas.tighten_selected))
+        e.addAction(self._act("Tighten to visible pixels…", self._tighten_dialog))
         self.act_auto_tighten = QAction("Auto-tighten new nodes to visible pixels", self)
         self.act_auto_tighten.setCheckable(True)
         self.act_auto_tighten.setChecked(self.canvas.auto_tighten)
@@ -1353,6 +1357,122 @@ class MainWindow(QMainWindow):
         level.layers.append(l)
         return l.id
 
+    def _furnish_targets(self, opts) -> list[dict]:
+        """Visible bounds (world px) of the rooms the furnisher should fill."""
+        level = self.canvas.level
+        if level is None:
+            return []
+        if opts.get("scope") == "selected":
+            nodes = self.canvas.selected_pieces()
+        else:
+            roles = self.library.library.roles()
+            nodes = [p for p in level.pieces if p.asset_path
+                     and roles.get(p.asset_path)
+                     and roles[p.asset_path].role == "empty_room"]
+        targets = []
+        for node in nodes:
+            x0, y0, x1, y1 = self.canvas._aabb(node)
+            targets.append({"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0})
+        return targets
+
+    def _run_strategy(self, opts):
+        """Run one of the role-driven strategies (assembly / tiles / furnish)."""
+        from core import assembly
+        from core.project import Piece
+        cs = self.project.cell_size
+        strategy = opts["strategy"]
+        mode = opts.get("mode") or "new"
+        key = "furnish" if strategy == "furnish" else mode
+        run = dict(opts, cell_size=cs)
+        new_level = False
+        if strategy == "furnish":
+            run["targets"] = self._furnish_targets(opts)
+            level = self.canvas.level
+        else:
+            sel = self.canvas.selected_pieces()
+            if mode == "area" and sel:
+                minx = min(p.x for p in sel)
+                maxx = max(p.x + p.vis_w for p in sel)
+                miny = min(p.y for p in sel)
+                maxy = max(p.y + p.vis_h for p in sel)
+                region = (int(math.floor(minx / cs)), int(math.floor(miny / cs)),
+                          int(math.floor(maxx / cs)), int(math.floor(maxy / cs)))
+            else:
+                new_level = True
+                cols, rows = opts.get("size") or (self.project.map_cols,
+                                                  self.project.map_rows)
+                region = (0, 0, int(cols) - 1, int(rows) - 1)
+            run["region"] = region
+            run["rooms"] = max(3, ((region[2] - region[0] + 1)
+                                   * (region[3] - region[1] + 1)) // 220)
+        result = assembly.generate_map(run)
+        if not isinstance(result, dict):
+            raise TypeError("The map generator returned an invalid result.")
+        pieces = result.get("pieces") or []
+        if not pieces:
+            return result
+
+        # Only now touch the project: a failed or empty run changes nothing.
+        self.canvas.push_history(f"Generate ({strategy})")
+        if opts.get("replace_prev"):
+            self._discard_gen_output(key)
+        if self._gen_output is None:
+            self._gen_output = {}
+        self._gen_output.setdefault(key, {"ids": [], "levels": []})
+
+        if new_level:
+            need_cols, need_rows = result.get("canvas_cells") or (0, 0)
+            cols = max(self.project.map_cols, int(need_cols), region[2] + 1)
+            rows = max(self.project.map_rows, int(need_rows), region[3] + 1)
+            if (cols, rows) != (self.project.map_cols, self.project.map_rows):
+                self.project.map_cols, self.project.map_rows = cols, rows
+                self.project._sync_canvas()
+                self.props.set_project(self.project)
+            base_name = f"{result.get('setting', 'Map')} {result.get('seed', '')}".strip()
+            existing = {lv.name for lv in self.project.levels}
+            name, suffix = base_name, 2
+            while name in existing:
+                name = f"{base_name} ({suffix})"
+                suffix += 1
+            level = self.project.add_level(name)
+            self.level_bar.refresh()
+            self.level_bar.tabs.setCurrentIndex(len(self.project.levels) - 1)
+            self.canvas.set_level(len(self.project.levels) - 1)
+            self.layers.set_project(
+                self.project, self.project.levels[self.canvas.level_index])
+        else:
+            self.project._sync_canvas()
+
+        layer_map = {"Base": "Floor", "Props": "Props", "Overlay": "Overlay",
+                     "Geomorphs": "Floor", "Overlays": "Overlay",
+                     "Symbols": "Symbols", "Hull": "Hull"}
+        layer_ids = {}
+        created = []
+        for data in pieces:
+            lname = data["layer_name"]
+            if lname not in layer_ids:
+                layer_ids[lname] = self._ensure_layer(level, layer_map.get(lname, lname))
+            piece = Piece(
+                asset_path=data["asset_path"], name=data["name"],
+                x=data["x"], y=data["y"], w=data["w"], h=data["h"],
+                scale=data["scale"], rotation=data["rotation"],
+                layer=layer_ids[lname], snap=True)
+            level.add(piece)
+            created.append(piece)
+        output = self._gen_output[key]
+        output["ids"].extend(piece.id for piece in created)
+        if new_level:
+            output.setdefault("levels", []).append(level)
+
+        if new_level:
+            self.canvas.fit_to_view()
+        self.level_bar.refresh()
+        self.layers.set_project(self.project, level)
+        self.zones.refresh_level()
+        self.canvas.update()
+        self._mark_dirty()
+        return result
+
     def _run_generator(self, opts):
         """Generate a map into a new level or the selection's area.
 
@@ -1360,6 +1480,8 @@ class MainWindow(QMainWindow):
         ``replace_prev=True`` and replaces all tracked output for the selected
         destination only after a non-empty new map has been generated.
         """
+        if opts.get("strategy"):
+            return self._run_strategy(opts)
         cs = self.project.cell_size
         generator_mode = opts.get("generator_mode", "tiles")
         geomorph_mode = generator_mode == "geomorph"
@@ -1676,6 +1798,40 @@ class MainWindow(QMainWindow):
     def _discard_last_history(self):
         self.history.drop_last()
         self._resync_history()
+
+    def _load_tighten_options(self):
+        try:
+            threshold = int(self.settings.value("editing/tighten_threshold", 16))
+            padding = float(self.settings.value("editing/tighten_padding", 0.0))
+        except (TypeError, ValueError):
+            threshold, padding = 16, 0.0
+        raw_sides = str(self.settings.value("editing/tighten_sides", "1111"))
+        sides = tuple(ch == "1" for ch in raw_sides.ljust(4, "1")[:4])
+        self.canvas.tighten_options = {
+            "threshold": threshold, "padding": max(0.0, padding), "sides": sides}
+
+    def _tighten_dialog(self):
+        from ui.tighten_dialog import TightenDialog
+        selected = [p for p in self.canvas.selected_pieces()
+                    if not (p.is_text or p.is_patch or p.is_connector or p.is_scale_bar)]
+        if not selected:
+            self.status.showMessage("Select one or more image nodes to tighten.", 4000)
+            return
+        dialog = TightenDialog(self.canvas.tighten_options, len(selected),
+                               self.project.cell_size, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        options = dialog.options()
+        if dialog.make_default():
+            self.canvas.tighten_options = dict(options)
+            self.settings.setValue("editing/tighten_threshold", options["threshold"])
+            self.settings.setValue("editing/tighten_padding", options["padding"])
+            self.settings.setValue("editing/tighten_sides",
+                                   "".join("1" if v else "0" for v in options["sides"]))
+        if dialog.result_action == "restore":
+            self.canvas.restore_selected_images()
+        else:
+            self.canvas.tighten_selected(options)
 
     def _set_auto_tighten(self, on: bool):
         self.canvas.auto_tighten = bool(on)

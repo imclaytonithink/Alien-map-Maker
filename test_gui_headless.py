@@ -49,13 +49,18 @@ assert paths, "no sample assets"
 # The library's QTreeWidget exposes both the smart taxonomy and the preserved
 # folder branch; selecting either view filters assets without changing paths.
 panel = win.library
-assert panel.group_tree.topLevelItemCount() == 3
+assert panel.group_tree.topLevelItemCount() == 4      # all, smart, roles, folders
 assert "category:other" in panel._tree_items
 assert "folder:floors" in panel._tree_items
 panel.group_tree.setCurrentItem(panel._tree_items["category:other"])
 assert panel._view == ("category", "other")
 assert panel.list.count() == sum(
     "other" in categories for categories in panel._category_tags.values())
+assert "role:floor_tile" in panel._tree_items and "role:deck_plan" in panel._tree_items
+panel.group_tree.setCurrentItem(panel._tree_items["role:floor_tile"])
+assert panel._view == ("role", "floor_tile")
+assert panel.list.count() == sum(
+    info.role == "floor_tile" for info in panel._roles.values()) > 0
 panel.group_tree.setCurrentItem(panel._tree_items["folder:."])
 assert panel._view == ("folder", ".")
 assert panel.list.count() == len(lib.assets)

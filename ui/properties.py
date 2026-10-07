@@ -134,7 +134,13 @@ class PropertiesPanel(QWidget):
         self.btn_reset_crop.clicked.connect(self.canvas.reset_selected_crop)
         image_tools.addWidget(self.btn_crop_image, 0, 0)
         image_tools.addWidget(self.btn_replace_image, 0, 1)
-        image_tools.addWidget(self.btn_reset_crop, 1, 0, 1, 2)
+        self.btn_tighten = QPushButton("Tighten…")
+        self.btn_tighten.setToolTip(
+            "Trim the transparent margin so the node matches its visible artwork "
+            "(choose how faint a pixel counts, keep some margin, pick sides).")
+        self.btn_tighten.clicked.connect(self._open_tighten)
+        image_tools.addWidget(self.btn_tighten, 1, 0)
+        image_tools.addWidget(self.btn_reset_crop, 1, 1)
         root.addWidget(self.image_tools_box)
 
         # ---- editable text node controls ----
@@ -386,10 +392,17 @@ class PropertiesPanel(QWidget):
         gf = QFormLayout(g)
         self.chk_grid = QCheckBox("Show grid"); self.chk_grid.toggled.connect(self._apply_grid)
         gf.addRow(self.chk_grid)
-        self.chk_centerlines = QCheckBox("Centerlines (through each square)")
+        self.chk_grid_top = QCheckBox("Grid over nodes")
+        self.chk_grid_top.setToolTip(
+            "Draw the grid above the artwork so it is always visible (this is "
+            "how exports draw it). Turn off to keep the grid underneath.")
+        self.chk_grid_top.toggled.connect(self._apply_grid)
+        gf.addRow(self.chk_grid_top)
+        self.chk_centerlines = QCheckBox("Canvas centerlines (middle of the map)")
         self.chk_centerlines.setToolTip(
-            "Draw a faint dashed line through the middle of every grid square. "
-            "Node centers also snap to them.")
+            "Draw a dashed horizontal and vertical line through the exact middle "
+            "of the canvas. Nodes snap to them, and Edit → Center selection on "
+            "canvas moves the selection onto them.")
         self.chk_centerlines.toggled.connect(self._apply_grid)
         gf.addRow(self.chk_centerlines)
         self.sl_gop = QSlider(Qt.Orientation.Horizontal); self.sl_gop.setRange(0, 100); self.sl_gop.setValue(50)
@@ -450,12 +463,13 @@ class PropertiesPanel(QWidget):
         self.sl_project_tint.setValue(int(round(project.tint_strength * 100)))
         self.sl_project_tint.blockSignals(False)
         self._update_project_tint_button()
-        grid_controls = (self.chk_grid, self.chk_centerlines, self.sl_gop,
+        grid_controls = (self.chk_grid, self.chk_grid_top, self.chk_centerlines, self.sl_gop,
                          self.cmb_style, self.spin_major)
         for control in grid_controls:
             control.blockSignals(True)
         self.chk_grid.setChecked(project.show_grid)
         self.chk_centerlines.setChecked(project.show_centerlines)
+        self.chk_grid_top.setChecked(project.grid_on_top)
         self.sl_gop.setValue(int(project.grid_opacity * 100))
         self.cmb_style.setCurrentText(project.grid_style)
         self.spin_major.setValue(project.grid_major)
@@ -752,6 +766,11 @@ class PropertiesPanel(QWidget):
                 getattr(self, f"spin_{attr}").setValue(getattr(p, attr))
                 getattr(self, f"spin_{attr}").blockSignals(False)
         self.canvas.update(); self.canvas.dirty.emit()
+
+    def _open_tighten(self):
+        main = self.window()
+        if hasattr(main, "_tighten_dialog"):
+            main._tighten_dialog()
 
     def _allow_overlap_toggled(self, on):
         main = self.window()
@@ -1344,6 +1363,7 @@ class PropertiesPanel(QWidget):
             return
         self.project.show_grid = self.chk_grid.isChecked()
         self.project.show_centerlines = self.chk_centerlines.isChecked()
+        self.project.grid_on_top = self.chk_grid_top.isChecked()
         self.project.grid_opacity = self.sl_gop.value() / 100.0
         old_canvas_size = (self.project.canvas_w, self.project.canvas_h)
         self.project.grid_style = self.cmb_style.currentText()

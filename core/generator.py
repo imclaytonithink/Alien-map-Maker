@@ -18,6 +18,7 @@ import statistics
 from typing import Optional
 
 from core.project import parse_size_from_name
+from core.seeds import coerce_seed
 
 CATEGORIES = ["floor", "wall", "corridor", "door",
               "wall_fixture", "floor_fixture", "hazard"]
@@ -501,7 +502,7 @@ def _mk(a, px, py, scale, rot, layer_name):
 
 
 def generate(opts: dict) -> dict:
-    rng = random.Random(opts.get("seed", 1))
+    rng = random.Random(coerce_seed(opts.get("seed", 1)))
     cs = opts["cell_size"]
     x0, y0, x1, y1 = opts["region"]
     W = max(1, x1 - x0 + 1)
@@ -697,7 +698,7 @@ def _place_geomorph_symbols(rng, symbols, pieces, *, x0, y0, cols, rows,
 
 def generate_geomorphs(opts: dict) -> dict:
     """Assemble compatible 100x100 Core modules, paired overlays, and symbols."""
-    rng = random.Random(opts.get("seed", 1))
+    rng = random.Random(coerce_seed(opts.get("seed", 1)))
     cs = max(1, float(opts.get("cell_size", 70)))
     x0, y0, x1, y1 = opts.get("region", (0, 0, 59, 59))
     region_w = max(0, int(x1 - x0 + 1))
