@@ -106,6 +106,17 @@ class ExportDialog(QDialog):
         self.chk_coordinates.setChecked(bool(getattr(self.project, "export_coordinates", False)))
         form.addRow(self.chk_coordinates)
 
+        left_out = sorted({layer.name for level in self.project.levels
+                           for layer in level.layers
+                           if not getattr(layer, "export", True)})
+        if left_out:
+            shown = ", ".join(left_out[:4]) + (" …" if len(left_out) > 4 else "")
+            note = QLabel(f"Left out of exports (Layers panel): {shown}")
+            note.setWordWrap(True)
+            note.setToolTip("These layers are set to stay on the canvas only. Click "
+                            "the picture button next to a layer to include it.")
+            form.addRow(note)
+
         self.le_path = QLabel("No destination selected")
         self.le_path.setWordWrap(True)
         self.btn_path = QPushButton("Choose…")
@@ -165,18 +176,59 @@ class ExportDialog(QDialog):
             self.project.export_grid_color = color.name()
             self._update_color_button()
 
+    def _defaults(self) -> tuple[str, str]:
+        """(base file name, folder): named after the map, in the last export
+        folder — never a "map.png" in whatever folder the app started in."""
+        main = self.parent()
+        if main is not None and hasattr(main, "export_defaults"):
+            return main.export_defaults()
+        from core.userfiles import safe_file_stem
+        return safe_file_stem(getattr(self.project, "name", "") or "map"), os.path.expanduser("~")
+
+    def _default_file_name(self) -> str:
+        base, _folder = self._defaults()
+        if self.file_format == "pdf":
+            return base + ".pdf"
+        level = self.canvas.level if self.canvas is not None else None
+        if level is not None and len(self.project.levels) > 1:
+            from core.userfiles import safe_file_stem
+            return f"{base} - {safe_file_stem(level.name, 'level')}.png"
+        return base + ".png"
+
     def _choose(self):
+        base, folder = self._defaults()
         if self.file_format == "png" and self.rb_all.isChecked():
-            path = QFileDialog.getExistingDirectory(self, "Choose output folder")
+            path = QFileDialog.getExistingDirectory(self, "Choose output folder", folder)
         else:
             if self.file_format == "pdf":
-                title, default, file_filter = "Save PDF", "map.pdf", "PDF (*.pdf)"
+                title, file_filter = "Save PDF", "PDF (*.pdf)"
             else:
-                title, default, file_filter = "Save PNG", "map.png", "PNG (*.png)"
-            path, _ = QFileDialog.getSaveFileName(self, title, default, file_filter)
+                title, file_filter = "Save PNG", "PNG (*.png)"
+            path, _ = QFileDialog.getSaveFileName(
+                self, title, os.path.join(folder, self._default_file_name()), file_filter)
         if path:
             self.output_path = path
             self.le_path.setText(path)
+
+    def _confirm_missing_images(self, missing: dict) -> bool:
+        """Images that can't be found export as grey boxes; ask first."""
+        names = sorted(os.path.basename(path.replace("\\", "/")) for path in missing)
+        listed = "\n".join(f"• {name}" for name in names[:8])
+        if len(names) > 8:
+            listed += f"\n… and {len(names) - 8} more"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Missing images")
+        box.setText(f"{len(missing)} image(s) used here can't be found, so they would "
+                    "export as grey boxes.")
+        box.setInformativeText("Use File → Find missing images… to relink them, or "
+                               "export anyway.\n\n" + listed)
+        export = box.addButton("Export anyway", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.setEscapeButton(cancel)
+        box.exec()
+        return box.clickedButton() is export
 
     def _export(self):
         path = self.output_path.strip()
@@ -190,6 +242,12 @@ class ExportDialog(QDialog):
             path += ".pdf"
         if self.file_format == "png" and not self.rb_all.isChecked() and not path.lower().endswith(".png"):
             path += ".png"
+
+        export_levels = ([self.canvas.level] if self.rb_current.isChecked()
+                         else list(self.project.levels))
+        missing = self.project.missing_assets([lv for lv in export_levels if lv is not None])
+        if missing and not self._confirm_missing_images(missing):
+            return
 
         scale = exporter.preset_scale(self.project, self.cmb_preset.currentText())
         transparent = self.chk_trans.isChecked()
@@ -227,7 +285,7 @@ class ExportDialog(QDialog):
                 self.status.setText(f"Saved PDF:\n{path}")
             elif self.rb_all.isChecked():
                 files = exporter.export_all_levels(
-                    self.project, path, include_grid, scale, "map", transparent,
+                    self.project, path, include_grid, scale, self._defaults()[0], transparent,
                     grid_color, grid_opacity, include_node_borders,
                     include_zones, **extras)
                 self.status.setText(f"Exported {len(files)} PNG file(s) to:\n{path}")
@@ -241,6 +299,9 @@ class ExportDialog(QDialog):
                     grid_color, grid_opacity, include_node_borders,
                     include_zones, **extras)
                 self.status.setText(f"Saved PNG:\n{path}")
+            main = self.parent()
+            if main is not None and hasattr(main, "remember_export_dir"):
+                main.remember_export_dir(path)
             QMessageBox.information(self, "Export", "Export complete.")
             self.accept()
         except Exception as exc:

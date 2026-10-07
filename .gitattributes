@@ -2,3 +2,7 @@
 # so always check build scripts out with Windows line endings.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Icons and images are binary; never touch their bytes.
+*.ico binary
+*.png binary

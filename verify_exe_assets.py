@@ -1,22 +1,30 @@
-"""Verify that the high-resolution asset packs survive into a built SceneBoard EXE.
+"""Verify that the high-resolution asset packs survive into a built SceneBoard.
 
 build.bat downloads the release ZIPs, filters them to supported images with
-filter_asset_packs.py, and embeds the filtered ZIPs in the PyInstaller one-file
-executable under ``asset_packs/``. On first launch the app installs them into
-the user's persistent asset store. This script checks every hop of that chain:
+filter_asset_packs.py, and bundles the filtered ZIPs with the app under
+``asset_packs/``: as files inside the app folder (the default folder build,
+``dist\\SceneBoard\\_internal\\asset_packs``) or inside a one-file EXE
+(``build.bat onefile``). On first launch the app installs them into the user's
+persistent asset store. This script checks every hop of that chain:
 
 1. release ZIP -> filtered ZIP (``--source-dir``): every supported image
    survived filtering. Excluded non-image files are listed, and image-like
    formats the app cannot import are flagged.
-2. filtered ZIP -> executable: each ZIP is embedded byte-for-byte (SHA-256).
-3. executable -> asset store (``--launch``): a first launch installs every
-   image byte-for-byte (CRC-32), and the app's own AssetLibrary scanner lists
-   all of them.
+2. filtered ZIP -> build: each ZIP is bundled byte-for-byte (SHA-256), and
+   ``--zip`` checks the shareable ``SceneBoard-Windows.zip`` holds the app and
+   every pack (CRC-32).
+3. build -> asset store (``--launch``): a first launch installs every image
+   byte-for-byte (CRC-32), and the app's own AssetLibrary scanner lists all
+   of them.
+
+``--icon`` also checks that the EXE carries the given .ico, image for image.
 
 Run it with the Python environment that built the executable, because it uses
-PyInstaller's archive reader and PyQt6's standard paths. After build.bat:
+PyInstaller's archive and resource readers and PyQt6's standard paths. After
+build.bat:
 
-    venv\\Scripts\\python verify_exe_assets.py --exe dist\\SceneBoard.exe
+    venv\\Scripts\\python verify_exe_assets.py --exe dist\\SceneBoard\\SceneBoard.exe
+        --zip dist\\SceneBoard-Windows.zip --icon ui\\icons\\SceneBoard.ico
         --source-dir "%TEMP%\\SceneBoard-highres-packs"
         --filtered-dir "%TEMP%\\SceneBoard-supported-asset-packs" --launch
 
@@ -171,10 +179,151 @@ def check_filtering(report: Report, source_dir: str, filtered_dir: str,
 
 
 # ---------------------------------------------------------------------------
-# 2. filtered ZIP -> executable
+# 2. filtered ZIP -> build (folder build or one-file EXE)
 # ---------------------------------------------------------------------------
+def app_layout(exe: str) -> dict:
+    """How a build stores its files. A folder build keeps them beside the EXE
+    (PyInstaller 6 puts them in ``_internal``); a one-file build inside it."""
+    folder = os.path.dirname(os.path.abspath(exe))
+    for root in (os.path.join(folder, "_internal"), folder):
+        packs = os.path.join(root, EMBED_PREFIX.rstrip("/"))
+        if os.path.isdir(packs):
+            return {"kind": "folder", "app_dir": folder, "root": root, "packs": packs}
+    return {"kind": "onefile", "app_dir": folder}
+
+
+def build_size(exe: str, layout: dict) -> int:
+    if layout["kind"] != "folder":
+        return os.path.getsize(exe)
+    total = 0
+    for dirpath, _dirs, files in os.walk(layout["app_dir"]):
+        for filename in files:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, filename))
+            except OSError:
+                pass
+    return total
+
+
+def describe_build(exe: str, layout: dict) -> str:
+    if layout["kind"] == "folder":
+        return (f"folder build {os.path.basename(layout['app_dir'])}{os.sep} "
+                f"({_mb(build_size(exe, layout))})")
+    return f"{os.path.basename(exe)} ({_mb(os.path.getsize(exe))})"
+
+
+def check_folder_packs(report: Report, layout: dict, entries_by_pack: dict,
+                       filtered_dir: str) -> bool:
+    packs = layout["packs"]
+    present = set(_zip_names(packs))
+    shown = os.path.relpath(packs, os.path.dirname(layout["app_dir"]))
+    report.check(bool(present), f"Folder build holds {len(present)} asset pack(s) in {shown}")
+    unexpected = sorted(present - set(entries_by_pack))
+    report.check(not unexpected,
+                 "Folder build holds no stale/unknown packs" +
+                 (f" (found: {', '.join(unexpected)})" if unexpected else ""))
+    for name in entries_by_pack:
+        info = report.pack(name)
+        expected_path = os.path.join(filtered_dir, name)
+        bundled = os.path.join(packs, name)
+        info["filtered_size"] = os.path.getsize(expected_path)
+        if name not in present:
+            info["embedded"] = False
+            report.check(False, f"{name}: missing from the folder build")
+            continue
+        same = (os.path.getsize(bundled) == info["filtered_size"] and
+                _file_digest(bundled) == _file_digest(expected_path))
+        info["embedded"] = same
+        report.check(same, f"{name}: bundled byte-for-byte in the app folder "
+                           f"({_mb(info['filtered_size'])}, SHA-256 match)" if same else
+                           f"{name}: the app folder holds a different copy "
+                           f"({_mb(os.path.getsize(bundled))}) than the filtered ZIP — "
+                           f"SHA-256 mismatch; was it built from other packs?")
+    for dirpath, _dirs, files in os.walk(layout["root"]):
+        if os.path.basename(dirpath).lower() == "platforms" and any(
+                "offscreen" in filename.lower() for filename in files):
+            return True
+    return False
+
+
+def check_zip(report: Report, zip_path: str, exe: str, layout: dict,
+              entries_by_pack: dict, filtered_dir: str) -> None:
+    """The shareable zip must hold the whole app folder, packs included."""
+    if layout["kind"] != "folder":
+        report.check(False, "--zip only applies to folder builds")
+        return
+    if not os.path.isfile(zip_path):
+        report.check(False, f"Distribution zip not found: {zip_path}")
+        return
+    app_name = os.path.basename(layout["app_dir"])
+    exe_name = os.path.basename(exe)
+    pack_dir = os.path.relpath(layout["packs"], layout["app_dir"]).replace(os.sep, "/")
+    with zipfile.ZipFile(zip_path) as archive:
+        members = {info.filename.replace("\\", "/"): info for info in archive.infolist()}
+    report.check(f"{app_name}/{exe_name}" in members,
+                 f"{os.path.basename(zip_path)} ({_mb(os.path.getsize(zip_path))}) "
+                 f"holds {app_name}/{exe_name}")
+    on_disk = sum(len(files) for _dirpath, _dirs, files in os.walk(layout["app_dir"]))
+    in_zip = sum(1 for name, info in members.items()
+                 if not info.is_dir() and name.startswith(app_name + "/"))
+    report.check(in_zip == on_disk,
+                 f"{os.path.basename(zip_path)} holds all {on_disk:,} files of the "
+                 f"app folder (found {in_zip:,})")
+    for name in entries_by_pack:
+        info = members.get(f"{app_name}/{pack_dir}/{name}")
+        expected_path = os.path.join(filtered_dir, name)
+        same = bool(info) and (info.file_size == os.path.getsize(expected_path) and
+                               info.CRC == _file_crc32(expected_path))
+        report.check(same, f"{name}: inside {os.path.basename(zip_path)} byte-for-byte "
+                           f"(CRC-32 match)" if same else
+                           f"{name}: missing or different inside {os.path.basename(zip_path)}")
+
+
+def _ico_images(path: str) -> list[bytes]:
+    import struct
+    with open(path, "rb") as handle:
+        data = handle.read()
+    _reserved, kind, count = struct.unpack_from("<HHH", data, 0)
+    if kind != 1:
+        raise ValueError(f"{path} is not an .ico file")
+    images = []
+    for index in range(count):
+        size, offset = struct.unpack_from("<II", data, 6 + 16 * index + 8)
+        images.append(data[offset:offset + size])
+    return images
+
+
+def check_icon(report: Report, exe: str, icon_path: str) -> None:
+    """The EXE should carry the app icon: every image of the .ico must be
+    among the EXE's RT_ICON resources."""
+    try:
+        wanted = _ico_images(icon_path)
+    except (OSError, ValueError) as exc:
+        report.check(False, f"Could not read the icon {icon_path}: {exc}")
+        return
+    try:
+        from PyInstaller.utils.win32 import winresource
+        resources = winresource.get_resources(exe, types=[3])     # 3 = RT_ICON
+    except Exception as exc:          # not on Windows, or no resource reader
+        message = f"Could not read the EXE's icon resources: {exc}"
+        if os.name == "nt":
+            report.check(False, message)
+        else:
+            report.note(message + " (icon resources can only be read on Windows)")
+        return
+    blobs = {bytes(data) for names in resources.values() for langs in names.values()
+             for data in langs.values()}
+    found = sum(1 for image in wanted if image in blobs)
+    report.check(found == len(wanted),
+                 f"EXE carries the app icon {os.path.basename(icon_path)} "
+                 f"({found}/{len(wanted)} sizes)")
+
+
 def check_embedded(report: Report, exe: str, filtered_dir: str,
                    entries_by_pack: dict) -> bool:
+    layout = app_layout(exe)
+    if layout["kind"] == "folder":
+        return check_folder_packs(report, layout, entries_by_pack, filtered_dir)
     from PyInstaller.archive.readers import CArchiveReader
 
     reader = CArchiveReader(exe)
@@ -276,7 +425,7 @@ def _stop(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
     if os.name == "nt":
-        # The one-file bootloader runs the app in a child process.
+        # A one-file bootloader runs the app in a child process; /T ends both.
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
                        capture_output=True, check=False)
     else:
@@ -398,10 +547,10 @@ def check_installed(report: Report, store: str, entries_by_pack: dict) -> None:
 # ---------------------------------------------------------------------------
 def write_summary(report: Report, path: str, exe: str, store: str | None) -> None:
     yes, no = "✅", "❌"
-    lines = ["## SceneBoard EXE asset verification", "",
+    lines = ["## SceneBoard build asset verification", "",
              f"**Result: {'PASS' if report.ok else 'FAIL'}** — "
-             f"`{os.path.basename(exe)}` ({_mb(os.path.getsize(exe))})", ""]
-    lines += ["| Pack | Release ZIP | Images in release | Filtered ZIP in EXE "
+             f"{describe_build(exe, app_layout(exe))}", ""]
+    lines += ["| Pack | Release ZIP | Images in release | Filtered ZIP in build "
               "| Installed on first launch | Listed by library |",
               "|---|---|---|---|---|---|"]
     for name, info in report.packs.items():
@@ -461,10 +610,10 @@ def emit_github_annotations(report: Report, exe: str) -> None:
             parts.append(f"{info['source_images']:,} images in the "
                          f"{_mb(info['source_size'])} release ZIP")
         if info.get("embedded"):
-            parts.append(f"embedded in the EXE byte-for-byte "
+            parts.append(f"bundled byte-for-byte "
                          f"({_mb(info.get('filtered_size', 0))})")
         elif "embedded" in info:
-            parts.append("NOT embedded correctly in the EXE")
+            parts.append("NOT bundled correctly")
         installed = info.get("installed")
         if installed == "missing":
             parts.append("NOT installed on first launch")
@@ -478,17 +627,17 @@ def emit_github_annotations(report: Report, exe: str) -> None:
                 f"{count:,} {ext}" for ext, count in sorted(info["skipped"].items())))
         annotate("notice", name, "; ".join(parts) or "no details")
     for note in report.notes:
-        annotate("warning", "EXE asset verification note", note)
+        annotate("warning", "Build asset verification note", note)
     failures = [message for ok, message in report.checks if not ok]
     for message in failures[:10]:
-        annotate("error", "EXE asset verification failed", message)
+        annotate("error", "Build asset verification failed", message)
     passed = len(report.checks) - len(failures)
     timing = (f"; first-launch install took {report.install_seconds:,.0f} s"
               if report.install_seconds is not None else "")
     annotate("notice" if report.ok else "error",
-             f"EXE asset verification {'PASSED' if report.ok else 'FAILED'}",
+             f"Build asset verification {'PASSED' if report.ok else 'FAILED'}",
              f"{passed}/{len(report.checks)} checks passed for "
-             f"{os.path.basename(exe)} ({_mb(os.path.getsize(exe))}){timing}.")
+             f"{describe_build(exe, app_layout(exe))}{timing}.")
 
 
 def main() -> int:
@@ -499,7 +648,12 @@ def main() -> int:
             pass
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--exe", required=True, help="built executable to verify")
+    parser.add_argument("--exe", required=True,
+                        help="built executable to verify (dist\\SceneBoard\\SceneBoard.exe "
+                             "for a folder build)")
+    parser.add_argument("--zip", dest="zip_path",
+                        help="shareable zip of a folder build to verify as well")
+    parser.add_argument("--icon", help=".ico file the EXE should carry")
     parser.add_argument("--filtered-dir", required=True,
                         help="image-only ZIPs that build.bat embedded")
     parser.add_argument("--source-dir",
@@ -548,6 +702,11 @@ def main() -> int:
         check_filtering(report, args.source_dir, args.filtered_dir, entries_by_pack)
 
     offscreen_bundled = check_embedded(report, args.exe, args.filtered_dir, entries_by_pack)
+    if args.zip_path:
+        check_zip(report, args.zip_path, args.exe, app_layout(args.exe),
+                  entries_by_pack, args.filtered_dir)
+    if args.icon:
+        check_icon(report, args.exe, args.icon)
 
     if args.launch and entries_by_pack:
         store = frozen_asset_store_path()

@@ -144,6 +144,11 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
         font-size: 15px;
         font-weight: bold;
     }}
+    QPushButton#LayerIconButton {{
+        /* five toggles per layer row: keep them compact so names stay visible */
+        min-width: 26px;
+        min-height: 28px;
+    }}
     QPushButton#LayerIconButton:checked {{
         background: {c['selection']};
         border: 1px solid {c['border_hot']};

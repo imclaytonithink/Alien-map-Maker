@@ -1,5 +1,5 @@
-"""Layers panel: list of level layers with visibility, lock, opacity, reorder,
-and active-layer selection (where new pieces go)."""
+"""Layers panel: list of level layers with visibility, export, lock, opacity,
+reorder, and active-layer selection (where new pieces go)."""
 from __future__ import annotations
 
 from typing import Optional
@@ -11,7 +11,11 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
 )
 from core.project import Project, Level, Layer
+from ui.glyphs import eye_icon, export_icon, lock_icon
 from ui.theme import theme_colors
+
+ROW_BUTTON = (28, 30)      # layer row icon buttons (width, height)
+ICON_PX = 17
 
 
 LABEL_COLORS = (("Red", "#e5534b"), ("Orange", "#e5933b"), ("Yellow", "#d8c43a"),
@@ -43,13 +47,15 @@ class LayerRow(QWidget):
     committed = pyqtSignal(str, bool)          # history label, coalesce
 
     def __init__(self, layer: Layer, is_active: bool, parent=None,
-                 theme_accent="#69b7f5", theme_muted="#9aa9b8", soloed=False):
+                 theme_accent="#69b7f5", theme_muted="#9aa9b8", soloed=False,
+                 theme_text="#dce4ed"):
         super().__init__(parent)
         self.layer = layer
         self._full_name = layer.name
         self._is_active = is_active
         self.theme_accent = theme_accent
         self.theme_muted = theme_muted
+        self.theme_text = theme_text
         self.setMinimumHeight(44)
         self.setStyleSheet("background: transparent;")
         lay = QHBoxLayout(self)
@@ -63,23 +69,34 @@ class LayerRow(QWidget):
 
         self.btn_active = QPushButton()
         self.btn_active.setObjectName("LayerIconButton")
-        self.btn_active.setFixedSize(36, 34)
+        self.btn_active.setFixedSize(*ROW_BUTTON)
         self.btn_active.clicked.connect(lambda: self.active.emit(layer.id))
         self._set_active_state(is_active)
 
+        # eye: show / hide the layer on the canvas (hidden layers never export)
         self.btn_visible = QPushButton()
         self.btn_visible.setObjectName("LayerIconButton")
-        self.btn_visible.setFixedSize(36, 34)
+        self.btn_visible.setFixedSize(*ROW_BUTTON)
+        self.btn_visible.setIconSize(QSize(ICON_PX, ICON_PX))
         self.btn_visible.clicked.connect(self._toggle_vis)
         self._update_visibility_button()
 
+        # picture: include the layer in PNG/PDF exports, or keep it editor-only
+        self.btn_export = QPushButton()
+        self.btn_export.setObjectName("LayerIconButton")
+        self.btn_export.setFixedSize(*ROW_BUTTON)
+        self.btn_export.setIconSize(QSize(ICON_PX, ICON_PX))
+        self.btn_export.clicked.connect(self._toggle_export)
+        self._update_export_button()
+
         self.btn_lock = QPushButton()
         self.btn_lock.setObjectName("LayerIconButton")
-        self.btn_lock.setFixedSize(36, 34)
+        self.btn_lock.setFixedSize(*ROW_BUTTON)
+        self.btn_lock.setIconSize(QSize(ICON_PX, ICON_PX))
         self.btn_lock.clicked.connect(self._toggle_lock)
         self.btn_solo = QPushButton("S")
         self.btn_solo.setObjectName("LayerIconButton")
-        self.btn_solo.setFixedSize(36, 34)
+        self.btn_solo.setFixedSize(*ROW_BUTTON)
         self.btn_solo.setCheckable(True)
         self.btn_solo.setChecked(soloed)
         self.btn_solo.setToolTip("Solo: show only this layer while editing (not exported)")
@@ -105,18 +122,19 @@ class LayerRow(QWidget):
         self.sl = QSlider(Qt.Orientation.Horizontal)
         self.sl.setRange(0, 100)
         self.sl.setValue(int(layer.opacity * 100))
-        self.sl.setMinimumWidth(42)
-        self.sl.setMaximumWidth(70)
+        self.sl.setMinimumWidth(30)
+        self.sl.setMaximumWidth(56)
         self.sl.setToolTip("Layer opacity")
         self.sl.valueChanged.connect(self._op)
 
         lay.addWidget(self.btn_active)
         lay.addWidget(self.btn_visible)
+        lay.addWidget(self.btn_export)
         lay.addWidget(self.btn_lock)
         lay.addWidget(self.btn_solo)
-        lay.addWidget(self.lbl, 1)
-        lay.addWidget(self.editor, 1)
-        lay.addWidget(self.sl)
+        lay.addWidget(self.lbl, 3)
+        lay.addWidget(self.editor, 3)
+        lay.addWidget(self.sl, 1)
 
     def eventFilter(self, obj, event):
         if obj is self.lbl:
@@ -153,14 +171,34 @@ class LayerRow(QWidget):
             max(0, self.lbl.width())))
 
     def _update_visibility_button(self):
-        self.btn_visible.setText("V" if self.layer.visible else "H")
-        state = "visible — click to hide" if self.layer.visible else "hidden — click to show"
-        self.btn_visible.setToolTip(f"Layer is {state}.")
+        visible = self.layer.visible
+        self.btn_visible.setIcon(eye_icon(
+            self.theme_text if visible else self.theme_muted, open_=visible))
+        state = "visible — click to hide" if visible else "hidden — click to show"
+        self.btn_visible.setToolTip(
+            f"Layer is {state}.\nHidden layers are left out of exports too.")
         self.btn_visible.setAccessibleName(f"{self.layer.name} layer {state}")
 
+    def _update_export_button(self):
+        included = getattr(self.layer, "export", True)
+        self.btn_export.setIcon(export_icon(
+            self.theme_text if included else self.theme_muted, included=included))
+        if included:
+            tip = ("Included in PNG/PDF exports — click to keep this layer on the "
+                   "canvas only (for tracing images, notes, work in progress).")
+            state = "included in exports"
+        else:
+            tip = ("Left out of PNG/PDF exports (still shown on the canvas) — click "
+                   "to include it again.")
+            state = "left out of exports"
+        self.btn_export.setToolTip(tip)
+        self.btn_export.setAccessibleName(f"{self.layer.name} layer {state}")
+
     def _update_lock_button(self):
-        self.btn_lock.setText("L" if self.layer.locked else "U")
-        state = "locked — click to unlock" if self.layer.locked else "unlocked — click to lock"
+        locked = self.layer.locked
+        self.btn_lock.setIcon(lock_icon(
+            self.theme_text if locked else self.theme_muted, locked=locked))
+        state = "locked — click to unlock" if locked else "unlocked — click to lock"
         self.btn_lock.setToolTip(f"Layer is {state}.")
         self.btn_lock.setAccessibleName(f"{self.layer.name} layer {state}")
 
@@ -168,6 +206,12 @@ class LayerRow(QWidget):
         self.committed.emit("Toggle layer visibility", False)
         self.layer.visible = not self.layer.visible
         self._update_visibility_button()
+        self.changed.emit()
+
+    def _toggle_export(self):
+        self.committed.emit("Toggle layer export", False)
+        self.layer.export = not getattr(self.layer, "export", True)
+        self._update_export_button()
         self.changed.emit()
 
     def _toggle_lock(self):
@@ -198,10 +242,15 @@ class LayerRow(QWidget):
             self.btn_active.setAccessibleName("Set as active layer")
         self._apply_active_style(active)
 
-    def set_theme_colors(self, accent: str, muted: str):
+    def set_theme_colors(self, accent: str, muted: str, text: str | None = None):
         self.theme_accent = accent
         self.theme_muted = muted
+        if text:
+            self.theme_text = text
         self._apply_active_style(self._is_active)
+        self._update_visibility_button()
+        self._update_export_button()
+        self._update_lock_button()
 
     def set_active_style(self, active: bool):
         self._set_active_state(active)
@@ -216,6 +265,7 @@ class LayersPanel(QWidget):
         colors = theme_colors("dark")
         self.theme_accent = colors["accent"]
         self.theme_muted = colors["muted"]
+        self.theme_text = colors["text"]
         self._build()
 
     def _build(self):
@@ -260,6 +310,7 @@ class LayersPanel(QWidget):
         down.setEnabled(0 <= index < len(self.level.layers) - 1)
         menu.addSeparator()
         menu.addAction("Show all layers", lambda: self._set_all("visible", True))
+        menu.addAction("Include all layers in exports", lambda: self._set_all("export", True))
         menu.addAction("Unlock all layers", lambda: self._set_all("locked", False))
         menu.addAction("Clear solo", lambda: self._toggle_solo(self.canvas.solo_layer_id)
                        if self.canvas.solo_layer_id else None)
@@ -268,7 +319,8 @@ class LayersPanel(QWidget):
     def _set_all(self, attr: str, value: bool):
         if not self.level or all(getattr(l, attr) == value for l in self.level.layers):
             return
-        self.canvas.push_history("Layer visibility" if attr == "visible" else "Layer lock")
+        self.canvas.push_history({"visible": "Layer visibility",
+                                  "export": "Layer export"}.get(attr, "Layer lock"))
         for layer in self.level.layers:
             setattr(layer, attr, value)
         self.rebuild(); self._changed()
@@ -277,10 +329,11 @@ class LayersPanel(QWidget):
         colors = theme_colors(mode, accent)
         self.theme_accent = colors["accent"]
         self.theme_muted = colors["muted"]
+        self.theme_text = colors["text"]
         for i in range(self.list.count()):
             row = self.list.itemWidget(self.list.item(i))
             if row:
-                row.set_theme_colors(self.theme_accent, self.theme_muted)
+                row.set_theme_colors(self.theme_accent, self.theme_muted, self.theme_text)
 
     def set_project(self, project: Project, level: Level):
         self.project = project
@@ -294,7 +347,8 @@ class LayersPanel(QWidget):
         for l in self.level.layers:
             row = LayerRow(l, l.id == self.level.current_layer,
                            theme_accent=self.theme_accent,
-                           theme_muted=self.theme_muted, soloed=(l.id == solo))
+                           theme_muted=self.theme_muted, soloed=(l.id == solo),
+                           theme_text=self.theme_text)
             row.changed.connect(self._changed)
             row.active.connect(self._set_active)
             row.solo.connect(self._toggle_solo)
@@ -368,6 +422,14 @@ class LayersPanel(QWidget):
             return
         menu = QMenu(self)
         menu.addAction("Rename", lambda: self._start_rename(lid))
+        visible = menu.addAction("Visible on the canvas")
+        visible.setCheckable(True)
+        visible.setChecked(layer.visible)
+        visible.triggered.connect(lambda: self._toggle_flag(lid, "visible"))
+        exported = menu.addAction("Include in PNG/PDF exports")
+        exported.setCheckable(True)
+        exported.setChecked(getattr(layer, "export", True))
+        exported.triggered.connect(lambda: self._toggle_flag(lid, "export"))
         solo = menu.addAction("Solo" if self.canvas.solo_layer_id != lid else "Un-solo")
         solo.triggered.connect(lambda: self._toggle_solo(lid))
         colors = menu.addMenu("Color label")
@@ -378,6 +440,15 @@ class LayersPanel(QWidget):
         menu.addAction("Duplicate layer (with its pieces)", lambda: self._duplicate(lid))
         menu.addAction("Delete layer", lambda: self._delete_id(lid))
         menu.exec(pos)
+
+    def _toggle_flag(self, lid, attr: str):
+        layer = self._layer(lid)
+        if layer is None:
+            return
+        self.canvas.push_history("Toggle layer visibility" if attr == "visible"
+                                 else "Toggle layer export")
+        setattr(layer, attr, not getattr(layer, attr, True))
+        self.rebuild(); self._changed()
 
     def _start_rename(self, lid):
         for i in range(self.list.count()):

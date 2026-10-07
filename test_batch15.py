@@ -45,7 +45,7 @@ def check_round_trip():
     project.show_coordinates = False
     project.export_guides = project.export_centerlines = project.export_coordinates = True
     data = json.loads(json.dumps(project.to_dict()))
-    assert data["version"] == 8
+    assert data["version"] == 9
     restored = Project.from_dict(data)
     assert [(g.axis, g.pos) for g in restored.levels[0].guides] == [("v", 350.0), ("h", 122.5)]
     assert [(g.axis, g.pos) for g in restored.levels[1].guides] == [("v", 70.0)]

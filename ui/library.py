@@ -480,6 +480,7 @@ class AssetList(QListView):
 class LibraryPanel(QWidget):
     assetActivated = pyqtSignal(str)   # double-click -> add at center
     collectionsChanged = pyqtSignal()
+    pinStampRequested = pyqtSignal(int, str)   # hotbar slot (0-8), asset path
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -500,6 +501,7 @@ class LibraryPanel(QWidget):
         self._folder_groups = []
         self._zip_worker = None
         self._zip_import_target_root = ""
+        self.stamp_labels = None    # callable -> names on the stamp keys 1-9
         self._build_ui()
 
     def _build_ui(self):
@@ -1346,6 +1348,13 @@ class LibraryPanel(QWidget):
         act.triggered.connect(lambda: self._view_large(asset))
         act2 = menu.addAction("Add to canvas")
         act2.triggered.connect(lambda: self.assetActivated.emit(asset.path))
+        pin_menu = menu.addMenu("Pin to stamp key")
+        labels = self.stamp_labels() if callable(self.stamp_labels) else [""] * 9
+        for index in range(9):
+            label = labels[index] if index < len(labels) else ""
+            text = f"{index + 1}  —  " + (f"replace “{label}”" if label else "empty")
+            pin_menu.addAction(text, lambda n=index, ap=asset.path:
+                               self.pinStampRequested.emit(n, ap))
         if self.project and self.project.collections:
             coll = menu.addMenu("Add to collection")
             for name in self.project.collections:

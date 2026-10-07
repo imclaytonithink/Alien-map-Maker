@@ -63,6 +63,25 @@ class Layer:
     locked: bool = False
     opacity: float = 1.0
     color: str = ""               # optional UI color label (hex) or ""
+    # False keeps the layer on the canvas but out of PNG/PDF exports (tracing
+    # references, notes, work in progress).
+    export: bool = True
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Layer":
+        """Build a layer from saved data, ignoring unknown keys."""
+        layer = cls()
+        if not isinstance(data, dict):
+            return layer
+        layer.id = str(data.get("id") or layer.id)
+        layer.name = str(data.get("name", layer.name))
+        layer.visible = bool(data.get("visible", True))
+        layer.locked = bool(data.get("locked", False))
+        layer.opacity = _clamped_float(data.get("opacity", 1.0), 0.0, 1.0, 1.0)
+        color = data.get("color", "")
+        layer.color = color if _is_hex_color(color) else ""
+        layer.export = bool(data.get("export", True))
+        return layer
 
 
 @dataclass
@@ -349,7 +368,7 @@ class Level:
         lv = cls(name=d.get("name", "Level"),
                  background=d.get("background", "#10141c"),
                  current_layer=d.get("current_layer", ""),
-                 layers=[Layer(**l) for l in d.get("layers", [])],
+                 layers=[Layer.from_dict(l) for l in d.get("layers", [])],
                  pieces=[Piece.from_dict(p) for p in d.get("pieces", [])],
                  zones=[ZoneRegion.from_dict(zone) for zone in d.get("zones", [])],
                  guides=[Guide.from_dict(g) for g in d.get("guides", [])
@@ -488,6 +507,9 @@ class Project:
     # map size in squares
     map_cols: int = 30
     map_rows: int = 30
+    # Runtime only (never saved): other asset folders searched when an image
+    # is not in ``asset_store`` — normally this app's own asset library.
+    fallback_asset_stores: list[str] = field(default_factory=list, repr=False)
 
     def __post_init__(self):
         if not self.levels:
@@ -500,7 +522,7 @@ class Project:
 
     def to_dict(self) -> dict:
         return {
-            "version": 8, "name": self.name, "asset_store": self.asset_store,
+            "version": 9, "name": self.name, "asset_store": self.asset_store,
             "cell_size": self.cell_size, "feet_per_square": self.feet_per_square,
             "tint_color": self.tint_color, "tint_strength": self.tint_strength,
             "border_color": self.border_color, "border_opacity": self.border_opacity,
@@ -622,11 +644,69 @@ class Project:
     def resolve_asset(self, path: str) -> str:
         if path and os.path.isabs(path) and os.path.exists(path):
             return path
-        if self.asset_store and path:
-            cand = os.path.join(self.asset_store, path)
-            if os.path.exists(cand):
-                return os.path.abspath(cand)
+        if path:
+            for store in [self.asset_store, *self.fallback_asset_stores]:
+                if not store:
+                    continue
+                cand = os.path.join(store, path)
+                if os.path.exists(cand):
+                    return os.path.abspath(cand)
         return os.path.abspath(path)
+
+    def referenced_assets(self, levels=None) -> dict[str, int]:
+        """Library images used by image nodes: {store path: node count}.
+        Embedded custom images travel inside the map and are not listed."""
+        counts: dict[str, int] = {}
+        for level in (self.levels if levels is None else levels):
+            if level is None:
+                continue
+            for piece in level.pieces:
+                if (piece.asset_path and not piece.embedded and not piece.is_text
+                        and not piece.is_patch and not piece.is_scale_bar
+                        and not piece.is_connector):
+                    counts[piece.asset_path] = counts.get(piece.asset_path, 0) + 1
+        return counts
+
+    def missing_assets(self, levels=None) -> dict[str, int]:
+        """Referenced images that cannot be found: {store path: node count}."""
+        return {path: count for path, count in self.referenced_assets(levels).items()
+                if not os.path.isfile(self.resolve_asset(path))}
+
+    def relink_assets(self, mapping: dict[str, str]) -> int:
+        """Point nodes at new store paths ({old: new}); returns nodes changed."""
+        changed = 0
+        for level in self.levels:
+            for piece in level.pieces:
+                new_path = mapping.get(piece.asset_path) if not piece.embedded else None
+                if new_path and new_path != piece.asset_path:
+                    piece.asset_path = new_path
+                    changed += 1
+        return changed
+
+
+def choose_asset_store(saved: str, default: str, referenced) -> str:
+    """Pick the asset folder a just-opened map should use.
+
+    Maps record the folder they were made with. Keep it when it exists and
+    holds at least as many of the map's images as this app's own library
+    (``default``); otherwise — another PC, another Windows account, a moved
+    folder — use the app's library, where the same packs normally live.
+    """
+    if not saved:
+        return default
+    if not default or os.path.normcase(os.path.abspath(saved)) == \
+            os.path.normcase(os.path.abspath(default)):
+        return saved
+    if not os.path.isdir(saved):
+        return default
+    paths = list(referenced)
+    if not paths:
+        return saved
+
+    def found(store):
+        return sum(1 for rel in paths if os.path.isfile(os.path.join(store, rel)))
+
+    return saved if found(saved) >= found(default) else default
 
 
 def new_project() -> Project:

@@ -5,6 +5,45 @@ from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMenu
 
 
+def fill_mirror_menu(main, menu: QMenu) -> QMenu:
+    """Entries that place mirrored copies of the selection: across the map's
+    center lines, then across each guide on this level."""
+    canvas = main.canvas
+    has_selection = bool(canvas.selected_pieces())
+    lines = canvas.mirror_lines()
+    for index, (axis, pos, label) in enumerate(lines):
+        if index == 2:
+            menu.addSeparator()
+        action = QAction(f"Across the {label[0].lower()}{label[1:]}", menu)
+        action.setEnabled(has_selection)
+        action.triggered.connect(
+            lambda _=False, a=axis, p=pos: main._mirror_selection(a, p))
+        menu.addAction(action)
+    if len(lines) <= 2:
+        hint = QAction("Tip: drag a guide out of a canvas edge rail to mirror "
+                       "across it", menu)
+        hint.setEnabled(False)
+        menu.addSeparator()
+        menu.addAction(hint)
+    if not has_selection:
+        hint = QAction("Select the nodes to mirror first", menu)
+        hint.setEnabled(False)
+        menu.insertAction(menu.actions()[0] if menu.actions() else None, hint)
+    return menu
+
+
+def fill_stamp_menu(main, menu: QMenu) -> QMenu:
+    """Pin the single selected node to one of the hotbar keys 1-9."""
+    from core.stamps import slot_label
+    for index, slot in enumerate(main.stamp_slots):
+        label = slot_label(slot)
+        text = f"{index + 1}  —  " + (f"replace “{label}”" if label else "empty")
+        action = QAction(text, menu)
+        action.triggered.connect(lambda _=False, n=index: main._pin_selected_stamp(n))
+        menu.addAction(action)
+    return menu
+
+
 def build_canvas_menu(main, hit_piece) -> QMenu:
     canvas = main.canvas
     menu = QMenu(main)
@@ -19,6 +58,9 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
 
     if sel:
         add(menu, "Duplicate", canvas.duplicate)
+        add(menu, "Duplicate as grid…", main._duplicate_as_grid_dialog,
+            shortcut="Ctrl+Shift+D")
+        fill_mirror_menu(main, menu.addMenu("Mirror copy"))
         add(menu, "Copy", canvas.copy)
         add(menu, "Paste", canvas.paste, bool(canvas._clipboard))
         add(menu, "Delete", canvas.delete_selected, shortcut="Del")
@@ -59,6 +101,8 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         add(menu, "Copy style…", main._start_copy_style)
         add(menu, "Replace image…", main._replace_selected_image)
         add(menu, "Tighten to visible pixels…", main._tighten_dialog)
+        if len(sel) == 1:
+            fill_stamp_menu(main, menu.addMenu("Pin to stamp key"))
         guides = menu.addMenu("Add guides")
         add(guides, "At the selection's edges",
             lambda: canvas.add_guides_around_selection("edges"))
@@ -94,9 +138,25 @@ def build_guide_menu(main, target: dict) -> QMenu:
 
     has_guides = bool(canvas.level and canvas.level.guides)
     multi_level = bool(project and len(project.levels) > 1)
+    has_selection = bool(canvas.selected_pieces())
+    centerline = target.get("centerline")
+    if centerline:
+        pos = project.canvas_w / 2.0 if centerline == "v" else project.canvas_h / 2.0
+        add("Mirror selection across this line" if has_selection
+            else "Mirror selection across this line (select nodes first)",
+            lambda: main._mirror_selection(centerline, pos), has_selection)
+        add("Add a guide on this line", lambda: canvas.add_guide(centerline, pos))
+        menu.addSeparator()
+        add("Hide center lines", lambda: main._set_show_centerlines(False))
+        return menu
     guide_id = target.get("guide")
     if guide_id:
+        guide = canvas.level.find_guide(guide_id) if canvas.level else None
         add("Set position…", lambda: main._edit_guide_position(guide_id))
+        if guide is not None:
+            add("Mirror selection across this guide" if has_selection
+                else "Mirror selection across this guide (select nodes first)",
+                lambda: main._mirror_selection(guide.axis, guide.pos), has_selection)
         add("Delete guide", lambda: canvas.remove_guide(guide_id))
         menu.addSeparator()
         add("Lock guides", lambda: canvas.set_guide_flag(

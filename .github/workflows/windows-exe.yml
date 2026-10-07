@@ -1,9 +1,10 @@
 name: Windows EXE assets
 
-# Builds dist\SceneBoard.exe with the real build.bat on a clean Windows runner,
-# then verifies that every high-resolution asset pack from the GitHub release
-# is embedded in the finished EXE and installs intact on its first launch.
-# Use "Run workflow" on the Actions tab to re-check the release at any time.
+# Builds the app folder (dist\SceneBoard\SceneBoard.exe) and its shareable zip
+# with the real build.bat on a clean Windows runner, then verifies that every
+# high-resolution asset pack from the GitHub release is bundled byte-for-byte,
+# that the EXE carries the app icon, and that a first launch installs the packs
+# intact. Use "Run workflow" on the Actions tab to re-check the release at any time.
 on:
   workflow_dispatch:
   push:
@@ -12,10 +13,13 @@ on:
       - build.bat
       - filter_asset_packs.py
       - verify_exe_assets.py
+      - make_icon.py
       - main.py
       - requirements.txt
       - core/asset_manager.py
       - core/asset_roles.py
+      - ui/app_icon.py
+      - ui/icons/**
       - ui/branding.py
       - ui/library.py
       - ui/main_window.py
@@ -30,7 +34,7 @@ concurrency:
 
 jobs:
   build-and-verify:
-    name: Build EXE and verify bundled assets
+    name: Build the app and verify bundled assets
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -38,21 +42,27 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Build dist\SceneBoard.exe with build.bat
+      - name: Build dist\SceneBoard with build.bat
         shell: cmd
         # build.bat ends with "pause"; NUL input lets it continue unattended.
         run: |
           call build.bat < NUL
           if errorlevel 1 exit /b 1
-          if not exist dist\SceneBoard.exe (
-            echo build.bat finished without producing dist\SceneBoard.exe
+          if not exist dist\SceneBoard\SceneBoard.exe (
+            echo build.bat finished without producing dist\SceneBoard\SceneBoard.exe
             exit /b 1
           )
-      - name: Verify the release assets in the finished EXE
+          if not exist dist\SceneBoard-Windows.zip (
+            echo build.bat finished without producing dist\SceneBoard-Windows.zip
+            exit /b 1
+          )
+      - name: Verify the release assets in the finished build
         shell: cmd
         run: >-
           venv\Scripts\python.exe verify_exe_assets.py
-          --exe dist\SceneBoard.exe
+          --exe dist\SceneBoard\SceneBoard.exe
+          --zip dist\SceneBoard-Windows.zip
+          --icon ui\icons\SceneBoard.ico
           --source-dir "%TEMP%\SceneBoard-highres-packs"
           --filtered-dir "%TEMP%\SceneBoard-supported-asset-packs"
           --expect RPG-Mobius-Geomorphs-Geomorphs-High-Res-Teal.zip

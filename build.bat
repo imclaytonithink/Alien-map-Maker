@@ -1,14 +1,25 @@
 @echo off
 setlocal
-REM === Build a standalone .exe for SceneBoard (run on Windows) ===
+REM === Build SceneBoard for Windows (run on Windows) ===
 REM 1. Install Python 3.10+ from python.org (tick "Add Python to PATH").
 REM 2. Install curl (included with current Windows 10/11) and run this file.
+REM
+REM By default this makes a folder build, which starts quickly:
+REM     dist\SceneBoard\SceneBoard.exe   - run this; keep the SceneBoard folder together
+REM     dist\SceneBoard-Windows.zip      - the same folder, zipped for sharing
+REM "build.bat onefile" makes the older single dist\SceneBoard.exe instead. That is
+REM one file, but it unpacks everything (about 280 MB) into a temporary folder
+REM every time it starts, so it opens more slowly.
+REM
 REM The high-resolution pack ZIPs total about 239 MB compressed. Unsupported
 REM non-image files are filtered out before the supported assets are bundled.
 REM The app installs the image-only packs into AppData on first launch.
 
 cd /d "%~dp0"
 if errorlevel 1 goto build_error
+
+set "BUILD_MODE=onedir"
+if /i "%~1"=="onefile" set "BUILD_MODE=onefile"
 
 python -m venv venv
 if errorlevel 1 goto build_error
@@ -43,15 +54,53 @@ REM filtered archives keep their folder layout but contain supported images only
 python filter_asset_packs.py "%PACK_DIR%" "%FILTERED_PACK_DIR%"
 if errorlevel 1 goto build_error
 
-REM Bundle the image-only high-resolution packs into the EXE.
-pyinstaller --noconsole --onefile --clean --noconfirm --name "SceneBoard" --add-data "%FILTERED_PACK_DIR%;asset_packs" main.py
+set "ICON=ui\icons\SceneBoard.ico"
+if not exist "%ICON%" python make_icon.py
+if errorlevel 1 goto build_error
+
+if /i "%BUILD_MODE%"=="onefile" goto build_onefile
+
+REM Folder build: the image-only packs sit next to the program, so nothing has
+REM to be unpacked when it starts.
+if exist "dist\SceneBoard.exe" del /q "dist\SceneBoard.exe"
+pyinstaller --noconsole --onedir --clean --noconfirm --name "SceneBoard" --icon "%ICON%" --add-data "%FILTERED_PACK_DIR%;asset_packs" main.py
+if errorlevel 1 goto build_error
+call :make_zip
+if errorlevel 1 (
+    echo WARNING: Could not create dist\SceneBoard-Windows.zip. The app itself is fine.
+)
+
+echo.
+echo Done. Your app is in dist\SceneBoard - run SceneBoard.exe inside that folder.
+echo Keep the whole SceneBoard folder together; make a shortcut to the EXE if you like.
+echo dist\SceneBoard-Windows.zip holds the same folder, ready to share.
+echo The built-in high-resolution packs install into the user's AppData store
+echo automatically the first time the app runs.
+goto finish
+
+:build_onefile
+REM One-file build: everything, packs included, inside a single EXE.
+if exist "dist\SceneBoard-Windows.zip" del /q "dist\SceneBoard-Windows.zip"
+if exist "dist\SceneBoard\" rmdir /s /q "dist\SceneBoard"
+pyinstaller --noconsole --onefile --clean --noconfirm --name "SceneBoard" --icon "%ICON%" --add-data "%FILTERED_PACK_DIR%;asset_packs" main.py
 if errorlevel 1 goto build_error
 
 echo.
 echo Done. Your executable is in dist\SceneBoard.exe.
 echo The built-in high-resolution packs install into the user's AppData store
- echo automatically the first time the app runs.
+echo automatically the first time the app runs.
 goto finish
+
+:make_zip
+set "ZIP_PATH=dist\SceneBoard-Windows.zip"
+if exist "%ZIP_PATH%" del /q "%ZIP_PATH%"
+echo Zipping dist\SceneBoard for sharing ...
+"%SystemRoot%\System32\tar.exe" -a -c -f "%ZIP_PATH%" -C dist SceneBoard
+if not errorlevel 1 exit /b 0
+echo tar.exe could not create the zip; trying PowerShell instead ...
+if exist "%ZIP_PATH%" del /q "%ZIP_PATH%"
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\SceneBoard' -DestinationPath 'dist\SceneBoard-Windows.zip' -Force"
+exit /b %errorlevel%
 
 :fetch_pack
 set "PACK_PATH=%PACK_DIR%\%~1"

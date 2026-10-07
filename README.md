@@ -36,18 +36,33 @@ settings.
    ZIPs from the project's GitHub release (tag `Released`; the release must
    stay published for the download to work), strips unsupported files while
    preserving their folders, and bundles only supported raster assets plus the
-   starter art. Your `.exe` appears at `dist/SceneBoard.exe`.
+   starter art. You get a **folder build**:
+   - `dist\SceneBoard\SceneBoard.exe` — run this. Keep the whole `SceneBoard`
+     folder together (make a shortcut to the EXE if you like).
+   - `dist\SceneBoard-Windows.zip` — the same folder, zipped for sharing. Unzip it
+     anywhere and run `SceneBoard.exe` inside.
+
+   A folder build starts quickly because nothing has to be unpacked. If you
+   prefer one single file, run `build.bat onefile` for the older
+   `dist\SceneBoard.exe`; it unpacks everything (about 280 MB) into a temporary
+   folder every time it starts, so it opens more slowly.
 3. The first launch installs the bundled high-resolution packs into the user's
    persistent app-data asset store. This one-time setup can take a few minutes;
    later launches reuse the installed copies.
-4. Optional: confirm the finished EXE really carries every asset with
-   `venv\Scripts\python verify_exe_assets.py --exe dist\SceneBoard.exe
+4. Optional: confirm the build really carries every asset with
+   `venv\Scripts\python verify_exe_assets.py --exe dist\SceneBoard\SceneBoard.exe
+   --zip dist\SceneBoard-Windows.zip --icon ui\icons\SceneBoard.ico
    --source-dir "%TEMP%\SceneBoard-highres-packs" --filtered-dir
    "%TEMP%\SceneBoard-supported-asset-packs"`. It checks that every image in
-   the release ZIPs survived filtering and that each pack is embedded
-   byte-for-byte; add `--launch` to also start the EXE and verify the
-   first-launch install. The **Windows EXE assets** GitHub Actions workflow runs
-   this on a clean Windows runner — use *Run workflow* to re-check at any time.
+   the release ZIPs survived filtering, that each pack is bundled byte-for-byte
+   (in the folder and in the zip) and that the EXE carries the app icon; add
+   `--launch` to also start the app and verify the first-launch install. The
+   **Windows EXE assets** GitHub Actions workflow runs this on a clean Windows
+   runner — use *Run workflow* to re-check at any time.
+
+The app icon (a folded map with a grid and a location pin) is drawn in code in
+`ui/app_icon.py`; `python make_icon.py` rewrites `ui/icons/SceneBoard.ico`
+(16–256 px) after a design change.
 
 The source ZIPs total about 239 MB before filtering; unsupported documents and
 other non-image files are not bundled. The extracted image library needs
@@ -127,7 +142,27 @@ clearly reports skipped GUI checks.
 - **Yellow handle** = rotate (hold **Shift** for 15°). **Right/Middle-drag**
   pans; **wheel** zooms.
 - Multi-select: **Shift-click** or drag a marquee. Then align / distribute /
-  **Glue** (group) / tint / delete / duplicate / copy-paste together.
+  **Glue** (group) / tint / delete / duplicate / copy-paste together. Grouped
+  nodes are picked together by a click, marquee or lasso; **Ctrl+click** picks
+  a single member. Copies of a group form their own group.
+- **Mirror copy**: ship decks are mostly symmetrical, so select one side and
+  right-click a guide (or the map's dashed center line) → *Mirror selection
+  across this guide*. The node right-click menu and **Edit → Mirror copy** list
+  the center lines and every guide on the level; there is also a **Mirror**
+  toolbar tool. Copies are flipped and placed on the other side (text and scale
+  bars stay readable); nodes centered on the line are left as they are.
+- **Duplicate as grid** (**Ctrl+Shift+D**, Edit menu or right-click): repeat the
+  selection as one block in rows and columns with a gap in squares — cryo pods,
+  bunks, lockers, crates. The dialog shows the size of the result and warns
+  when it would run past the map edge.
+- **Stamp hotbar (keys 1–9)**: right-click a library asset or a node →
+  *Pin to stamp key*, or drag an asset onto a slot. The hotbar appears at the
+  bottom of the canvas once something is pinned. Press the number (or click
+  the slot), see a faint preview under the pointer, and click to place copies;
+  press the number again, **Esc** or right-click to stop. Pinned library assets
+  are placed like a library drop; pinned nodes keep their size, rotation, flips,
+  tint and crop. The keys are remembered across maps (View → Stamp hotbar
+  hides it).
 - The **quick toolbar** (top-right of canvas) rotates/flips, raises/lowers,
   locks, copies, duplicates, deletes the selection.
 - The main toolbar can be customized from **View → Customize toolbar…** (or
@@ -228,8 +263,11 @@ bulk. Your choices (★) are saved with the asset store and always win.
 - Tab bar above the canvas: add / remove / rename / reorder floors.
 - **Reference floor overlay**: ghost the floor above/below (adjustable opacity)
   so you can align things between levels.
-- **Layers** (right panel): per-level layers with show/hide, lock, opacity,
-  reorder, and an *active layer* that new nodes go to.
+- **Layers** (right panel): per-level layers with an **eye** button to show or
+  hide the layer, a **picture** button that keeps a layer on the canvas but out
+  of PNG/PDF exports (for images you trace over, notes or work in progress —
+  the export dialog lists such layers), a padlock, solo, opacity, reorder, and
+  an *active layer* that new nodes go to.
 
 ### 6. Export
 - **Export PNG…**: current level or all levels, size presets (Foundry, Roll20,
@@ -258,11 +296,29 @@ bulk. Your choices (★) are saved with the asset store and always win.
 - Projects are `.bmap` JSON (node placements and outlines, gameplay zones and
   labels, tint overlays, editable text, non-destructive crops and patches,
   connection markers, static scale bars, embedded custom images, levels, and
-  layers). A thumbnail
-  is saved next to the file for the menu.
+  layers). Maps that use this app's own asset library save it as "the app's
+  library" rather than a folder path, so a map opens with its images on any PC
+  where the same packs are installed. If a map's saved asset folder isn't on
+  this computer, it uses this app's library instead.
+- **Missing images** are named on the canvas (red dashed outline) and listed
+  when a map opens; **File → Find missing images…** relinks them by file name
+  (undoable) after you import the pack they came from. PNG/PDF export warns
+  before writing grey boxes for images it can't find.
+- The recent-maps list, map previews and backups live in the per-user app-data
+  folder, so the EXE remembers recent maps between launches and nothing is
+  written next to your maps (older versions saved a `<map>.png` preview there,
+  which could overwrite an export with the same name).
+- Open, save and export dialogs start in the folder you used last; exports are
+  named after the map (and level).
 - **Auto-save** is on by default (every 5 minutes; choose Off / 1 / 5 / 10
-  minutes from File or the ESC menu). Named projects are saved in place.
-  Unsaved maps get a recovery copy, with a restore prompt on the next launch.
+  minutes from File or the ESC menu). Named projects are saved in place, and
+  before each auto-save the version on disk goes into one of **4 rolling
+  backups** (the oldest is replaced each cycle). **File → Restore from
+  backup…** loads one as an undoable change; nothing is written until you
+  save. Unsaved maps get a recovery copy, with a restore prompt on the next
+  launch.
+- Closing, **New** or **Open** with unsaved changes asks **Save / Don't Save /
+  Cancel**.
 - **Undo/Redo** (Ctrl+Z / Ctrl+Y) with named history; **Ctrl+S** save,
   **Ctrl+O** open, **Ctrl+N** new.
 
@@ -321,6 +377,9 @@ bulk. Your choices (★) are saved with the asset store and always win.
 | Drag from a canvas edge rail | New guide (left/right rail = vertical, top/bottom = horizontal); drag a guide back onto a rail to remove it |
 | Ctrl+; / Ctrl+Shift+; / Ctrl+Alt+; | Show guides / Snap to guides / Lock guides |
 | Alt (while dragging) | Move a node or guide with no snapping |
+| 1 – 9 | Pick up that stamp key; click to place copies (same key, Esc or right-click stops) |
+| Ctrl+Shift+D | Duplicate as grid |
+| Ctrl+click | Pick one member of a group |
 
 ---
 
@@ -328,9 +387,12 @@ bulk. Your choices (★) are saved with the asset store and always win.
 ```
 core/   project (data model) · history (undo/redo) · asset_manager (internal
         store) · exporter (PNG/PDF) · bundle (portable RPG Map Packs) ·
-        render (shared piece drawing) · generator (tile layouts + geomorph assembly)
+        render (shared piece drawing) · generator (tile layouts + geomorph assembly) ·
+        guides · transforms (mirror / grid copies) · stamps (hotbar keys) ·
+        backups (rolling auto-save backups) · relink (missing images) ·
+        userfiles (recent maps, previews, file names)
 ui/     main_window · canvas · library · properties · layers_panel · zones_panel ·
         menu_overlay (ESC project menu) · generator_dialog · theme (Dark/Light/Alien) ·
-        export_dialog
+        export_dialog · stamp_bar · tool_dialogs · glyphs · app_icon
 sample_fixtures.py   demo images for tests, generated on demand (generate_samples.py)
 ```

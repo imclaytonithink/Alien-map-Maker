@@ -200,6 +200,8 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
     cache: dict = PixmapCache()
     for p in level.paint_order():
         lyr = level.layer_by_id(p.layer)
+        if lyr is not None and not getattr(lyr, "export", True):
+            continue        # "Don't export" layers stay on the canvas only
         lop = lyr.opacity if lyr else 1.0
         target_size = (max(1, round(p.w * p.scale * scale)),
                        max(1, round(p.h * p.scale * scale)))
@@ -475,11 +477,19 @@ def export_pdf(project, out_path, include_grid=True, scale=1.0, levels=None,
     return out_path
 
 
-def save_thumbnail(project, bmap_path, size=256):
+def save_thumbnail(project, bmap_path, size=256, thumb_path=None):
+    """Write a small preview of the first level for the recent-maps list.
+
+    Pass ``thumb_path`` (the app keeps thumbnails in its own data folder).
+    The old default, ``<map>.png`` beside the map, could overwrite an export
+    that had the same name as the map, so it is only used when no path is
+    given."""
     ensure_app()
-    img = render_level(project, project.levels[0], False, 1.0)
+    scale = min(1.0, (size * 2.0) / max(1, project.canvas_w, project.canvas_h))
+    img = render_level(project, project.levels[0], False, scale)
     img = img.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
                      Qt.TransformationMode.SmoothTransformation)
-    thumb = os.path.splitext(bmap_path)[0] + ".png"
+    thumb = thumb_path or (os.path.splitext(bmap_path)[0] + ".png")
+    os.makedirs(os.path.dirname(os.path.abspath(thumb)), exist_ok=True)
     img.save(thumb, "PNG")
     return thumb
