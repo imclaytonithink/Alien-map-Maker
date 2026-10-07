@@ -323,6 +323,10 @@ class ZoneRegion:
 
 
 BACKDROP_MODES = ("color", "texture", "none")
+# Library folder (at the top of the asset store) that floor textures picked
+# from a file for a level backdrop are copied into. The map generator leaves
+# images in it alone.
+BACKDROP_FOLDER = "Backdrops"
 GUIDE_AXES = ("v", "h")
 DEFAULT_GUIDE_COLOR = "#ff2bd6"   # magenta: unused by the grid, centerlines,
                                   # smart guides, theme accents and teal art

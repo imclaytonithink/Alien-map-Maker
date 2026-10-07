@@ -1,7 +1,8 @@
 """Offscreen checks: selection basics and shortcuts, arrange, send to level,
 swapping pictures, door-mode stamps, the cut-out tool (rectangle, ellipse,
 lasso, polygon; delete / cut / copy / paste / new node / keep only), clone
-patches, level backdrops (color, floor texture, none) and sharp crops."""
+patches, level backdrops (color, floor texture, none; textures uploaded from
+a file) and sharp crops."""
 import atexit
 import faulthandler
 import os
@@ -610,5 +611,72 @@ level.backdrop = "texture"
 assert "gone/missing.png" in project.missing_assets()
 level.backdrop = "color"
 print("backdrops ok")
+
+# ---- backdrop: upload a floor texture from a file ---------------------------------------------
+from PyQt6.QtWidgets import QFileDialog
+from core.project import BACKDROP_FOLDER
+
+level = fresh_level()
+level.backdrop, level.backdrop_texture = "color", ""
+level.backdrop_tile, level.backdrop_opacity = 0.0, 1.0
+outside = os.path.join(temp_root, "My Pictures")
+os.makedirs(outside)
+picked = os.path.join(outside, "steel floor.png")
+picture = QImage(20, 20, QImage.Format.Format_ARGB32)
+checker(picture)
+assert picture.save(picked)
+broken = os.path.join(outside, "broken.png")
+with open(broken, "wb") as handle:
+    handle.write(b"not a picture")
+chosen = [picked]
+real_get_open = QFileDialog.getOpenFileName
+QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (chosen[0], "Images"))
+backdrops_dir = os.path.join(store, BACKDROP_FOLDER)
+lib = win.library
+lib.group_tree.setCurrentItem(lib._tree_items["folder:tiles"])
+assert lib._view == ("folder", "tiles")
+
+assert win.props.btn_backdrop_upload.isEnabled(), "works whatever the backdrop is set to"
+win.props.btn_backdrop_upload.click()
+uploaded = BACKDROP_FOLDER + "/steel floor.png"
+assert level.backdrop == "texture" and level.backdrop_texture == uploaded, level.backdrop_texture
+assert labels()[-1] == "Backdrop texture"
+assert os.listdir(backdrops_dir) == ["steel floor.png"]
+assert win.props.lbl_backdrop_texture.text() == "steel floor.png"
+assert "Backdrops" in win.status.currentMessage(), win.status.currentMessage()
+image = render()
+assert image.pixelColor(5, 5).name() == "#000000" and image.pixelColor(15, 5).name() == "#ffffff"
+# the library lists it right away, keeps the folder being browsed, and the
+# generator leaves it alone
+assert lib.library.get(uploaded) is not None
+assert f"folder:{BACKDROP_FOLDER}" in lib._tree_items
+assert lib._view == ("folder", "tiles") and lib.group_tree.currentItem() is lib._tree_items["folder:tiles"]
+assert lib.library.roles()[uploaded].role == "other"
+assert win.settings.value("files/last_import_dir") == outside
+
+win.undo()
+level = canvas.level
+assert level.backdrop == "color" and level.backdrop_texture == ""
+win.props.btn_backdrop_upload.click()                  # same picture: reuses the copy
+level = canvas.level
+assert level.backdrop_texture == uploaded and os.listdir(backdrops_dir) == ["steel floor.png"]
+depth = len(labels())
+win.props.btn_backdrop_upload.click()                  # already the texture: no new step
+assert len(labels()) == depth and "already" in win.status.currentMessage()
+
+level.backdrop = "color"
+chosen[0] = ""                                         # Cancel
+win.props.btn_backdrop_upload.click()
+chosen[0] = broken                                     # not a picture: a warning, no change
+win.props.btn_backdrop_upload.click()
+assert level.backdrop == "color" and len(labels()) == depth
+assert os.listdir(backdrops_dir) == ["steel floor.png"]
+chosen[0] = os.path.join(store, *GRATE.split("/"))     # a library image is used in place
+win.props.btn_backdrop_upload.click()
+assert level.backdrop == "texture" and level.backdrop_texture == GRATE
+assert os.listdir(backdrops_dir) == ["steel floor.png"]
+QFileDialog.getOpenFileName = real_get_open
+level.backdrop = "color"
+print("backdrop upload ok")
 
 print("ALL EDIT TOOL TESTS PASSED")

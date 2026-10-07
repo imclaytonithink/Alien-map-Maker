@@ -1,16 +1,19 @@
 """Pure-Python checks: cut-out geometry, sections and clone windows, level
-backdrops, door-mode stamps, and backdrop textures in project bundles."""
+backdrops, door-mode stamps, backdrop textures in project bundles, and floor
+textures uploaded from a file into the library's Backdrops folder."""
 from __future__ import annotations
 
 import json
 import math
 import os
+import struct
 import tempfile
 import zipfile
 
 from core import cutouts
+from core.asset_manager import AssetLibrary
 from core.bundle import export_project_bundle
-from core.project import Level, Piece, Project
+from core.project import BACKDROP_FOLDER, Level, Piece, Project
 from core.stamps import (asset_slot, edge_placement, is_edge_slot, looks_like_door,
                          node_slot, slots_from_json, slots_to_json, with_edge)
 
@@ -198,6 +201,68 @@ def check_bundle_texture():
     print("backdrop texture travels in project bundles ok")
 
 
+def fake_png(path, width=32, height=32, extra=b""):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" +
+                     struct.pack(">II", width, height) + b"\x08\x06\x00\x00\x00" + extra)
+    return path
+
+
+def check_backdrop_upload():
+    with tempfile.TemporaryDirectory() as temp:
+        store = os.path.join(temp, "store")
+        outside = os.path.join(temp, "Pictures")
+        for rel in ("a.png", "zz/b.png", "Floors/grate.png", "Backdrops/sand.png",
+                    "Backdrops/sub/deep.png"):
+            fake_png(os.path.join(store, *rel.split("/")))
+        library = AssetLibrary()
+        library.scan(store)
+        revision = library._scan_revision
+
+        steel = fake_png(os.path.join(outside, "steel floor.png"), 512, 256)
+        rel = library.import_into_folder(steel, BACKDROP_FOLDER)
+        assert rel == "Backdrops/steel floor.png", rel
+        assert os.path.isfile(os.path.join(store, "Backdrops", "steel floor.png"))
+        asset = library.get(rel)
+        assert asset and asset.folder == "Backdrops" and (asset.width, asset.height) == (512, 256)
+        assert library._scan_revision > revision, "groups, counts and roles refresh"
+        # listed where a full scan lists it (folder by folder, names sorted)
+        order = [a.path for a in library.assets]
+        library.scan(store)
+        assert [a.path for a in library.assets] == order, order
+
+        # the same picture again reuses the copy; another picture never overwrites it
+        assert library.import_into_folder(steel, BACKDROP_FOLDER) == rel
+        other = fake_png(os.path.join(outside, "elsewhere", "steel floor.png"), 64, 64)
+        assert library.import_into_folder(other, BACKDROP_FOLDER) == "Backdrops/steel floor_1.png"
+        assert library.import_into_folder(other, BACKDROP_FOLDER) == "Backdrops/steel floor_1.png"
+        assert sorted(os.listdir(os.path.join(store, "Backdrops"))) == \
+            ["sand.png", "steel floor.png", "steel floor_1.png", "sub"]
+        # a library image is used where it is, not copied
+        inside = os.path.join(store, "Floors", "grate.png")
+        assert library.import_into_folder(inside, BACKDROP_FOLDER) == "Floors/grate.png"
+        assert not os.path.exists(os.path.join(store, "Backdrops", "grate.png"))
+        assert library.store_path_of(os.path.join(temp, "store-other.png")) is None
+        assert library.store_path_of(store) is None
+        # not pictures (or not there) → nothing happens
+        notes = os.path.join(outside, "notes.txt")
+        with open(notes, "w", encoding="utf-8") as handle:
+            handle.write("hi")
+        assert library.import_into_folder(notes, BACKDROP_FOLDER) is None
+        assert library.import_into_folder(os.path.join(outside, "gone.png"), BACKDROP_FOLDER) is None
+        assert AssetLibrary().import_into_folder(steel, BACKDROP_FOLDER) is None, "no store"
+
+        # the generator leaves backdrop textures alone (until you give one a role)
+        roles = library.roles()
+        for path in (rel, "Backdrops/sand.png", "Backdrops/sub/deep.png"):
+            assert roles[path].role == "other" and roles[path].confidence == "high", path
+        assert "Backdrop texture" not in roles["Floors/grate.png"].reason
+        library.set_role([rel], "floor_tile")
+        assert library.roles()[rel].role == "floor_tile", "your choice still wins"
+    print("backdrop textures uploaded from a file ok")
+
+
 def check_door_stamps():
     slot = asset_slot("doors/door_1sq.png", "Door", edge=True)
     assert is_edge_slot(slot) and not is_edge_slot(with_edge(slot, False))
@@ -231,6 +296,7 @@ def main():
     check_piece_model()
     check_backdrops()
     check_bundle_texture()
+    check_backdrop_upload()
     check_door_stamps()
     print("ALL BATCH 17 CHECKS PASSED")
 

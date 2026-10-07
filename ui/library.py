@@ -1331,6 +1331,29 @@ class LibraryPanel(QWidget):
             self.group_tree.setCurrentItem(all_item)
             self.group_tree.blockSignals(False)
 
+    def library_changed(self):
+        """Pick up images added to the library from elsewhere (a floor texture
+        uploaded for a backdrop, say) without losing the folder, category,
+        collection or search the user is browsing."""
+        view = self._view
+        current = self.group_tree.currentItem()
+        token = current.data(0, Qt.ItemDataRole.UserRole) if current is not None else None
+        expanded = {tok: item.isExpanded() for tok, item in self._tree_items.items()}
+        self._rebuild_groups()              # (resets the tree to "All assets")
+        self.group_tree.blockSignals(True)
+        for tok, item in self._tree_items.items():
+            if tok in expanded:
+                item.setExpanded(expanded[tok])
+        if view[0] == "collection":
+            self.group_tree.setCurrentItem(None)
+            self._view = view
+        elif token in self._tree_items:
+            self.group_tree.setCurrentItem(self._tree_items[token])
+            self._view = view
+        self.group_tree.blockSignals(False)
+        self._update_folder_reorder_buttons()
+        self.refresh()
+
     def _after_import(self, n):
         if n:
             if self.project and self._prune_demo_assets(self.project.asset_store):

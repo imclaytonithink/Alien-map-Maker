@@ -2658,6 +2658,59 @@ class MainWindow(QMainWindow):
             "size in the Node tab → Backdrop (with nothing selected).", 7000)
         return len(levels)
 
+    def _upload_backdrop_texture(self, all_levels: bool = False) -> str:
+        """Backdrop → Upload an image…: pick a floor texture from a file on this
+        computer. It is copied into the library's Backdrops folder (so the map
+        can find it again, and bundles carry it) and becomes the backdrop.
+        Returns the texture's library path, or "" when no picture was used."""
+        from PyQt6.QtGui import QImageReader
+        from core.asset_manager import SUPPORTED_EXTS
+        from core.project import BACKDROP_FOLDER
+        title = "Upload a floor texture"
+        path, _ = QFileDialog.getOpenFileName(
+            self, title, self._last_dir("files/last_import_dir"),
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tiff)")
+        if not path:
+            return ""
+        self._remember_dir(path, "files/last_import_dir")
+        name = os.path.basename(path)
+        if (not path.lower().endswith(SUPPORTED_EXTS)
+                or not QImageReader(path).size().isValid()):
+            QMessageBox.warning(
+                self, title, f"“{name}” isn't a picture SceneBoard can use as a "
+                "floor texture. Choose a PNG, JPG, WEBP, BMP or TIFF image.")
+            return ""
+        library = self.library.library
+        revision = library._scan_revision
+        try:
+            self._ensure_store()
+            store = self.project.asset_store
+            if not self._same_path(library.root, store):
+                library.scan(store)
+            rel = library.import_into_folder(path, BACKDROP_FOLDER)
+        except OSError as error:
+            QMessageBox.warning(self, title,
+                                f"“{name}” couldn't be copied into the library.\n\n{error}")
+            return ""
+        if library._scan_revision != revision:
+            self.library.library_changed()      # list the new picture right away
+        if not rel:
+            QMessageBox.warning(self, title, f"“{name}” couldn't be added to the library.")
+            return ""
+        levels = list(self.project.levels) if all_levels else [self.canvas.level]
+        if all(level is not None and level.backdrop == "texture"
+               and level.backdrop_texture == rel for level in levels):
+            self.status.showMessage(f"“{name}” is already the floor texture.", 5000)
+            return rel
+        self._use_backdrop_texture(rel, all_levels)
+        where = ("every level" if all_levels else
+                 f"“{self.canvas.level.name}”" if self.canvas.level else "this level")
+        kept = (f"a copy is in the library's {BACKDROP_FOLDER} folder"
+                if rel.split("/")[0] == BACKDROP_FOLDER else "it is already in the library")
+        self.status.showMessage(
+            f"Floor texture of {where}: “{rel.split('/')[-1]}” ({kept}).", 8000)
+        return rel
+
     # -- mirror copies and grid copies -----------------------------------------
     def _mirror_selection(self, axis: str, pos: float):
         if not self.canvas.selected_pieces():

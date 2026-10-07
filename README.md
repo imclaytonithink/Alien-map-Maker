@@ -327,10 +327,14 @@ bulk. Your choices (★) are saved with the asset store and always win.
 - Tab bar above the canvas: add / remove / rename / reorder floors.
 - **Backdrop** (per level; Node tab with nothing selected, right-click the empty
   map → *Backdrop…*, or **View → Backdrop**): **Solid color**, **Floor
-  texture** — a library image tiled under everything (pick it in the library
-  and press *Use the highlighted library image*, or right-click a library image
-  → *Use as backdrop*), with a tile size in squares and a strength that fades it
-  into the color — or **None (transparent)**, shown as a checkerboard on the
+  texture** — an image tiled under everything, with a tile size in squares and
+  a strength that fades it into the color — or **None (transparent)**. Press
+  **Upload an image…** to use a picture from your computer (PNG, JPG, WEBP, BMP
+  or TIFF): a copy goes into the library's **Backdrops** folder, so the map
+  keeps finding it even if the original moves, picking the same file again
+  reuses that copy, and the map generator leaves that folder alone. Or pick a
+  library image and press *Use the highlighted library image*, or right-click
+  a library image → *Use as backdrop*. **None** is shown as a checkerboard on the
   canvas and kept transparent in PNG exports. Packs whose tiles have
   transparent surroundings sit on the backdrop, and it shows through cut-out
   holes. *Use this backdrop on every level* copies it to the other levels.

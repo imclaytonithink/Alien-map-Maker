@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import filecmp
 import hashlib
 import json
 import os
@@ -192,6 +193,14 @@ def _safe_archive_folder(archive_path: str) -> str:
     return stem[:120]
 
 
+def _scan_order_key(asset: "Asset") -> list:
+    """Where ``AssetLibrary.scan`` lists an asset: folders in name order, and a
+    folder's own files (sorted by name) before its subfolders."""
+    folder = asset.folder.replace("\\", "/")
+    parts = [] if folder in (".", "") else folder.split("/")
+    return [(1, part) for part in parts] + [(0, asset.name)]
+
+
 def _fingerprint(entries) -> str:
     digest = hashlib.sha256()
     for relative, crc, size, offset in sorted(
@@ -281,18 +290,90 @@ class AssetLibrary:
         self._scan_complete = True
         self._scan_revision += 1
 
-    def _add(self, full: str, rel_folder: str):
+    def _make_asset(self, full: str, rel_folder: str) -> Asset:
         name = os.path.basename(full)
         size = parse_size_from_name(os.path.splitext(name)[0])
         rel = os.path.relpath(full, self.root).replace(os.sep, "/")
         folder = "." if rel_folder in (".", "") else rel_folder.replace(os.sep, "/")
         width, height = _image_dimensions(full)
         is_overlay = "overlay" in rel.lower()
-        a = Asset(path=rel, name=name, folder=folder,
-                  size=size, is_overlay=is_overlay,
-                  width=width, height=height)
+        return Asset(path=rel, name=name, folder=folder,
+                     size=size, is_overlay=is_overlay,
+                     width=width, height=height)
+
+    def _add(self, full: str, rel_folder: str):
+        a = self._make_asset(full, rel_folder)
         self.assets.append(a)
-        self._by_path[rel] = a
+        self._by_path[a.path] = a
+
+    def _index_file(self, full: str) -> str:
+        """Add one file inside the store to the index without rescanning the
+        whole store, in the place a full scan would list it. Returns its
+        store-relative path."""
+        rel = os.path.relpath(full, self.root).replace(os.sep, "/")
+        if rel in self._by_path:
+            return rel
+        asset = self._make_asset(full, os.path.dirname(rel) or ".")
+        key = _scan_order_key(asset)
+        position = next((i for i, other in enumerate(self.assets)
+                         if _scan_order_key(other) > key), len(self.assets))
+        self.assets.insert(position, asset)
+        self._by_path[rel] = asset
+        self._scan_revision += 1            # groups, counts and roles refresh
+        return rel
+
+    def store_path_of(self, path: str) -> Optional[str]:
+        """Store-relative path of a file that already lives in the store, or
+        None when it is somewhere else."""
+        if not self.root or not path:
+            return None
+        root = os.path.realpath(self.root)
+        full = os.path.realpath(path)
+        try:
+            inside = os.path.commonpath([os.path.normcase(root), os.path.normcase(full)]) \
+                == os.path.normcase(root)
+        except ValueError:                  # another drive on Windows
+            return None
+        if not inside or os.path.normcase(full) == os.path.normcase(root):
+            return None
+        rel = os.path.relpath(full, root).replace(os.sep, "/")
+        if any(part.startswith(".sceneboard-import-") for part in rel.split("/")):
+            return None                     # unfinished import staging, never listed
+        return rel
+
+    def import_into_folder(self, src: str, folder: str, *,
+                           reuse_identical: bool = True) -> Optional[str]:
+        """Copy one image into ``folder`` at the top of the store (made if
+        needed) and return its store-relative path, or None when ``src`` is not
+        a supported image file.
+
+        The index is updated in place rather than rescanning the whole store.
+        A picture that already lives in the store is used where it is. With
+        ``reuse_identical`` a byte-identical copy already in the folder (same
+        name, or the name with a ``_N`` suffix) is reused instead of copied
+        again; a different picture never overwrites one with the same name.
+        """
+        if (not self.root or not src or not src.lower().endswith(SUPPORTED_EXTS)
+                or not os.path.isfile(src)):
+            return None
+        inside = self.store_path_of(src)
+        if inside is not None:
+            return self._index_file(os.path.join(self.root, *inside.split("/")))
+        parts = [part for part in folder.replace("\\", "/").split("/")
+                 if part not in ("", ".", "..")]
+        dest_dir = os.path.join(self.root, *parts)
+        os.makedirs(dest_dir, exist_ok=True)
+        base, ext = os.path.splitext(os.path.basename(src))
+        dest = os.path.join(dest_dir, base + ext)
+        suffix = 1
+        while os.path.exists(dest):
+            if (reuse_identical and os.path.isfile(dest)
+                    and filecmp.cmp(src, dest, shallow=False)):
+                return self._index_file(dest)
+            dest = os.path.join(dest_dir, f"{base}_{suffix}{ext}")
+            suffix += 1
+        shutil.copy2(src, dest)
+        return self._index_file(dest)
 
     def get(self, path: str) -> Optional[Asset]:
         return self._by_path.get(path)

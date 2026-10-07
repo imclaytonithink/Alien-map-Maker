@@ -489,6 +489,13 @@ class PropertiesPanel(QWidget):
         self.lbl_backdrop_texture = QLabel("No texture chosen")
         self.lbl_backdrop_texture.setWordWrap(True)
         bdf.addRow("Texture", self.lbl_backdrop_texture)
+        self.btn_backdrop_upload = QPushButton("Upload an image…")
+        self.btn_backdrop_upload.setToolTip(
+            "Pick a floor texture from your computer (PNG, JPG, WEBP, BMP or TIFF). "
+            "A copy goes into the library's Backdrops folder, so the map keeps "
+            "finding it even if the original file moves.")
+        self.btn_backdrop_upload.clicked.connect(self._upload_texture)
+        bdf.addRow(self.btn_backdrop_upload)
         self.btn_backdrop_texture = QPushButton("Use the highlighted library image")
         self.btn_backdrop_texture.setToolTip(
             "Click a floor texture in the library, then this button. (Or right-click "
@@ -1335,7 +1342,8 @@ class PropertiesPanel(QWidget):
         self.lbl_backdrop_texture.setToolTip(texture)
         mode = level.backdrop
         self.btn_backdrop_color.setEnabled(mode != "none")
-        # the library button always works: it switches the backdrop to that texture
+        # the upload and library buttons always work: they switch the backdrop
+        # to the picture they bring in
         for control in (self.lbl_backdrop_texture, self.spin_backdrop_tile,
                         self.sl_backdrop_opacity):
             control.setEnabled(mode == "texture")
@@ -1356,7 +1364,8 @@ class PropertiesPanel(QWidget):
                 window = self.window()
                 if hasattr(window, "status"):
                     window.status.showMessage(
-                        "Pick a floor texture: click one in the library, then “Use the "
+                        "Pick a floor texture: “Upload an image…” takes one from your "
+                        "computer, or click one in the library, then “Use the "
                         "highlighted library image” (or right-click it → Use as backdrop).",
                         8000)
             return
@@ -1390,6 +1399,12 @@ class PropertiesPanel(QWidget):
         if hasattr(window, "_use_backdrop_texture"):
             window._use_backdrop_texture(path, False)
         return True
+
+    def _upload_texture(self, _checked=False) -> str:
+        window = self.window()
+        if hasattr(window, "_upload_backdrop_texture"):
+            return window._upload_backdrop_texture()
+        return ""
 
     def _backdrop_value_changed(self, _value=None):
         level = self.canvas.level
