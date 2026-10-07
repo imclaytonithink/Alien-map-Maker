@@ -245,19 +245,59 @@ class AssetLibrary:
         return os.path.join(self.root, *path.replace("\\", "/").split("/")) if self.root else path
 
     # ---- import ----
-    def import_folder(self, src: str) -> int:
+    def import_folder(self, src: str, *, preserve_root: bool = False) -> int:
+        """Copy supported images from a directory into the asset store.
+
+        ``preserve_root`` keeps the selected directory's own name as a group
+        above its contents. The UI uses this for user imports so selecting a
+        structural directory such as ``100x100 Core`` or ``Symbols`` does not
+        erase the folder name that the geomorph generator relies on. The
+        default remains false for callers importing known fixture folders
+        whose contents are intentionally merged into the store.
+        """
         if not self.root:
             return 0
-        count = 0
+
+        # Gather the source paths before creating the destination. In the
+        # unusual case where the source is an ancestor of the store, this
+        # prevents a newly-created destination from being walked recursively.
+        source_files = []
         for dirpath, dirs, files in os.walk(src):
             dirs.sort()
             rel = os.path.relpath(dirpath, src)
             for fn in sorted(files):
                 if fn.lower().endswith(SUPPORTED_EXTS):
-                    dest_dir = os.path.join(self.root, rel) if rel != "." else self.root
-                    os.makedirs(dest_dir, exist_ok=True)
-                    shutil.copy2(os.path.join(dirpath, fn), os.path.join(dest_dir, fn))
-                    count += 1
+                    source_files.append((dirpath, rel, fn))
+
+        if not source_files:
+            self.scan(self.root)
+            return 0
+
+        folder_name = ""
+        if preserve_root:
+            folder_name = os.path.basename(os.path.normpath(src)) or "Imported folder"
+            candidate = folder_name
+            suffix = 2
+            while os.path.lexists(os.path.join(self.root, candidate)):
+                candidate = f"{folder_name} ({suffix})"
+                suffix += 1
+            folder_name = candidate
+
+        count = 0
+        for dirpath, rel, fn in source_files:
+            components = []
+            if preserve_root:
+                components.append(folder_name)
+            if rel != ".":
+                components.extend(rel.split(os.sep))
+            dest_dir = os.path.join(self.root, *components) if components else self.root
+            os.makedirs(dest_dir, exist_ok=True)
+            source = os.path.join(dirpath, fn)
+            destination = os.path.join(dest_dir, fn)
+            if os.path.abspath(source) == os.path.abspath(destination):
+                continue
+            shutil.copy2(source, destination)
+            count += 1
         self.scan(self.root)
         return count
 

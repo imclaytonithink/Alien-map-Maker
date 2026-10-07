@@ -29,7 +29,9 @@ from ui.launch_screen import LaunchScreen
 from ui.menu_overlay import MenuOverlay
 from ui.generator_dialog import GeneratorDialog
 from ui import theme as thememod
-from ui.branding import APP_NAME, ALIEN_NAME, SETTINGS_ID
+from ui.branding import (APP_NAME, ALIEN_NAME, SETTINGS_ID,
+                         bundled_asset_pack_paths, default_asset_store_path,
+                         seed_bundled_assets)
 from ui.custom_toolbar import CustomizableToolBar, CustomizeToolbarDialog
 from core import generator as gen
 
@@ -291,6 +293,7 @@ class MainWindow(QMainWindow):
         self._gen_output = None    # tracks last Generate output for Regenerate
         self._build_ui()
         self._show_launch()
+        QTimer.singleShot(0, self._install_bundled_asset_packs)
 
     # ------------------------------------------------------------------
     def _build_ui(self):
@@ -582,6 +585,71 @@ class MainWindow(QMainWindow):
         else:
             QTimer.singleShot(0, self.overlay.open_menu)
 
+    def _bundled_pack_is_installed(self, archive_path: str) -> bool:
+        """Avoid re-extracting a bundled pack after its first successful import."""
+        store = self.project.asset_store
+        if not store or not os.path.isdir(store):
+            return False
+        stem = os.path.splitext(os.path.basename(archive_path))[0]
+        source_name = os.path.basename(archive_path)
+        try:
+            candidates = os.listdir(store)
+        except OSError:
+            return False
+        for folder in candidates:
+            if folder != stem and not folder.startswith(stem + " ("):
+                continue
+            marker = os.path.join(store, folder, ".sceneboard-import.json")
+            try:
+                with open(marker, encoding="utf-8") as fh:
+                    metadata = json.load(fh)
+                if (metadata.get("format") == "sceneboard-asset-archive" and
+                        metadata.get("source") == source_name):
+                    return True
+            except (OSError, ValueError, TypeError):
+                continue
+        return False
+
+    def _install_bundled_asset_packs(self):
+        """Install ZIP packs embedded in a packaged build on first launch."""
+        archives = bundled_asset_pack_paths(__file__)
+        if not archives:
+            return
+        self._ensure_store()
+        pending = [path for path in archives
+                   if not self._bundled_pack_is_installed(path)]
+        if not pending:
+            return
+        self._bundled_pack_install_active = True
+        started = self.library.import_zip_paths(
+            pending,
+            status_text=("Installing built-in high-resolution assets. "
+                         "First launch may take a few minutes…"),
+            progress_callback=self._bundled_pack_progress,
+            completed_callback=self._bundled_packs_imported)
+        if not started:
+            self._bundled_pack_install_active = False
+
+    def _bundled_pack_progress(self, archive_name: str, current: int, total: int):
+        if getattr(self, "_bundled_pack_install_active", False):
+            self.status.showMessage(
+                f"Installing built-in asset pack {current}/{total}: "
+                f"{archive_name} — one-time setup.")
+
+    def _bundled_packs_imported(self, reports, errors):
+        if not getattr(self, "_bundled_pack_install_active", False):
+            return
+        self._bundled_pack_install_active = False
+        if errors:
+            self.status.showMessage(
+                "Some built-in asset packs could not be installed; see the warning.",
+                15000)
+        else:
+            count = sum(report.imported + report.already_imported
+                        for report in reports)
+            self.status.showMessage(
+                f"Built-in high-resolution assets ready ({count:,} images).", 12000)
+
     def _offer_recovery(self):
         if not os.path.isfile(self._recovery_file):
             self.overlay.open_menu()
@@ -609,6 +677,8 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _apply_project(self):
+        if not self.project.asset_store:
+            self._ensure_store()
         self.canvas.set_project(self.project, self.library.library)
         self.props.set_project(self.project)
         self.library.set_project(self.project, self.library.library, self._add_at_center)
@@ -775,10 +845,13 @@ class MainWindow(QMainWindow):
         add("overlay_glow_100x100", 300, 210, 30)
 
     def _ensure_store(self):
+        default_store = default_asset_store_path(__file__, self._app_data_dir)
         if not self.project.asset_store:
-            self.project.asset_store = os.path.abspath(os.path.join(
-                os.path.dirname(__file__), "..", "asset_store"))
+            self.project.asset_store = default_store
         os.makedirs(self.project.asset_store, exist_ok=True)
+        if os.path.normcase(os.path.abspath(self.project.asset_store)) == \
+                os.path.normcase(default_store):
+            seed_bundled_assets(self.project.asset_store, __file__)
 
     def _open(self):
         if self._dirty and not self._confirm_discard():

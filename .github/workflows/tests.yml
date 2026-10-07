@@ -34,7 +34,7 @@ jobs:
   real-pack-integration:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -53,3 +53,152 @@ jobs:
         run: >-
           python test_pack_integration.py
           --packs-dir "$RUNNER_TEMP/sceneboard-packs"
+          --taxonomy-report "$RUNNER_TEMP/asset-taxonomy-report.md"
+      - name: Install Pillow for the visual audit
+        if: success() && github.event_name == 'push' && (contains(github.event.head_commit.message, '[asset-visual-audit]') || contains(github.event.head_commit.message, '[asset-large-visual-audit]'))
+        run: python -m pip install --disable-pip-version-check 'Pillow>=9.0'
+      - name: Build contact sheets for manual review of every pack image
+        if: success() && github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-visual-audit]')
+        run: |
+          python visual_asset_audit.py \
+            --packs-dir "$RUNNER_TEMP/sceneboard-packs" \
+            --output "$RUNNER_TEMP/asset-visual-audit.zip"
+      - name: Build contact sheets for the very-large images
+        if: success() && github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-large-visual-audit]')
+        run: |
+          python visual_asset_audit.py \
+            --packs-dir "$RUNNER_TEMP/sceneboard-packs" \
+            --output "$RUNNER_TEMP/large-image-visual-audit.zip" \
+            --large-images-only
+      - name: Publish representative contact sheets for direct visual review
+        if: success() && github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-visual-audit]')
+        env:
+          BUNDLE_PATH: ${{ runner.temp }}/asset-visual-audit.zip
+          LARGE_BUNDLE_PATH: ${{ runner.temp }}/large-image-visual-audit.zip
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import base64
+          import csv
+          import hashlib
+          import io
+          import os
+          import subprocess
+          import time
+          import zipfile
+
+          target_terms = ("landscap",)
+          bundle_paths = [("full", os.environ["BUNDLE_PATH"])]
+
+          review = io.BytesIO()
+          manifest = io.StringIO(newline="")
+          writer = csv.writer(manifest, delimiter="\t", lineterminator="\n")
+          header = None
+          selected_count = 0
+          with zipfile.ZipFile(review, "w", zipfile.ZIP_DEFLATED,
+                               compresslevel=6) as output:
+              for bundle_kind, source_path in bundle_paths:
+                  with zipfile.ZipFile(source_path) as source:
+                      sheets = [name for name in source.namelist()
+                                if name.startswith("sheets/") and name.endswith(".jpg")]
+                      source_manifest = csv.DictReader(io.StringIO(
+                          source.read("manifest.tsv").decode("utf-8")),
+                          delimiter="\t")
+                      source_rows = list(source_manifest)
+                      source_header = source_manifest.fieldnames
+                      if bundle_kind == "full":
+                          selected = sorted({
+                              "sheets/" + row["sheet"] for row in source_rows
+                              if any(term in row["original_path"].casefold()
+                                     for term in target_terms)
+                          })
+                          if not selected:
+                              raise RuntimeError(
+                                  "No visual-review sheets matched the "
+                                  "recently refined taxonomy examples.")
+                      else:
+                          selected = sorted(sheets)
+
+                      selected_names = {}
+                      for name in selected:
+                          basename = name.rsplit("/", 1)[-1]
+                          output_name = (basename if bundle_kind == "full"
+                                         else "large-" + basename)
+                          selected_names[basename] = output_name
+                          output.writestr(output_name, source.read(name))
+                          selected_count += 1
+
+                      if header is None:
+                          header = source_header
+                          writer.writerow(header)
+                      for row in source_rows:
+                          if row["sheet"] in selected_names:
+                              writer.writerow([
+                                  selected_names[row["sheet"]]
+                                  if column == "sheet" else row[column]
+                                  for column in header
+                              ])
+              output.writestr("manifest.tsv", manifest.getvalue())
+              output.writestr(
+                  "README.txt",
+                  "This focused preview shows the Symbols sheet containing "
+                  "the newly classified Landscaping and Vegetation assets.\n"
+                  "Each sheet shows up to 100 images. manifest.tsv maps every "
+                  "thumbnail index to its original ZIP path and dimensions.\n")
+
+          payload = review.getvalue()
+          if len(payload) > 700_000:
+              raise RuntimeError(
+                  f"Selected visual-review bundle is unexpectedly large: "
+                  f"{len(payload):,} bytes.")
+          encoded = base64.b64encode(payload).decode("ascii")
+          digest = hashlib.sha256(payload).hexdigest()
+          encoded_chunks = [encoded[offset:offset + 30_000]
+                            for offset in range(0, len(encoded), 30_000)]
+          endpoint = (f"repos/{os.environ['GITHUB_REPOSITORY']}/commits/"
+                      f"{os.environ['GITHUB_SHA']}/comments")
+          for part, chunk in enumerate(encoded_chunks, start=1):
+              body = (
+                  f"Visual review bundle {digest} part {part}/{len(encoded_chunks)}\n\n"
+                  "Decode and join these temporary Base64 chunks to view the "
+                  "thumbnail-only ZIP.\n\n```text\n" + chunk + "\n```")
+              result = subprocess.run(
+                  ["gh", "api", "--method", "POST", endpoint,
+                   "--field", f"body={body}"],
+                  capture_output=True, text=True, check=False)
+              if result.returncode:
+                  raise RuntimeError(
+                      "Could not publish visual-review chunk "
+                      f"{part}/{len(encoded_chunks)}: "
+                      f"{result.stderr.strip()[-1000:]}")
+              if part < len(encoded_chunks):
+                  time.sleep(1.0)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Visual review preview bundle\n\n")
+              summary.write(
+                  f"Published {len(encoded_chunks)} temporary commit-comment "
+                  f"chunks for a {len(payload):,}-byte thumbnail-only ZIP "
+                  f"(SHA-256 `{digest}`). It contains the sheet that "
+                  "matches Landscaping paths; `manifest.tsv` maps thumbnails "
+                  "to original source paths.\n")
+          print(f"Published {len(encoded_chunks)} visual-review chunks "
+                f"(SHA-256 {digest}).")
+          PY
+      - name: Upload the real-pack taxonomy audit
+        if: success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-pack-taxonomy-audit
+          path: ${{ runner.temp }}/asset-taxonomy-report.md
+          if-no-files-found: error
+          retention-days: 7
+      - name: Publish the taxonomy audit on this commit
+        if: success() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_PATH: ${{ runner.temp }}/asset-taxonomy-report.md
+        run: |
+          report_body="$(cat "$REPORT_PATH")"
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" \
+            --field "body=$report_body" >/dev/null

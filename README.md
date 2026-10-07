@@ -19,8 +19,10 @@ pip install -r requirements.txt
 python main.py
 ```
 On first launch the **project menu** opens over the editor (blurred backdrop):
-pick *New map*, open a *Recent* map, or start from a *Template*. Choose a
-persistent app-wide appearance: **Dark**, **Light**, or **Alien / MU-TH-UR**.
+pick *New map*, open a *Recent* map, or start from a *Template*. The tracked
+starter art in `sample_assets/` is bundled with the Windows executable and
+seeded into the library on first launch. Choose a persistent app-wide
+appearance: **Dark**, **Light**, or **Alien / MU-TH-UR**.
 The Alien appearance includes optional scanlines and boot text, and Green /
 Amber / Red accents. Press **ESC** any time to bring the menu back up — it has
 Save, Open, PNG/PDF/Tabletop Simulator/project-pack export, recent-map management,
@@ -28,9 +30,19 @@ templates, appearance, and auto-save settings.
 
 ## Building the .exe (Windows)
 1. Install Python 3.10+ from python.org (tick "Add Python to PATH").
-2. Run `build.bat` (double-click). Your `.exe` appears at `dist/SceneBoard.exe`.
+2. Run `build.bat` (double-click). It downloads the three high-resolution asset
+   ZIPs from the project's GitHub release, strips unsupported files while
+   preserving their folders, and bundles only supported raster assets plus the
+   starter art. Your `.exe` appears at `dist/SceneBoard.exe`.
+3. The first launch installs the bundled high-resolution packs into the user's
+   persistent app-data asset store. This one-time setup can take a few minutes;
+   later launches reuse the installed copies.
 
-> PyInstaller can't cross-compile from Linux/macOS, so build the `.exe` on Windows.
+The source ZIPs total about 239 MB before filtering; unsupported documents and
+other non-image files are not bundled. The extracted image library needs
+additional disk space. `curl.exe` and an internet connection are required while
+building. PyInstaller can't cross-compile from Linux/macOS, so build the `.exe`
+on Windows.
 
 ## Testing
 Install `requirements.txt`, then run `python run_tests.py --require-gui`.
@@ -53,15 +65,34 @@ clearly reports skipped GUI checks.
 - **Import Folder**, **Import File**, or **Import ZIP** (top of the library
   panel) copies supported images into the app's **internal asset store** —
   shown at the bottom of the panel (`Store: …`) with an **Open** button and a
-  **?** help button. ZIP imports preserve folders, normalize Windows-style
-  archive paths, skip non-images, and keep each archive in its own group so
-  similarly named files never overwrite each other. The original ZIP is never
-  changed. Imported assets are auto-grouped and tagged by type/size, and groups
-  can be reordered with ▲▼. For geomorph assembly, import the matching high-res
-  Geomorphs / Custom Tiles and Symbols archives; folder names are preserved so
-  Core modules, paired overlays, and Symbols can be recognized. Large libraries
-  load thumbnails only as they enter
-  view, rather than decoding every full-size PNG at once.
+  **?** help button. In the packaged `.exe`, this store is placed in the
+  persistent per-user app-data folder, not PyInstaller's temporary unpack
+  directory; use **Open** to see its exact location. Folder imports keep the
+  selected folder name as well as
+  its subfolders, so selecting a `100x100 Core` or `Symbols` folder directly
+  does not discard the names the generator needs. ZIP imports preserve folders,
+  normalize Windows-style archive paths, skip non-images, and keep each archive
+  in its own group so similarly named files never overwrite each other. The
+  original ZIP is never changed. The library's expandable folder tree preserves
+  those paths; overlapping smart views add counts for core modules and modular
+  tile pieces, rooms, floors, walls, corridors, doors, controls, engineering,
+  medical/science,
+  furniture, storage, vehicles/aircraft, weapons/security, food/galley,
+  loose props, organic remains, landscaping/vegetation, overlays, lighting,
+  hazards, fire/smoke, and symbols. Unmatched art stays visible under **Other /
+  Unclassified**. These are browse filters only—assets are not moved or copied
+  again—and folder siblings can be reordered with ▲▼. For geomorph assembly, import
+  the matching high-res Geomorphs / Custom Tiles and Symbols archives; folder
+  names are preserved so Core modules, paired overlays, and Symbols can be
+  recognized. After importing, the library clears old filters so the assets are
+  visible immediately; drag or double-click one to put it on the canvas. Large
+  libraries load thumbnails only as they enter view, rather than decoding every
+  full-size PNG at once. The checked-in starter art is a small demo collection.
+  The high-resolution Geomorphs / Custom Tiles / Symbols ZIPs are stored as
+  GitHub Release assets rather than in Git; the Windows build filters each ZIP
+  to supported image files while preserving folders, then bundles and installs
+  them on first launch. Running from source? **Import ZIP** applies the same
+  supported-file filter when adding those packs manually.
 - **Custom single PNGs** dragged straight onto the canvas are *embedded*
   inside the saved `.bmap` file, so that map is portable on its own.
 
