@@ -6,6 +6,7 @@ duplicating its stored file.
 """
 from __future__ import annotations
 
+from functools import lru_cache
 import re
 
 from core import generator
@@ -179,34 +180,67 @@ def _is_modular_piece(asset) -> bool:
     return False
 
 
-def _has(text: str, terms) -> bool:
-    words = re.findall(r"[a-z0-9]+", text.casefold())
-    word_set = set(words)
+@lru_cache(maxsize=256)
+def _prepare_terms(terms: tuple[str, ...]):
+    """Tokenize each taxonomy vocabulary once instead of once per asset."""
+    prepared = []
     for term in terms:
-        term_words = re.findall(r"[a-z0-9]+", term.casefold())
+        term_words = tuple(re.findall(r"[a-z0-9]+", term.casefold()))
         if not term_words:
             continue
         if len(term_words) > 1:
-            width = len(term_words)
-            if any(words[index:index + width] == term_words
-                   for index in range(len(words) - width + 1)):
-                return True
+            prepared.append((term_words, "", frozenset(), False))
             continue
         word = term_words[0]
         plural_forms = {word + "s", word + "es"}
         if word.endswith("y"):
             plural_forms.add(word[:-1] + "ies")
-        if word in word_set or word_set.intersection(plural_forms):
+        prepared.append(((), word, frozenset(plural_forms), len(word) >= 5))
+    return tuple(prepared)
+
+
+def _token_prefixes(words):
+    prefixes = set()
+    prefixes_without_lightning = set()
+    for token in set(words):
+        for length in range(5, len(token) + 1):
+            prefix = token[:length]
+            prefixes.add(prefix)
+            if not token.startswith("lightning"):
+                prefixes_without_lightning.add(prefix)
+    return prefixes, prefixes_without_lightning
+
+
+def _has_words(words, word_set, terms, prefixes=None,
+               prefixes_without_lightning=None) -> bool:
+    if not isinstance(words, tuple):
+        words = tuple(words)
+    if prefixes is None or prefixes_without_lightning is None:
+        prefixes, prefixes_without_lightning = _token_prefixes(words)
+    for term_words, word, plural_forms, allow_suffix in _prepare_terms(tuple(terms)):
+        if term_words:
+            width = len(term_words)
+            if any(words[index:index + width] == term_words
+                   for index in range(len(words) - width + 1)):
+                return True
+            continue
+        if word in word_set or any(form in word_set for form in plural_forms):
             return True
         # Permit common suffixes such as "flooring" and "lighting" without
         # substring matches inside unrelated words (for example, "mat" in
         # "automated"). "Lightning" is a separate sci-fi name, not a light.
-        if len(word) >= 5 and any(
-                token.startswith(word) and not
-                (word == "light" and token.startswith("lightning"))
-                for token in words):
+        matching_prefixes = (prefixes_without_lightning if word == "light"
+                             else prefixes)
+        if allow_suffix and word in matching_prefixes:
             return True
     return False
+
+
+def _has(text: str, terms) -> bool:
+    words = tuple(re.findall(r"[a-z0-9]+", text.casefold()))
+    prefixes, prefixes_without_lightning = _token_prefixes(words)
+    return _has_words(words, set(words), terms, prefixes,
+                      prefixes_without_lightning)
 
 
 def classify_asset_categories(assets) -> dict[str, set[str]]:
@@ -220,6 +254,11 @@ def classify_asset_categories(assets) -> dict[str, set[str]]:
     result: dict[str, set[str]] = {}
     for asset in assets:
         text = _text(asset)
+        words = tuple(re.findall(r"[a-z0-9]+", text))
+        word_set = set(words)
+        prefixes, prefixes_without_lightning = _token_prefixes(words)
+        has = lambda terms: _has_words(
+            words, word_set, terms, prefixes, prefixes_without_lightning)
         tags: set[str] = set()
 
         is_geomorph_overlay = generator._is_geomorph_overlay(asset)
@@ -236,60 +275,60 @@ def classify_asset_categories(assets) -> dict[str, set[str]]:
             tags.add("symbols")
 
         # Map construction and surface assets.
-        if _has(text, _ROOM_WORDS):
+        if has(_ROOM_WORDS):
             tags.add("rooms")
-        if (_has(text, generator.KEYWORDS["floor"])
-                or _has(text, _FLOOR_SURFACE_WORDS)):
-            if _has(text, _FLOOR_SURFACE_WORDS) or "rooms" not in tags:
+        if (has(generator.KEYWORDS["floor"])
+                or has(_FLOOR_SURFACE_WORDS)):
+            if has(_FLOOR_SURFACE_WORDS) or "rooms" not in tags:
                 tags.add("floors")
-        if _has(text, generator.KEYWORDS["wall"]):
+        if has(generator.KEYWORDS["wall"]):
             tags.add("walls")
-        if _has(text, _CORRIDOR_WORDS):
+        if has(_CORRIDOR_WORDS):
             tags.add("corridors")
-        if _has(text, generator.KEYWORDS["door"]):
+        if has(generator.KEYWORDS["door"]):
             tags.add("doors")
 
         # Equipment and dressing. Use semantic folder names as well as
         # filenames, rather than requiring every manual-use asset to match the
         # generator's much narrower placement classifier.
-        if _has(text, _CONTROL_WORDS):
+        if has(_CONTROL_WORDS):
             tags.add("controls")
-        if _has(text, _ENGINEERING_WORDS):
+        if has(_ENGINEERING_WORDS):
             tags.add("engineering")
-        if _has(text, _MEDICAL_WORDS):
+        if has(_MEDICAL_WORDS):
             tags.add("medical")
-        if _has(text, _FURNITURE_WORDS):
+        if has(_FURNITURE_WORDS):
             tags.add("furniture")
-        if _has(text, _STORAGE_WORDS):
+        if has(_STORAGE_WORDS):
             tags.add("storage")
-        if _has(text, _VEHICLE_WORDS):
+        if has(_VEHICLE_WORDS):
             tags.add("vehicles")
-        if _has(text, _WEAPON_WORDS):
+        if has(_WEAPON_WORDS):
             tags.add("weapons")
-        if _has(text, _FOOD_WORDS):
+        if has(_FOOD_WORDS):
             tags.add("food")
-        if _has(text, _LANDSCAPING_WORDS):
+        if has(_LANDSCAPING_WORDS):
             tags.add("landscaping")
-        if _has(text, _ORGANIC_WORDS):
+        if has(_ORGANIC_WORDS):
             tags.add("organic")
 
-        if (_has(text, generator.KEYWORDS["wall_fixture"])
+        if (has(generator.KEYWORDS["wall_fixture"])
                 and not tags.intersection({"controls", "engineering", "medical"})):
             tags.add("controls")
-        if (_has(text, generator.KEYWORDS["floor_fixture"])
+        if (has(generator.KEYWORDS["floor_fixture"])
                 and not tags.intersection(
                     {"furniture", "storage", "medical", "organic"})):
             tags.add("loose_props")
-        if _has(text, _LOOSE_PROP_WORDS):
+        if has(_LOOSE_PROP_WORDS):
             tags.add("loose_props")
 
-        fire_control = _has(text, ("fire control", "fire-control"))
-        if ((_has(text, generator.KEYWORDS["hazard"]) or
-             _has(text, _HAZARD_WORDS)) and not fire_control):
+        fire_control = has(("fire control", "fire-control"))
+        if ((has(generator.KEYWORDS["hazard"]) or
+             has(_HAZARD_WORDS)) and not fire_control):
             tags.add("hazards")
-        if _has(text, _FIRE_WORDS) and not fire_control:
+        if has(_FIRE_WORDS) and not fire_control:
             tags.add("fire_smoke")
-        if _has(text, _LIGHT_WORDS):
+        if has(_LIGHT_WORDS):
             tags.add("lighting")
         if getattr(asset, "is_overlay", False):
             tags.add("overlays")

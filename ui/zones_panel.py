@@ -6,7 +6,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QScrollArea,
-    QSlider, QVBoxLayout, QWidget,
+    QSlider, QVBoxLayout, QWidget, QSizePolicy,
 )
 
 from core.project import Project, ZoneRegion
@@ -29,9 +29,16 @@ class ZonesPanel(QWidget):
         outer.setContentsMargins(2, 2, 2, 2)
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
+        scroll.setMinimumWidth(0)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         content = QWidget()
+        content.setMinimumWidth(0)
+        content.setSizePolicy(QSizePolicy.Policy.Ignored,
+                              QSizePolicy.Policy.Preferred)
         root = QVBoxLayout(content)
         root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(6)
 
         defaults = QGroupBox("Project border defaults")
         form = QFormLayout(defaults)
@@ -74,6 +81,9 @@ class ZonesPanel(QWidget):
         zones_group = QGroupBox("Gameplay zones")
         zones_layout = QVBoxLayout(zones_group)
         self.list_zones = QListWidget()
+        self.list_zones.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list_zones.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.list_zones.currentItemChanged.connect(self._list_zone_selected)
         zones_layout.addWidget(self.list_zones)
 
@@ -162,6 +172,7 @@ class ZonesPanel(QWidget):
         if self.canvas.level:
             for zone in self.canvas.level.zones:
                 item = QListWidgetItem(zone.name)
+                item.setToolTip(zone.name)
                 item.setData(Qt.ItemDataRole.UserRole, zone.id)
                 self.list_zones.addItem(item)
                 if zone.id == selected:

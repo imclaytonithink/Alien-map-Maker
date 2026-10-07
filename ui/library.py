@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QMimeData, QSize, pyqtSignal, QTimer, QThread
-from PyQt6.QtGui import QDrag, QPixmap, QIcon, QMouseEvent, QCursor
+from PyQt6.QtCore import (Qt, QMimeData, QSize, QPoint, QModelIndex,
+                          QAbstractListModel, QObject, QRunnable, QThread,
+                          QThreadPool, pyqtSignal, QTimer)
+from PyQt6.QtGui import QDrag, QPixmap, QIcon, QMouseEvent, QCursor, QImage
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox,
-    QListWidget, QListWidgetItem, QLabel, QSlider, QDialog, QFileDialog,
+    QLabel, QSlider, QDialog, QFileDialog, QAbstractItemView,
     QListView, QTreeWidget, QTreeWidgetItem,
 )
 
@@ -21,7 +24,7 @@ from core.asset_taxonomy import (
 )
 from core.project import Project
 from ui.branding import default_asset_store_path, seed_bundled_assets
-from ui.image_utils import load_scaled_pixmap
+from ui.image_utils import load_scaled_image, load_scaled_pixmap
 
 
 ASSET_MIME = "application/x-mapbuilder-asset"
@@ -64,6 +67,8 @@ class ZipImportWorker(QThread):
         super().__init__(parent)
         self.archive_paths = list(archive_paths)
         self.asset_store = asset_store
+        self.scanned_library = None
+        self.scanned_category_tags = None
 
     def run(self):
         library = AssetLibrary(self.asset_store)
@@ -75,89 +80,332 @@ class ZipImportWorker(QThread):
                 reports.append(library.import_zip(path, rescan=False))
             except Exception as exc:
                 errors.append((os.path.basename(path), str(exc)))
+        try:
+            # Scanning headers and classifying thousands of images belongs on
+            # this worker too; doing it in the completion slot froze the GUI
+            # just after a large pack finished importing.
+            library.scan(self.asset_store)
+            from core.asset_taxonomy import classify_asset_categories
+            category_tags = classify_asset_categories(library.assets)
+            self.scanned_library = library
+            self.scanned_category_tags = category_tags
+        except Exception as exc:
+            errors.append(("Asset library scan", str(exc)))
         self.completed.emit(reports, errors)
 
 
-class AssetList(QListWidget):
+class ThumbnailSignals(QObject):
+    completed = pyqtSignal(str, int, int, QImage)
+
+
+class ThumbnailTask(QRunnable):
+    """Decode one bounded preview away from the GUI thread."""
+
+    def __init__(self, path: str, size: int, generation: int,
+                 signals: ThumbnailSignals):
+        super().__init__()
+        self.path = path
+        self.size = size
+        self.generation = generation
+        self.signals = signals
+
+    def run(self):
+        try:
+            image = load_scaled_image(self.path, self.size)
+        except Exception:
+            image = QImage()
+        self.signals.completed.emit(
+            self.path, self.size, self.generation, image)
+
+
+class AssetListModel(QAbstractListModel):
+    """Small model for arbitrarily large libraries; no widget per asset."""
+
+    thumbnailLoaded = pyqtSignal()
+    MAX_CACHED_ICONS = 96
+    MAX_PENDING_THUMBNAILS = 8
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.assets = []
+        self.category_tags = {}
+        self.library = None
+        self.thumb_size = 56
+        self._generation = 0
+        self._path_to_row = {}
+        self._icons = OrderedDict()
+        self._attempted = set()
+        self._pending = {}
+        self._thread_pool = QThreadPool(self)
+        # A single decoder keeps peak memory predictable for very large PNGs;
+        # the editor remains responsive because QImageReader runs off-thread.
+        self._thread_pool.setMaxThreadCount(1)
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.assets)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or not 0 <= index.row() < len(self.assets):
+            return None
+        asset = self.assets[index.row()]
+        if role == Qt.ItemDataRole.DisplayRole:
+            label = asset.name
+            if asset.size:
+                label += f"\n{asset.size[0]}x{asset.size[1]}"
+            if asset.is_overlay:
+                label += " · overlay"
+            return label
+        if role == Qt.ItemDataRole.DecorationRole:
+            icon = self._icons.get(asset.path)
+            if icon is not None:
+                self._icons.move_to_end(asset.path)
+            return icon
+        if role == Qt.ItemDataRole.ToolTipRole:
+            tags = self.category_tags.get(asset.path, ())
+            labels = sorted(CATEGORY_LABELS[tag] for tag in tags
+                            if tag in CATEGORY_LABELS)
+            tooltip = asset.path
+            if labels:
+                tooltip += "\nSmart categories: " + ", ".join(labels)
+            return tooltip
+        if role == Qt.ItemDataRole.UserRole:
+            return asset.path
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignHCenter)
+        return None
+
+    def set_assets(self, assets, category_tags=None, library=None):
+        self.beginResetModel()
+        self._generation += 1
+        self.assets = assets if isinstance(assets, list) else list(assets)
+        self.category_tags = category_tags or {}
+        self.library = library
+        self._path_to_row = {asset.path: row
+                             for row, asset in enumerate(self.assets)}
+        self._icons.clear()
+        self._attempted.clear()
+        self.endResetModel()
+
+    def set_thumb_size(self, size: int):
+        size = max(16, int(size))
+        if size == self.thumb_size:
+            return
+        self.thumb_size = size
+        self._generation += 1
+        self._icons.clear()
+        self._attempted.clear()
+
+    def asset_at(self, index):
+        if index is None or not index.isValid():
+            return None
+        row = index.row()
+        return self.assets[row] if 0 <= row < len(self.assets) else None
+
+    def icon_for_index(self, index):
+        asset = self.asset_at(index)
+        if not asset:
+            return None
+        icon = self._icons.get(asset.path)
+        if icon is not None:
+            self._icons.move_to_end(asset.path)
+        return icon
+
+    def has_requested_thumbnail(self, index):
+        asset = self.asset_at(index)
+        return bool(asset and (asset.path in self._attempted
+                               or asset.path in self._icons
+                               or (self._generation, asset.path) in self._pending))
+
+    def request_thumbnail(self, index):
+        asset = self.asset_at(index)
+        if not asset or self.has_requested_thumbnail(index):
+            return False
+        if len(self._pending) >= self.MAX_PENDING_THUMBNAILS:
+            return False
+        key = (self._generation, asset.path)
+        signals = ThumbnailSignals()
+        signals.completed.connect(self._thumbnail_ready)
+        self._pending[key] = signals
+        image_path = (self.library.abs_path(asset.path)
+                      if self.library else asset.path)
+        self._thread_pool.start(ThumbnailTask(
+            image_path, self.thumb_size, self._generation, signals))
+        return True
+
+    def _thumbnail_ready(self, path: str, size: int, generation: int,
+                         image: QImage):
+        self._pending.pop((generation, path), None)
+        if generation != self._generation or size != self.thumb_size:
+            self.thumbnailLoaded.emit()
+            return
+        self._attempted.add(path)
+        if not image.isNull():
+            self._icons[path] = QIcon(QPixmap.fromImage(image))
+            self._icons.move_to_end(path)
+            while len(self._icons) > self.MAX_CACHED_ICONS:
+                evicted, _icon = self._icons.popitem(last=False)
+                self._attempted.discard(evicted)
+            row = self._path_to_row.get(path)
+            if row is not None:
+                index = self.index(row, 0)
+                self.dataChanged.emit(
+                    index, index, [int(Qt.ItemDataRole.DecorationRole)])
+        self.thumbnailLoaded.emit()
+
+
+class AssetList(QListView):
+    """Thumbnail grid whose items stay virtual and whose images load lazily."""
+
     viewportResized = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.asset_model = AssetListModel(self)
+        self.setModel(self.asset_model)
         self.setIconSize(QSize(56, 56))
         self.setSpacing(4)
         self.setViewMode(QListView.ViewMode.IconMode)
+        self.setFlow(QListView.Flow.LeftToRight)
+        self.setWrapping(True)
         self.setResizeMode(QListView.ResizeMode.Adjust)
-        self._press_item = None
+        self.setLayoutMode(QListView.LayoutMode.Batched)
+        self.setBatchSize(128)
+        self.setMovement(QListView.Movement.Static)
+        self.setUniformItemSizes(True)
+        self.setWordWrap(True)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._press_index = QModelIndex()
         self._press_pos = None
         self._pop = None
+        self._pop_path = ""
         self._pop_timer = QTimer(self)
         self._pop_timer.setSingleShot(True)
         self._pop_timer.timeout.connect(self._show_popout)
-        self.itemEntered.connect(self._on_entered)
+        self.entered.connect(self._on_entered)
+        self.asset_model.thumbnailLoaded.connect(self._thumbnail_ready)
         self.setMouseTracking(True)
+        self._update_grid_size()
 
-    def mousePressEvent(self, e: QMouseEvent):
-        self._press_item = self.itemAt(e.position().toPoint())
-        self._press_pos = e.position().toPoint()
+    def count(self):
+        """Compatibility helper for callers/tests that previously used QListWidget."""
+        return self.asset_model.rowCount()
+
+    def set_assets(self, assets, category_tags=None, library=None):
+        self.asset_model.set_assets(assets, category_tags, library)
+        self.viewport().update()
+
+    def set_thumbnail_size(self, size: int):
+        size = max(16, int(size))
+        self.setIconSize(QSize(size, size))
+        self._update_grid_size(size)
+        self.asset_model.set_thumb_size(size)
+        self.viewport().update()
+
+    def _update_grid_size(self, thumb_size=None):
+        size = int(thumb_size or self.iconSize().width())
+        self.setGridSize(QSize(max(120, size + 40), size + 68))
+
+    def path_at(self, pos):
+        index = pos if isinstance(pos, QModelIndex) else self.indexAt(pos)
+        value = self.asset_model.data(index, Qt.ItemDataRole.UserRole)
+        return value or ""
+
+    def current_path(self):
+        return self.path_at(self.currentIndex())
+
+    def mousePressEvent(self, event: QMouseEvent):
+        self._press_index = self.indexAt(event.position().toPoint())
+        self._press_pos = event.position().toPoint()
         self._pop_timer.stop()
+        self._pop_path = ""
         self._hide_popout()
-        super().mousePressEvent(e)
+        super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, e: QMouseEvent):
-        if self._press_item and e.buttons() & Qt.MouseButton.LeftButton:
-            if (e.position().toPoint() - self._press_pos).manhattanLength() > 6:
-                path = self._press_item.data(Qt.ItemDataRole.UserRole)
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if (self._press_index.isValid()
+                and event.buttons() & Qt.MouseButton.LeftButton):
+            if (event.position().toPoint() - self._press_pos).manhattanLength() > 6:
+                path = self.path_at(self._press_index)
                 if path:
-                    self._start_drag(path)
-                self._press_item = None
-        super().mouseMoveEvent(e)
+                    self._start_drag(path, self._press_index)
+                self._press_index = QModelIndex()
+        super().mouseMoveEvent(event)
 
-    def leaveEvent(self, e):
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        super().mouseReleaseEvent(event)
+        self._press_index = QModelIndex()
+
+    def leaveEvent(self, event):
         self._pop_timer.stop()
+        self._pop_path = ""
         self._hide_popout()
-        super().leaveEvent(e)
+        super().leaveEvent(event)
 
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_grid_size()
         self.viewportResized.emit()
 
-    def _on_entered(self, item):
+    def _on_entered(self, index):
         self._pop_timer.stop()
         self._hide_popout()
-        if item:
+        self._pop_path = self.path_at(index)
+        if self._pop_path:
             self._pop_timer.start(600)
 
     def _show_popout(self):
-        item = self.itemAt(self.mapFromGlobal(QCursor.pos()))
-        if not item:
+        index = self.indexAt(self.mapFromGlobal(QCursor.pos()))
+        if not index.isValid():
             return
-        pm = item.icon().pixmap(QSize(160, 160))
-        if pm.isNull():
+        path = self.path_at(index)
+        if not path:
+            return
+        icon = self.asset_model.icon_for_index(index)
+        if not icon or icon.isNull():
+            self._pop_path = path
+            self.asset_model.request_thumbnail(index)
+            return
+        pixmap = icon.pixmap(QSize(160, 160))
+        if pixmap.isNull():
             return
         if self._pop is None:
             self._pop = QLabel(self.window())
             self._pop.setObjectName("AssetPreviewPopout")
             self._pop.setWindowFlags(Qt.WindowType.ToolTip)
-        self._pop.setPixmap(pm.scaled(160, 160, Qt.AspectRatioMode.KeepAspectRatio,
-                                      Qt.TransformationMode.SmoothTransformation))
+        self._pop.setPixmap(pixmap.scaled(
+            160, 160, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
         self._pop.adjustSize()
-        self._pop.move(QCursor.pos() + QSize(12, 12))
+        self._pop.move(QCursor.pos() + QPoint(12, 12))
         self._pop.show()
+
+    def _thumbnail_ready(self):
+        if not self._pop_path:
+            return
+        index = self.indexAt(self.mapFromGlobal(QCursor.pos()))
+        if index.isValid() and self.path_at(index) == self._pop_path:
+            self._show_popout()
 
     def _hide_popout(self):
         if self._pop:
             self._pop.hide()
 
-    def _start_drag(self, path: str):
+    def _start_drag(self, path: str, index):
         mime = QMimeData()
         mime.setData(ASSET_MIME, path.encode("utf-8"))
         drag = QDrag(self)
         drag.setMimeData(mime)
-        pm = self._press_item.icon().pixmap(QSize(64, 64))
-        if not pm.isNull():
-            drag.setPixmap(pm)
+        icon = self.asset_model.icon_for_index(index)
+        if icon and not icon.isNull():
+            pixmap = icon.pixmap(QSize(64, 64))
+            if not pixmap.isNull():
+                drag.setPixmap(pixmap)
         drag.exec(Qt.DropAction.CopyAction)
-        self._press_item = None
+        self._press_index = QModelIndex()
 
 
 class LibraryPanel(QWidget):
@@ -171,6 +419,12 @@ class LibraryPanel(QWidget):
         self.add_at_center_cb = None
         self._view = ("all", None)
         self._category_tags = {}
+        self._preclassified_key = None
+        self._preclassified_tags = None
+        self._library_stats_key = None
+        self._category_counts = {}
+        self._category_group_counts = {}
+        self._folder_counts = {}
         self._tree_items = {}
         self._folder_groups = []
         self._zip_worker = None
@@ -181,41 +435,51 @@ class LibraryPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # search + import
-        top = QHBoxLayout()
+        # Keep search and import actions on separate rows so the narrow side
+        # panel never compresses them into clipped, overlapping controls.
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search filename, folder, size…")
         self.search.textChanged.connect(self._on_search)
-        top.addWidget(self.search, 1)
-        self.b_imp_f = QPushButton("Import Folder")
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(140)
+        self._search_timer.timeout.connect(self.refresh)
+        layout.addWidget(self.search)
+
+        import_row = QHBoxLayout()
+        import_row.setSpacing(4)
+        self.b_imp_f = QPushButton("Folder")
         self.b_imp_f.setToolTip(
-            "Copy images into the internal library, keeping the selected "
+            "Import Folder — copy images into the internal library, keeping the selected "
             "folder name and its subfolders as an expandable file tree. "
             "Useful for Core / Symbols packs. Importing does not place them "
             "on the map; drag or double-click "
             "an asset afterward.")
         self.b_imp_f.clicked.connect(self._import_folder)
-        self.b_imp_p = QPushButton("Import File")
+        self.b_imp_p = QPushButton("File")
         self.b_imp_p.setToolTip(
-            "Copy one image into the internal library. Drag or double-click "
+            "Import File — copy one image into the internal library. Drag or double-click "
             "it afterward to place it on the map.")
         self.b_imp_p.clicked.connect(self._import_file)
-        self.b_imp_zip = QPushButton("Import ZIP")
+        self.b_imp_zip = QPushButton("ZIP")
         self.b_imp_zip.setToolTip(
-            "Import supported images from one or more ZIP archives. "
+            "Import ZIP — import supported images from one or more archives. "
             "Folder paths are preserved; non-image files are skipped.")
         self.b_imp_zip.clicked.connect(self._import_zip)
-        top.addWidget(self.b_imp_f)
-        top.addWidget(self.b_imp_p)
-        top.addWidget(self.b_imp_zip)
-        layout.addLayout(top)
+        for button in (self.b_imp_f, self.b_imp_p, self.b_imp_zip):
+            button.setMinimumWidth(0)
+            import_row.addWidget(button, 1)
+        layout.addLayout(import_row)
 
         # Hierarchical file paths and virtual smart-category views.
         g_row = QHBoxLayout()
         self.group_tree = QTreeWidget()
         self.group_tree.setHeaderHidden(True)
-        self.group_tree.setMaximumHeight(230)
+        self.group_tree.setMaximumHeight(190)
         self.group_tree.setUniformRowHeights(True)
+        self.group_tree.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.group_tree.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.group_tree.setToolTip(
             "Browse the preserved asset-store folder paths or use overlapping "
             "smart categories. Categories filter files in place; they never "
@@ -238,13 +502,16 @@ class LibraryPanel(QWidget):
         coll_row = QHBoxLayout()
         self.coll_combo = QComboBox()
         self.coll_combo.addItem("All assets")
-        self.coll_combo.setMinimumWidth(120)
+        self.coll_combo.setMinimumWidth(70)
         self.coll_combo.currentIndexChanged.connect(self._on_collection_pick)
-        btn_new = QPushButton("New"); btn_new.setMaximumWidth(46)
+        btn_new = QPushButton("New"); btn_new.setMaximumWidth(52)
+        btn_new.setToolTip("Create a collection")
         btn_new.clicked.connect(self._new_collection)
-        btn_add = QPushButton("+ Add sel."); btn_add.setMaximumWidth(70)
+        btn_add = QPushButton("Add"); btn_add.setMaximumWidth(52)
+        btn_add.setToolTip("Add the selected asset to this collection")
         btn_add.clicked.connect(self._add_to_collection)
-        btn_del = QPushButton("x"); btn_del.setMaximumWidth(24)
+        btn_del = QPushButton("×"); btn_del.setMaximumWidth(36)
+        btn_del.setToolTip("Remove the selected asset from this collection")
         btn_del.clicked.connect(self._remove_from_collection)
         coll_row.addWidget(self.coll_combo, 1)
         coll_row.addWidget(btn_new); coll_row.addWidget(btn_add); coll_row.addWidget(btn_del)
@@ -261,8 +528,7 @@ class LibraryPanel(QWidget):
         layout.addLayout(ts)
 
         self.list = AssetList()
-        self.list.itemDoubleClicked.connect(
-            lambda it: self.assetActivated.emit(it.data(Qt.ItemDataRole.UserRole)))
+        self.list.doubleClicked.connect(self._asset_double_clicked)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._ctx_menu)
         self._thumb_timer = QTimer(self)
@@ -272,6 +538,8 @@ class LibraryPanel(QWidget):
         self.list.verticalScrollBar().valueChanged.connect(
             lambda _value: self._schedule_visible_thumbnails())
         self.list.viewportResized.connect(self._schedule_visible_thumbnails)
+        self.list.asset_model.thumbnailLoaded.connect(
+            self._schedule_visible_thumbnails)
         layout.addWidget(self.list, 1)
 
         # where the internal store lives + how to get help
@@ -288,7 +556,7 @@ class LibraryPanel(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse)
         store_row.addWidget(self.lbl_store, 1)
         b_where = QPushButton("?")
-        b_where.setMaximumWidth(26)
+        b_where.setMaximumWidth(36)
         b_where.setToolTip("Explain where imported assets are stored")
         b_where.clicked.connect(self._show_store_help)
         store_row.addWidget(b_where)
@@ -301,6 +569,7 @@ class LibraryPanel(QWidget):
         layout.addLayout(store_row)
 
         self.count_label = QLabel("")
+        self.count_label.setWordWrap(True)
         layout.addWidget(self.count_label)
         self._update_store_label()
 
@@ -364,7 +633,12 @@ class LibraryPanel(QWidget):
         self.project = project
         self.library = library
         self.add_at_center_cb = add_at_center_cb
-        library.scan(project.asset_store)
+        target_root = (os.path.normcase(os.path.abspath(project.asset_store))
+                       if project.asset_store else "")
+        current_root = (os.path.normcase(os.path.abspath(library.root))
+                        if library.root else "")
+        if current_root != target_root or not library._scan_complete:
+            library.scan(project.asset_store)
         self._rebuild_collections()
         self._rebuild_groups()
         self.refresh()
@@ -376,6 +650,7 @@ class LibraryPanel(QWidget):
 
     def _new_tree_item(self, parent, label: str, token: str):
         item = QTreeWidgetItem([label])
+        item.setToolTip(0, label)
         if parent is None:
             self.group_tree.addTopLevelItem(item)
         else:
@@ -389,7 +664,44 @@ class LibraryPanel(QWidget):
         self._folder_groups = groups
         if self.project:
             self.project.group_order = list(groups)
-        self._category_tags = classify_asset_categories(self.library.assets)
+        stats_key = (id(self.library), self.library._scan_revision)
+        if stats_key != self._library_stats_key:
+            if self._preclassified_key == stats_key:
+                self._category_tags = self._preclassified_tags or {}
+                self._preclassified_key = None
+                self._preclassified_tags = None
+            else:
+                self._category_tags = classify_asset_categories(self.library.assets)
+            self._category_counts = {
+                category_id: 0
+                for _group, categories in SMART_CATEGORY_TREE
+                for category_id, _label in categories
+            }
+            group_category_ids = {
+                group_name: {category_id for category_id, _label in categories}
+                for group_name, categories in SMART_CATEGORY_TREE
+            }
+            self._category_group_counts = {
+                group_name: 0 for group_name, _categories in SMART_CATEGORY_TREE
+            }
+            self._folder_counts = {".": len(self.library.assets)}
+            for tags in self._category_tags.values():
+                for tag in tags:
+                    if tag in self._category_counts:
+                        self._category_counts[tag] += 1
+                for group_name, category_ids in group_category_ids.items():
+                    if not tags.isdisjoint(category_ids):
+                        self._category_group_counts[group_name] += 1
+            for asset in self.library.assets:
+                folder = asset.folder.replace("\\", "/").strip("/")
+                if folder in ("", "."):
+                    continue
+                parts = folder.split("/")
+                for depth in range(1, len(parts) + 1):
+                    prefix = "/".join(parts[:depth])
+                    self._folder_counts[prefix] = \
+                        self._folder_counts.get(prefix, 0) + 1
+            self._library_stats_key = stats_key
 
         self.group_tree.blockSignals(True)
         self.group_tree.clear()
@@ -401,35 +713,19 @@ class LibraryPanel(QWidget):
         smart_root = self._new_tree_item(
             None, f"Smart categories ({total:,})", "smart-root")
         for group_name, categories in SMART_CATEGORY_TREE:
-            category_ids = tuple(category_id for category_id, _label in categories)
-            matched_paths = {
-                path for path, tags in self._category_tags.items()
-                if tags.intersection(category_ids)
-            }
             group_item = self._new_tree_item(
-                smart_root, f"{group_name} ({len(matched_paths):,})",
+                smart_root, f"{group_name} ({self._category_group_counts[group_name]:,})",
                 f"category-group:{group_name}")
             for category_id, label in categories:
-                count = sum(category_id in tags
-                            for tags in self._category_tags.values())
                 self._new_tree_item(
-                    group_item, f"{label} ({count:,})",
+                    group_item,
+                    f"{label} ({self._category_counts[category_id]:,})",
                     f"category:{category_id}")
             group_item.setExpanded(True)
         smart_root.setExpanded(True)
 
         folders_root = self._new_tree_item(
             None, f"Folders / file paths ({total:,})", "folder-root")
-        self._folder_counts = {".": total}
-        for asset in self.library.assets:
-            folder = asset.folder.replace("\\", "/").strip("/")
-            if folder in ("", "."):
-                continue
-            parts = folder.split("/")
-            for depth in range(1, len(parts) + 1):
-                prefix = "/".join(parts[:depth])
-                self._folder_counts[prefix] = self._folder_counts.get(prefix, 0) + 1
-
         root_item = self._new_tree_item(
             folders_root, f"Asset store root ({total:,})", "folder:.")
         folder_items = {".": root_item}
@@ -451,8 +747,9 @@ class LibraryPanel(QWidget):
 
         folders_root.setExpanded(True)
         root_item.setExpanded(False)
-        self.group_tree.blockSignals(False)
         self.group_tree.setCurrentItem(all_item)
+        self.group_tree.blockSignals(False)
+        self._view = ("all", None)
         self._update_folder_reorder_buttons()
 
     def _rebuild_collections(self):
@@ -465,10 +762,15 @@ class LibraryPanel(QWidget):
         self.coll_combo.blockSignals(False)
 
     # ------------------------------------------------------------------
+    def _asset_double_clicked(self, index):
+        path = self.list.path_at(index)
+        if path:
+            self.assetActivated.emit(path)
+
     def _on_search(self, _text):
-        # Search narrows the current folder, category, or collection instead of
-        # unexpectedly discarding the user's browsing context.
-        self.refresh()
+        # Debounce scans of a large asset list while retaining the current
+        # folder, category, or collection browsing context.
+        self._search_timer.start()
 
     def _on_tree_pick(self, cur, _prev):
         if not cur:
@@ -569,7 +871,6 @@ class LibraryPanel(QWidget):
 
     # ------------------------------------------------------------------
     def refresh(self):
-        self.list.clear()
         mode, val = self._view
         if mode == "collection":
             paths = set(self.project.collections.get(val, [])) if self.project else set()
@@ -590,27 +891,15 @@ class LibraryPanel(QWidget):
 
         query = self.search.text().strip()
         if query:
-            matching_paths = {asset.path for asset in self.library.search(query)}
-            assets = [asset for asset in assets if asset.path in matching_paths]
+            needle = query.casefold()
+            assets = [asset for asset in assets
+                      if needle in asset.name.casefold()
+                      or needle in asset.folder.casefold()
+                      or any(needle in tag.casefold() for tag in asset.tags)]
 
-        for asset in assets:
-            item = QListWidgetItem()
-            label = asset.name
-            if asset.size:
-                label += f"\n{asset.size[0]}x{asset.size[1]}"
-            if asset.is_overlay:
-                label += "  [overlay]"
-            item.setText(label)
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            item.setData(Qt.ItemDataRole.UserRole, asset.path)
-            tags = self._category_tags.get(asset.path, set())
-            labels = sorted(CATEGORY_LABELS[tag] for tag in tags
-                            if tag in CATEGORY_LABELS)
-            tooltip = asset.path
-            if labels:
-                tooltip += "\nSmart categories: " + ", ".join(labels)
-            item.setToolTip(tooltip)
-            self.list.addItem(item)
+        # A model-backed view creates no QListWidgetItem per file, which keeps
+        # both memory use and filter/refresh time bounded for large packs.
+        self.list.set_assets(assets, self._category_tags, self.library)
 
         scope = "All assets"
         if mode == "folder" and val not in ("", "."):
@@ -627,34 +916,39 @@ class LibraryPanel(QWidget):
         self.count_label.setText(count_text)
         self._schedule_visible_thumbnails()
 
-    def _schedule_visible_thumbnails(self):
+    def _schedule_visible_thumbnails(self, *_args):
         if hasattr(self, "_thumb_timer"):
             self._thumb_timer.start()
 
     def _load_visible_thumbnails(self):
-        """Load icons only for visible rows, keeping large libraries responsive."""
+        """Request only visible thumbnails; image decoding runs in one worker."""
         if not self.library.root or not self.list.count():
             return
-        visible = self.list.viewport().rect()
-        thumb_size = self.sl_thumb.value()
-        for index in range(self.list.count()):
-            item = self.list.item(index)
-            in_view = self.list.visualItemRect(item).intersects(visible)
-            if in_view:
-                if item.icon().isNull():
-                    rel_path = item.data(Qt.ItemDataRole.UserRole)
-                    pm = load_scaled_pixmap(self.library.abs_path(rel_path), thumb_size)
-                    if not pm.isNull():
-                        item.setIcon(QIcon(pm))
-            elif not item.icon().isNull():
-                # Do not retain thousands of QPixmaps as users scroll through
-                # high-resolution asset packs. The small LRU cache avoids
-                # repeated decoding when they scroll back.
-                item.setIcon(QIcon())
+        view = self.list
+        model = view.asset_model
+        visible = view.viewport().rect()
+        grid = view.gridSize()
+        step_x = max(20, grid.width() // 2)
+        step_y = max(20, grid.height() // 2)
+        visible_rows = set()
+        for y in range(visible.top(), visible.bottom() + 1, step_y):
+            for x in range(visible.left(), visible.right() + 1, step_x):
+                index = view.indexAt(QPoint(x, y))
+                if index.isValid():
+                    visible_rows.add(index.row())
+        requested = 0
+        for row in sorted(visible_rows):
+            index = model.index(row, 0)
+            if model.has_requested_thumbnail(index):
+                continue
+            if model.request_thumbnail(index):
+                requested += 1
+            if requested >= 3:
+                break
 
     def _thumb_size(self, v):
-        self.list.setIconSize(QSize(v, v))
-        self.refresh()
+        self.list.set_thumbnail_size(v)
+        self._schedule_visible_thumbnails()
 
     # ------------------------------------------------------------------
     def _import_folder(self):
@@ -663,7 +957,6 @@ class LibraryPanel(QWidget):
         if d and self.project:
             self._ensure_store()
             self.library.root = self.project.asset_store
-            self.library.scan(self.project.asset_store)
             n = self.library.import_folder(d, preserve_root=True)
             self._after_import(n)
 
@@ -674,7 +967,6 @@ class LibraryPanel(QWidget):
         if fn and self.project:
             self._ensure_store()
             self.library.root = self.project.asset_store
-            self.library.scan(self.project.asset_store)
             rel = self.library.import_file(fn)
             self._after_import(1 if rel else 0)
 
@@ -726,7 +1018,16 @@ class LibraryPanel(QWidget):
                           os.path.normcase(os.path.abspath(self.project.asset_store)) ==
                           os.path.normcase(target_root))
         if same_store:
-            self.library.scan(target_root)
+            worker = self._zip_worker
+            scanned = getattr(worker, "scanned_library", None)
+            if scanned is not None:
+                self.library.adopt_scan(scanned)
+                self._preclassified_key = (
+                    id(self.library), self.library._scan_revision)
+                self._preclassified_tags = worker.scanned_category_tags
+            else:
+                # Safe fallback for an unexpected worker-side indexing error.
+                self.library.scan(target_root)
             self._rebuild_groups()
             self._show_all_assets()
             self.refresh()
@@ -788,6 +1089,7 @@ class LibraryPanel(QWidget):
     def _show_all_assets(self):
         """Clear library filters after an import so new assets are visible."""
         self._view = ("all", None)
+        self._search_timer.stop()
         self.search.blockSignals(True)
         self.search.clear()
         self.search.blockSignals(False)
@@ -818,16 +1120,16 @@ class LibraryPanel(QWidget):
 
     # ------------------------------------------------------------------
     def _ctx_menu(self, pos):
-        item = self.list.itemAt(pos)
-        if not item:
+        path = self.list.path_at(pos)
+        asset = self.library.get(path) if path else None
+        if not asset:
             return
         from PyQt6.QtWidgets import QMenu
-        a = self.library.get(item.data(Qt.ItemDataRole.UserRole))
         menu = QMenu(self)
         act = menu.addAction("View larger…")
-        act.triggered.connect(lambda: self._view_large(a))
+        act.triggered.connect(lambda: self._view_large(asset))
         act2 = menu.addAction("Add to canvas")
-        act2.triggered.connect(lambda: self.assetActivated.emit(a.path))
+        act2.triggered.connect(lambda: self.assetActivated.emit(asset.path))
         menu.exec(self.list.mapToGlobal(pos))
 
     def _view_large(self, asset):
@@ -847,26 +1149,24 @@ class LibraryPanel(QWidget):
             self.collectionsChanged.emit()
 
     def _add_to_collection(self):
-        item = self.list.currentItem()
-        if not item or not self.project:
+        path = self.list.current_path()
+        if not path or not self.project:
             return
         idx = self.coll_combo.currentIndex()
         if idx <= 0:
             return
         name = self.coll_combo.itemText(idx).lstrip("★ ").strip()
-        path = item.data(Qt.ItemDataRole.UserRole)
         self.project.collections.setdefault(name, [])
         if path not in self.project.collections[name]:
             self.project.collections[name].append(path)
         self.collectionsChanged.emit()
 
     def _remove_from_collection(self):
-        item = self.list.currentItem()
+        path = self.list.current_path()
         idx = self.coll_combo.currentIndex()
-        if idx <= 0 or not item or not self.project:
+        if idx <= 0 or not path or not self.project:
             return
         name = self.coll_combo.itemText(idx).lstrip("★ ").strip()
-        path = item.data(Qt.ItemDataRole.UserRole)
         coll = self.project.collections.get(name, [])
         if path in coll:
             coll.remove(path)

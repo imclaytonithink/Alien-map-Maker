@@ -2,7 +2,7 @@
 
 Covers the whole main window with a blurred snapshot of the editor behind a
 dark scrim, and a centered menu card: New/Open/Save/Export/Quit, recent maps
-(with open/remove/delete-file), templates, and the theme picker.
+(with open/remove/delete-file), and the theme picker.
 
 ESC opens it from anywhere in the editor and closes it again.
 """
@@ -124,17 +124,9 @@ class MenuOverlay(QWidget):
         c2.addLayout(rr)
         cols.addLayout(c2, 3)
 
-        # ---- column 3: templates + appearance/settings -----------------
+        # ---- column 3: appearance and project settings -----------------
         c3 = QVBoxLayout()
         c3.setSpacing(7)
-        self.template_heading = self._lbl("TEMPLATES")
-        c3.addWidget(self.template_heading)
-        for name in ("Blank 30×30", "Blank 40×40", "Sci-Fi Room"):
-            b = QPushButton(name)
-            b.clicked.connect(self._wrap_template(name))
-            c3.addWidget(b)
-
-        c3.addSpacing(8)
         self.theme_heading = self._lbl("APPEARANCE")
         c3.addWidget(self.theme_heading)
         theme_row = QHBoxLayout()
@@ -214,12 +206,6 @@ class MenuOverlay(QWidget):
         def run(*_):
             self.close_menu()
             fn()
-        return run
-
-    def _wrap_template(self, name):
-        def run(*_):
-            self.close_menu()
-            self.main._template(name)
         return run
 
     def _wrap_accent(self, hexc, row=None):
