@@ -455,6 +455,7 @@ class MainWindow(QMainWindow):
         self.canvas.historyPush.connect(self._push_history)
         self.canvas.auto_tighten = self.settings.value(
             "editing/auto_tighten", True, type=bool)
+        self._load_tighten_options()
         self.canvas.contextMenuRequested.connect(self._show_canvas_menu)
         self.canvas.historyDiscardLast.connect(self._discard_last_history)
         center_col.addWidget(self.canvas, 1)
@@ -707,13 +708,16 @@ class MainWindow(QMainWindow):
         e.addAction("Select similar", self._select_similar)
         e.addAction("Copy style…", self._start_copy_style)
         e.addAction("Replace selected image…", self._replace_selected_image)
+        center_menu = e.addMenu("Center selection on canvas")
+        center_menu.addAction("Horizontally", lambda: self.canvas.center_selection_on_canvas("h"))
+        center_menu.addAction("Vertically", lambda: self.canvas.center_selection_on_canvas("v"))
+        center_menu.addAction("Both", lambda: self.canvas.center_selection_on_canvas("both"))
         levels_menu = e.addMenu("Levels")
         levels_menu.addAction("Add level", lambda: self.level_bar._add())
         levels_menu.addAction("Delete current level", lambda: self.level_bar._remove())
         levels_menu.addAction("Move current level earlier", lambda: self.level_bar._shift(-1))
         levels_menu.addAction("Move current level later", lambda: self.level_bar._shift(1))
-        e.addAction(self._act("Tighten selected to visible pixels",
-                              self.canvas.tighten_selected))
+        e.addAction(self._act("Tighten to visible pixels…", self._tighten_dialog))
         self.act_auto_tighten = QAction("Auto-tighten new nodes to visible pixels", self)
         self.act_auto_tighten.setCheckable(True)
         self.act_auto_tighten.setChecked(self.canvas.auto_tighten)
@@ -1676,6 +1680,40 @@ class MainWindow(QMainWindow):
     def _discard_last_history(self):
         self.history.drop_last()
         self._resync_history()
+
+    def _load_tighten_options(self):
+        try:
+            threshold = int(self.settings.value("editing/tighten_threshold", 16))
+            padding = float(self.settings.value("editing/tighten_padding", 0.0))
+        except (TypeError, ValueError):
+            threshold, padding = 16, 0.0
+        raw_sides = str(self.settings.value("editing/tighten_sides", "1111"))
+        sides = tuple(ch == "1" for ch in raw_sides.ljust(4, "1")[:4])
+        self.canvas.tighten_options = {
+            "threshold": threshold, "padding": max(0.0, padding), "sides": sides}
+
+    def _tighten_dialog(self):
+        from ui.tighten_dialog import TightenDialog
+        selected = [p for p in self.canvas.selected_pieces()
+                    if not (p.is_text or p.is_patch or p.is_connector or p.is_scale_bar)]
+        if not selected:
+            self.status.showMessage("Select one or more image nodes to tighten.", 4000)
+            return
+        dialog = TightenDialog(self.canvas.tighten_options, len(selected),
+                               self.project.cell_size, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        options = dialog.options()
+        if dialog.make_default():
+            self.canvas.tighten_options = dict(options)
+            self.settings.setValue("editing/tighten_threshold", options["threshold"])
+            self.settings.setValue("editing/tighten_padding", options["padding"])
+            self.settings.setValue("editing/tighten_sides",
+                                   "".join("1" if v else "0" for v in options["sides"]))
+        if dialog.result_action == "restore":
+            self.canvas.restore_selected_images()
+        else:
+            self.canvas.tighten_selected(options)
 
     def _set_auto_tighten(self, on: bool):
         self.canvas.auto_tighten = bool(on)

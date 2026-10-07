@@ -368,7 +368,8 @@ class Project:
     feet_per_square: int = 5
     grid_color: str = "#2e6fdf"
     show_grid: bool = True
-    show_centerlines: bool = True   # faint lines through the middle of each square
+    grid_on_top: bool = True        # draw the grid over nodes (as exports do)
+    show_centerlines: bool = True   # lines through the middle of the canvas (alignment)
     grid_opacity: float = 0.5
     export_grid: bool = True
     export_grid_color: str = "#2e6fdf"
@@ -428,6 +429,7 @@ class Project:
             "show_zones": self.show_zones, "export_zones": self.export_zones,
             "grid_color": self.grid_color, "show_grid": self.show_grid,
             "show_centerlines": self.show_centerlines,
+            "grid_on_top": self.grid_on_top,
             "grid_opacity": self.grid_opacity, "export_grid": self.export_grid,
             "export_grid_color": self.export_grid_color,
             "export_grid_opacity": self.export_grid_opacity,
@@ -476,6 +478,7 @@ class Project:
             grid_color=d.get("grid_color", "#2e6fdf"),
             show_grid=d.get("show_grid", True),
             show_centerlines=d.get("show_centerlines", True),
+            grid_on_top=d.get("grid_on_top", True),
             grid_opacity=d.get("grid_opacity", 0.5),
             export_grid=d.get("export_grid", True),
             export_grid_color=d.get("export_grid_color", "#2e6fdf"),

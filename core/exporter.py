@@ -163,22 +163,6 @@ def _draw_grid(painter, project, scale, color, opacity):
         painter.drawLine(int(gx * scale), 0, int(gx * scale), int(h * scale))
     for gy in range(0, h + 1, cell):
         painter.drawLine(0, int(gy * scale), int(w * scale), int(gy * scale))
-    if getattr(project, "show_centerlines", False):
-        mid = QPen(QColor(color))
-        mid.setWidthF(max(1.0, scale))
-        mid.setStyle(Qt.PenStyle.DashLine)
-        painter.setOpacity(opacity * 0.45)
-        painter.setPen(mid)
-        half = cell / 2.0
-        gx = half
-        while gx < w:
-            painter.drawLine(int(gx * scale), 0, int(gx * scale), int(h * scale))
-            gx += cell
-        gy = half
-        while gy < h:
-            painter.drawLine(0, int(gy * scale), int(w * scale), int(gy * scale))
-            gy += cell
-        painter.setPen(pen)
     # major lines
     pen.setWidthF(max(2.0, scale * 1.6))
     painter.setOpacity(opacity)
@@ -237,6 +221,20 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
             painter, level.zones, project,
             lambda x, y: QPointF(x * scale, y * scale), scale)
     if include_grid:
+        if getattr(project, "show_centerlines", False):
+            # canvas middle, for alignment
+            mid = QPen(QColor("#ffb000"))
+            mid.setWidthF(max(1.5, scale * 1.5))
+            mid.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(mid)
+            painter.setOpacity(0.85)
+            painter.drawLine(int(project.canvas_w * scale / 2), 0,
+                             int(project.canvas_w * scale / 2),
+                             int(project.canvas_h * scale))
+            painter.drawLine(0, int(project.canvas_h * scale / 2),
+                             int(project.canvas_w * scale),
+                             int(project.canvas_h * scale / 2))
+            painter.setOpacity(1.0)
         _draw_grid(painter, project, scale,
                    grid_color or project.export_grid_color,
                    project.export_grid_opacity if grid_opacity is None

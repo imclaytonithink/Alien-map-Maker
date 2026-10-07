@@ -125,16 +125,22 @@ def load_scaled_pixmap(path: str, max_dimension: int = 110) -> QPixmap:
 # ---------------------------------------------------------------------------
 # Visible-pixel bounds: where the artwork actually is inside its PNG, so a node
 # can be tightened to it instead of keeping a transparent margin that makes
-# snapping look off.
+# snapping look off. Bounds are stored for several opacity cut-offs so the
+# threshold can be changed without decoding the image again.
 # ---------------------------------------------------------------------------
 BOUNDS_ANALYSIS_SIZE = 1024
-VISIBLE_ALPHA = 16            # alpha above this counts as a visible pixel
+TRIM_THRESHOLDS = (1, 8, 16, 32, 64, 128, 200)   # alpha (0-255) cut-offs
+DEFAULT_TRIM_THRESHOLD = 16
 _BOUNDS_LOCK = threading.Lock()
-_BOUNDS: dict[str, list[float]] | None = None
+_BOUNDS: dict | None = None
+
+
+def nearest_threshold(threshold: int) -> int:
+    return min(TRIM_THRESHOLDS, key=lambda value: abs(value - int(threshold)))
 
 
 def _bounds_file() -> str:
-    return os.path.join(os.path.dirname(_thumb_dir()), "visible_bounds.json")
+    return os.path.join(os.path.dirname(_thumb_dir()), "visible_bounds_v2.json")
 
 
 def _bounds_key(path: str) -> str | None:
@@ -167,46 +173,70 @@ def _save_bounds():
         pass
 
 
-def visible_bounds_for_image(image: QImage):
-    """(left, top, right, bottom) as 0..1 fractions of the visible pixels, or
-    None when the image has no visible pixels at all."""
+def all_bounds_for_image(image: QImage) -> dict:
+    """{threshold: (left, top, right, bottom) fractions or None} for every cut-off."""
     from PIL import Image
 
+    out: dict = {}
     if image.isNull():
-        return None
+        return {t: None for t in TRIM_THRESHOLDS}
     alpha = image.convertToFormat(QImage.Format.Format_Alpha8)
     width, height = alpha.width(), alpha.height()
     stride = alpha.bytesPerLine()
     raw = bytes(alpha.constBits().asarray(stride * height))
     mask = Image.frombuffer("L", (width, height), raw, "raw", "L", stride, 1)
-    box = mask.point(lambda a: 255 if a > VISIBLE_ALPHA else 0).getbbox()
-    if box is None:
-        return None
-    return (box[0] / width, box[1] / height, box[2] / width, box[3] / height)
+    for threshold in TRIM_THRESHOLDS:
+        box = mask.point(lambda a, t=threshold: 255 if a >= t else 0).getbbox()
+        out[threshold] = (None if box is None else
+                          (box[0] / width, box[1] / height,
+                           box[2] / width, box[3] / height))
+    return out
 
 
-def peek_visible_bounds(path: str):
-    """Cached bounds for ``path`` or None if they have not been computed."""
+def visible_bounds_for_image(image: QImage, threshold: int = DEFAULT_TRIM_THRESHOLD):
+    """(left, top, right, bottom) 0..1 fractions of the pixels at or above the
+    opacity cut-off, or None when nothing is that visible."""
+    return all_bounds_for_image(image).get(nearest_threshold(threshold))
+
+
+def peek_visible_bounds(path: str, threshold: int = DEFAULT_TRIM_THRESHOLD):
+    """Cached bounds for ``path`` or None if they have not been computed yet
+    (also None when nothing is visible at that cut-off)."""
     key = _bounds_key(path)
     if key is None:
         return None
     with _BOUNDS_LOCK:
-        value = _load_bounds().get(key)
+        entry = _load_bounds().get(key)
+    if not isinstance(entry, dict):
+        return None
+    value = entry.get(str(nearest_threshold(threshold)))
     return tuple(value) if value else None
 
 
-def visible_bounds_for_file(path: str):
-    """Visible-pixel bounds of an image file (cached on disk). Decoding a large
-    PNG takes seconds, so call this off the GUI thread."""
-    cached = peek_visible_bounds(path)
-    if cached is not None:
-        return cached
+def has_cached_bounds(path: str) -> bool:
     key = _bounds_key(path)
     if key is None:
-        return None
-    bounds = visible_bounds_for_image(_read_scaled_image(path, BOUNDS_ANALYSIS_SIZE))
-    if bounds is not None:
+        return False
+    with _BOUNDS_LOCK:
+        return isinstance(_load_bounds().get(key), dict)
+
+
+def visible_bounds_for_file(path: str, threshold: int = DEFAULT_TRIM_THRESHOLD):
+    """Visible-pixel bounds of an image file (cached on disk). Decoding a large
+    PNG takes seconds, so call this off the GUI thread."""
+    if not has_cached_bounds(path):
+        key = _bounds_key(path)
+        if key is None:
+            return None
+        table = all_bounds_for_image(_read_scaled_image(path, BOUNDS_ANALYSIS_SIZE))
         with _BOUNDS_LOCK:
-            _load_bounds()[key] = list(bounds)
+            _load_bounds()[key] = {
+                str(t): (list(v) if v else None) for t, v in table.items()}
             _save_bounds()
-    return bounds
+    return peek_visible_bounds(path, threshold)
+
+
+def bounds_table_for_file(path: str) -> dict:
+    """{threshold: bounds or None} for an image file (computes + caches once)."""
+    visible_bounds_for_file(path)
+    return {t: peek_visible_bounds(path, t) for t in TRIM_THRESHOLDS}
