@@ -193,7 +193,13 @@ def check_layers_and_store():
     level.layers[1].export = False
     data = project.to_dict()
     assert data["version"] == 9
-    assert data["levels"][0]["layers"][1]["export"] is False
+    saved_level = data["levels"][0]
+    assert saved_level["layers_not_exported"] == [level.layers[1].id]
+    assert all("export" not in layer for layer in saved_level["layers"]), \
+        "older builds build layers with Layer(**data); keep their keys unchanged"
+    old_style = [dict(layer) for layer in saved_level["layers"]]
+    fields = {"id", "name", "visible", "locked", "opacity", "color"}
+    assert all(set(layer) <= fields for layer in old_style)
     again = Project.from_dict(json.loads(json.dumps(data)))
     assert [l.export for l in again.levels[0].layers] == [True, False, True, True]
     legacy = Level.from_dict({"layers": [{"id": "a", "name": "Old", "visible": False,

@@ -356,9 +356,19 @@ class Level:
         return None
 
     def to_dict(self) -> dict:
+        layers = []
+        for layer in self.layers:
+            data = asdict(layer)
+            # Older SceneBoard builds build layers with Layer(**data) and would
+            # refuse an unknown "export" key, so the flag is saved as a
+            # level-wide list that they simply ignore.
+            data.pop("export", None)
+            layers.append(data)
         return {"name": self.name, "background": self.background,
                 "current_layer": self.current_layer,
-                "layers": [asdict(l) for l in self.layers],
+                "layers": layers,
+                "layers_not_exported": [l.id for l in self.layers
+                                        if not getattr(l, "export", True)],
                 "pieces": [p.to_dict() for p in self.pieces],
                 "zones": [zone.to_dict() for zone in self.zones],
                 "guides": [guide.to_dict() for guide in self.guides]}
@@ -375,6 +385,11 @@ class Level:
                          if isinstance(g, dict)])
         if not lv.layers:
             lv.__post_init__()
+        hidden_from_export = d.get("layers_not_exported", [])
+        if isinstance(hidden_from_export, list):
+            for layer in lv.layers:
+                if layer.id in hidden_from_export:
+                    layer.export = False
         if not lv.current_layer and lv.layers:
             lv.current_layer = lv.layers[0].id
         return lv
