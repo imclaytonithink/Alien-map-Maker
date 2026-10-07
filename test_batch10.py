@@ -72,6 +72,35 @@ def main():
         make_asset(
             "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/Landscaping/"
             "Landscaping 001 [7x7].png"),
+        # Manually reviewed Symbols sheets 015-016 contain full room modules,
+        # structural tiles, and terrain art within the generic Misc directory.
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Airlock 001 [10x10].png", size=(10, 10)),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Corridors 001 [20x20].png", size=(20, 20)),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Misc 008 Shooting Range [10x20].png", size=(10, 20)),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Misc 030 Sensor Holo Pit [15x15].png", size=(15, 15)),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Misc 020 Stellar Cartography [50x50].png", size=(50, 50)),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Misc 001 Incinerator [25x45].png", size=(25, 45)),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Misc 005 Trash Compactor [25x45].png", size=(25, 45)),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Misc 033 Solar Panels [10x20].png", size=(10, 20)),
+        make_asset(
+            "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Misc/"
+            "Misc 034 Laundry [10x10].png", size=(10, 10)),
     ]
 
     tags = classify_asset_categories(assets)
@@ -134,6 +163,26 @@ def main():
     assert has("A134 [150x300] Port (XB-70 Valkyrie).png", "vehicles")
     assert has("A136 [150x300] Port (Boeing 2707-300).png", "vehicles")
     assert has("Landscaping 001 [7x7].png", "landscaping")
+    assert has("Landscaping 001 [7x7].png", "symbols")
+    assert not has("Landscaping 001 [7x7].png", "loose_props")
+    assert has("Airlock 001 [10x10].png", "doors")
+    assert not has("Airlock 001 [10x10].png", "loose_props")
+    assert has("Corridors 001 [20x20].png", "corridors")
+    assert not has("Corridors 001 [20x20].png", "loose_props")
+    assert has("Misc 008 Shooting Range [10x20].png", "weapons")
+    assert has("Misc 008 Shooting Range [10x20].png", "rooms")
+    assert not has("Misc 008 Shooting Range [10x20].png", "loose_props")
+    assert has("Misc 030 Sensor Holo Pit [15x15].png", "rooms")
+    assert has("Misc 020 Stellar Cartography [50x50].png", "rooms")
+    assert has("Misc 020 Stellar Cartography [50x50].png", "controls")
+    assert has("Misc 001 Incinerator [25x45].png", "rooms")
+    assert has("Misc 001 Incinerator [25x45].png", "engineering")
+    assert has("Misc 005 Trash Compactor [25x45].png", "rooms")
+    assert has("Misc 005 Trash Compactor [25x45].png", "engineering")
+    assert has("Misc 033 Solar Panels [10x20].png", "engineering")
+    assert has("Misc 034 Laundry [10x10].png", "rooms")
+    assert all("loose_props" not in tags[asset.path]
+               for asset in assets if "/Misc/" in asset.path)
 
     # Pack/archive titles are not semantic tags for every contained asset.
     core_tags = tags[assets[0].path]

@@ -63,12 +63,13 @@ _CONTROL_WORDS = (
     "panel", "switch", "controls", "control", "keypad", "keyboard",
     "intercom", "interface", "radio", "communications", "antenna",
     "bridge", "gunnery", "sensor control", "fire control", "cic",
-    "station",
+    "station", "stellar cartography",
 )
 _ENGINEERING_WORDS = (
     "reactor", "valve", "gauge", "engine", "machinery", "machine",
     "power", "generator", "turbine", "pump", "cable", "pipe", "vent",
     "conduit", "boiler", "motor", "battery", "fuel", "sensor", "utility",
+    "incinerator", "compactor", "solar panel", "solar panels", "transporter",
 )
 _MEDICAL_WORDS = (
     "medical", "medbay", "medkit", "clinic", "infirmary", "laboratory",
@@ -119,16 +120,20 @@ _LIGHT_WORDS = (
     "glow", "light", "lamp", "illumination", "flare", "lighting",
     "light fixture", "light source", "lightbulb",
 )
+# "Misc" is deliberately not a loose-prop signal: the reviewed Symbols
+# directory uses it for full rooms, corridors, landscaping, and machinery.
 _LOOSE_PROP_WORDS = (
     "prop", "props", "object", "objects", "decoration", "decor", "loose",
-    "furnishing", "misc", "miscellaneous",
+    "furnishing",
 )
 _ROOM_WORDS = (
     "room", "pod", "laboratory", "lab", "module", "geomorph", "bridge",
     "stateroom", "suite", "quarters", "barracks", "office", "lounge",
     "galley", "mess", "hangar", "arboretum", "classroom", "briefing",
     "conference", "gym", "court", "pool", "retail", "shop", "repair area",
-    "holodeck", "holopit", "holosuite", "promenade", "casino", "bar",
+    "holodeck", "holo deck", "holopit", "holo pit", "holosuite", "holo suite",
+    "shooting range", "target range", "stellar cartography", "transporter",
+    "laundry", "incinerator", "trash compactor", "promenade", "casino", "bar",
     "bay", "floorplan", "floor plan", "floor_plan", "deckplan", "deck plan",
     "deck_plan", "escape pod", "empty room", "fresher", "low berth",
     "animal pen", "launch area",
