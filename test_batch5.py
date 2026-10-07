@@ -59,7 +59,7 @@ def main():
         assert nodes[2].is_connector and nodes[2].connector_label == "To level 2"
         assert restored.levels[0].zones[0].label == "CRYO"
         assert restored.levels[0].zones[0].show_id
-        assert restored.to_dict()["version"] == 7
+        assert restored.to_dict()["version"] == 8
 
         malicious = os.path.join(temp, "bad.rpgpack")
         with zipfile.ZipFile(malicious, "w") as archive:

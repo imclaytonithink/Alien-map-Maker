@@ -127,7 +127,10 @@ def export_project_bundle(project, out_path: str, include_renders: bool = True) 
                             include_grid=bool(project.export_grid),
                             scale=render_scale,
                             include_node_borders=bool(project.export_node_borders),
-                            include_zones=bool(project.export_zones))
+                            include_zones=bool(project.export_zones),
+                            include_centerlines=bool(getattr(project, "export_centerlines", False)),
+                            include_guides=bool(getattr(project, "export_guides", False)),
+                            include_coordinates=bool(getattr(project, "export_coordinates", False)))
                         archive.write(png_path, f"exports/{png_name}")
         os.replace(temp_path, out_path)
         temp_path = None

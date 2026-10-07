@@ -42,6 +42,16 @@ def _is_hex_color(value: str) -> bool:
     return bool(re.fullmatch(r"#[0-9a-fA-F]{6}", str(value or "")))
 
 
+def _clamped_float(value, low: float, high: float, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return max(low, min(high, number))
+
+
 # --------------------------------------------------------------------------
 # Data model
 # --------------------------------------------------------------------------
@@ -273,6 +283,36 @@ class ZoneRegion:
         return inside
 
 
+GUIDE_AXES = ("v", "h")
+DEFAULT_GUIDE_COLOR = "#ff2bd6"   # magenta: unused by the grid, centerlines,
+                                  # smart guides, theme accents and teal art
+
+
+@dataclass
+class Guide:
+    """A user-placed alignment guide on one level.
+
+    ``axis`` is ``"v"`` for a vertical line at world x = ``pos`` or ``"h"``
+    for a horizontal line at world y = ``pos`` (world pixels, like nodes)."""
+    axis: str = "v"
+    pos: float = 0.0
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "axis": self.axis, "pos": self.pos}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Guide":
+        axis = d.get("axis") if d.get("axis") in GUIDE_AXES else "v"
+        try:
+            pos = float(d.get("pos", 0.0))
+        except (TypeError, ValueError):
+            pos = 0.0
+        if not math.isfinite(pos):
+            pos = 0.0
+        return cls(axis=axis, pos=pos, id=str(d.get("id") or uuid.uuid4().hex))
+
+
 @dataclass
 class Level:
     name: str = "Level 1"
@@ -281,6 +321,7 @@ class Level:
     layers: list[Layer] = field(default_factory=list)
     background: str = "#10141c"
     current_layer: str = ""
+    guides: list[Guide] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.layers:
@@ -300,7 +341,8 @@ class Level:
                 "current_layer": self.current_layer,
                 "layers": [asdict(l) for l in self.layers],
                 "pieces": [p.to_dict() for p in self.pieces],
-                "zones": [zone.to_dict() for zone in self.zones]}
+                "zones": [zone.to_dict() for zone in self.zones],
+                "guides": [guide.to_dict() for guide in self.guides]}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Level":
@@ -309,12 +351,40 @@ class Level:
                  current_layer=d.get("current_layer", ""),
                  layers=[Layer(**l) for l in d.get("layers", [])],
                  pieces=[Piece.from_dict(p) for p in d.get("pieces", [])],
-                 zones=[ZoneRegion.from_dict(zone) for zone in d.get("zones", [])])
+                 zones=[ZoneRegion.from_dict(zone) for zone in d.get("zones", [])],
+                 guides=[Guide.from_dict(g) for g in d.get("guides", [])
+                         if isinstance(g, dict)])
         if not lv.layers:
             lv.__post_init__()
         if not lv.current_layer and lv.layers:
             lv.current_layer = lv.layers[0].id
         return lv
+
+    # ---- guides ----
+    def guide_positions(self, axis: str) -> list[float]:
+        return [g.pos for g in self.guides if g.axis == axis]
+
+    def find_guide(self, guide_id: str) -> Optional[Guide]:
+        return next((g for g in self.guides if g.id == guide_id), None)
+
+    def has_guide(self, axis: str, pos: float, tolerance: float = 1e-6) -> bool:
+        return any(g.axis == axis and abs(g.pos - pos) <= tolerance
+                   for g in self.guides)
+
+    def add_guide(self, axis: str, pos: float) -> Optional[Guide]:
+        """Add a guide unless an identical one exists; returns the new guide."""
+        if axis not in GUIDE_AXES or not math.isfinite(pos) or self.has_guide(axis, pos):
+            return None
+        guide = Guide(axis=axis, pos=float(pos))
+        self.guides.append(guide)
+        return guide
+
+    def remove_guide(self, guide_id: str) -> bool:
+        guide = self.find_guide(guide_id)
+        if guide is None:
+            return False
+        self.guides.remove(guide)
+        return True
 
     def next_z(self) -> int:
         return (max((p.z for p in self.pieces), default=0)) + 1
@@ -388,6 +458,17 @@ class Project:
     export_node_borders: bool = False
     show_zones: bool = True
     export_zones: bool = True
+    # Placed guides live on each level; these settings apply to all of them.
+    show_guides: bool = True
+    snap_to_guides: bool = True
+    lock_guides: bool = False
+    guide_color: str = DEFAULT_GUIDE_COLOR
+    guide_opacity: float = 0.9
+    show_coordinates: bool = True     # grid coordinates (A1, B2…) on the rails
+    # Editor aids stay out of exports unless explicitly included.
+    export_centerlines: bool = False
+    export_guides: bool = False
+    export_coordinates: bool = False  # labeled border, one square wide
     canvas_w: int = 2100
     canvas_h: int = 2100
     levels: list[Level] = field(default_factory=list)
@@ -419,7 +500,7 @@ class Project:
 
     def to_dict(self) -> dict:
         return {
-            "version": 7, "name": self.name, "asset_store": self.asset_store,
+            "version": 8, "name": self.name, "asset_store": self.asset_store,
             "cell_size": self.cell_size, "feet_per_square": self.feet_per_square,
             "tint_color": self.tint_color, "tint_strength": self.tint_strength,
             "border_color": self.border_color, "border_opacity": self.border_opacity,
@@ -427,6 +508,13 @@ class Project:
             "show_node_borders": self.show_node_borders,
             "export_node_borders": self.export_node_borders,
             "show_zones": self.show_zones, "export_zones": self.export_zones,
+            "show_guides": self.show_guides, "snap_to_guides": self.snap_to_guides,
+            "lock_guides": self.lock_guides, "guide_color": self.guide_color,
+            "guide_opacity": self.guide_opacity,
+            "show_coordinates": self.show_coordinates,
+            "export_centerlines": self.export_centerlines,
+            "export_guides": self.export_guides,
+            "export_coordinates": self.export_coordinates,
             "grid_color": self.grid_color, "show_grid": self.show_grid,
             "show_centerlines": self.show_centerlines,
             "grid_on_top": self.grid_on_top,
@@ -475,6 +563,16 @@ class Project:
             export_node_borders=bool(d.get("export_node_borders", False)),
             show_zones=bool(d.get("show_zones", True)),
             export_zones=bool(d.get("export_zones", True)),
+            show_guides=bool(d.get("show_guides", True)),
+            snap_to_guides=bool(d.get("snap_to_guides", True)),
+            lock_guides=bool(d.get("lock_guides", False)),
+            guide_color=(d.get("guide_color") if _is_hex_color(d.get("guide_color"))
+                         else DEFAULT_GUIDE_COLOR),
+            guide_opacity=_clamped_float(d.get("guide_opacity", 0.9), 0.1, 1.0, 0.9),
+            show_coordinates=bool(d.get("show_coordinates", True)),
+            export_centerlines=bool(d.get("export_centerlines", False)),
+            export_guides=bool(d.get("export_guides", False)),
+            export_coordinates=bool(d.get("export_coordinates", False)),
             grid_color=d.get("grid_color", "#2e6fdf"),
             show_grid=d.get("show_grid", True),
             show_centerlines=d.get("show_centerlines", True),

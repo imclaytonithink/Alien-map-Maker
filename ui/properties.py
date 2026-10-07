@@ -405,6 +405,19 @@ class PropertiesPanel(QWidget):
             "canvas moves the selection onto them.")
         self.chk_centerlines.toggled.connect(self._apply_grid)
         gf.addRow(self.chk_centerlines)
+        self.chk_guides = QCheckBox("Show guides")
+        self.chk_guides.setToolTip(
+            "Thin magenta guide lines. Drag one out of the rails along the "
+            "canvas edges, drag it back onto a rail to remove it. Nodes and "
+            "drawing tools snap to guides (hold Alt to ignore snapping).")
+        self.chk_guides.toggled.connect(self._apply_guide_options)
+        gf.addRow(self.chk_guides)
+        self.chk_coordinates = QCheckBox("Grid coordinates on rails (A1, B2…)")
+        self.chk_coordinates.setToolTip(
+            "Label grid columns with letters and rows with numbers along the "
+            "guide rails. Export dialogs can add the same labels as a border.")
+        self.chk_coordinates.toggled.connect(self._apply_guide_options)
+        gf.addRow(self.chk_coordinates)
         self.sl_gop = QSlider(Qt.Orientation.Horizontal); self.sl_gop.setRange(0, 100); self.sl_gop.setValue(50)
         self.sl_gop.valueChanged.connect(self._apply_grid)
         gf.addRow("Grid opacity", self.sl_gop)
@@ -476,6 +489,7 @@ class PropertiesPanel(QWidget):
         for control in grid_controls:
             control.blockSignals(False)
         self.refresh_canvas_size()
+        self.refresh_guide_options()
         self._update_color_btn()
         self._refresh_layers()
 
@@ -1377,6 +1391,24 @@ class PropertiesPanel(QWidget):
         else:
             self.canvas.update()
         self.canvas.dirty.emit()
+
+    def refresh_guide_options(self):
+        """Mirror the project's guide display settings without re-applying them."""
+        if not self.project or not hasattr(self, "chk_guides"):
+            return
+        for check, value in ((self.chk_guides, self.project.show_guides),
+                             (self.chk_coordinates, self.project.show_coordinates)):
+            check.blockSignals(True)
+            check.setChecked(bool(value))
+            check.blockSignals(False)
+
+    def _apply_guide_options(self):
+        if not self.project:
+            return
+        if self.chk_guides.isChecked() != self.project.show_guides:
+            self.canvas.set_guide_flag("show_guides", self.chk_guides.isChecked())
+        if self.chk_coordinates.isChecked() != self.project.show_coordinates:
+            self.canvas.set_show_coordinates(self.chk_coordinates.isChecked())
 
     def _apply_size(self):
         if not self.project:

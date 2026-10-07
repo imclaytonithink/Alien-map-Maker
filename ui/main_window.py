@@ -33,6 +33,7 @@ from ui.branding import (APP_NAME, ALIEN_NAME, SETTINGS_ID,
                          bundled_asset_pack_paths, default_asset_store_path,
                          seed_bundled_assets)
 from ui.custom_toolbar import CustomizableToolBar, CustomizeToolbarDialog
+from ui.color_picker import choose_color
 from core import generator as gen
 
 RECENT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recent.json")
@@ -457,6 +458,11 @@ class MainWindow(QMainWindow):
             "editing/auto_tighten", True, type=bool)
         self._load_tighten_options()
         self.canvas.contextMenuRequested.connect(self._show_canvas_menu)
+        self.canvas.guideMenuRequested.connect(self._show_guide_menu)
+        self.canvas.guideEditRequested.connect(
+            lambda guide_id: QTimer.singleShot(0, lambda: self._edit_guide_position(guide_id)))
+        self.canvas.guideSettingsChanged.connect(self._sync_guide_actions)
+        self.canvas.railsChanged.connect(self._place_minimap)
         self.canvas.historyDiscardLast.connect(self._discard_last_history)
         center_col.addWidget(self.canvas, 1)
 
@@ -551,15 +557,15 @@ class MainWindow(QMainWindow):
         self._sync_view_actions()
 
     # -- view toggles (Photoshop-style Window menu) ------------------------
-    VIEW_ITEMS = ("toolbar", "status", "levels", "minimap", "quick",
+    VIEW_ITEMS = ("toolbar", "status", "levels", "minimap", "quick", "rails",
                   "library", "inspector")
     VIEW_DEFAULTS = {"toolbar": True, "status": True, "levels": True,
-                     "minimap": True, "quick": False, "library": True,
-                     "inspector": True}
+                     "minimap": True, "quick": False, "rails": True,
+                     "library": True, "inspector": True}
     VIEW_LABELS = {"toolbar": "Toolbar", "status": "Status bar",
                    "levels": "Level tabs", "minimap": "Minimap",
-                   "quick": "Floating node buttons", "library": "Library panel",
-                   "inspector": "Inspector panel"}
+                   "quick": "Floating node buttons", "rails": "Guide rails",
+                   "library": "Library panel", "inspector": "Inspector panel"}
     WORKSPACES = {
         "Standard": dict(VIEW_DEFAULTS),
         "Minimal": {**VIEW_DEFAULTS, "toolbar": False, "minimap": False},
@@ -577,6 +583,8 @@ class MainWindow(QMainWindow):
             return self.minimap.isVisibleTo(self.canvas)
         if name == "quick":
             return self.canvas.quick_enabled
+        if name == "rails":
+            return self.canvas.rails_visible
         if name == "library":
             return self._panel_visible(0)
         return self._panel_visible(2)
@@ -594,6 +602,9 @@ class MainWindow(QMainWindow):
             self._place_minimap()
         elif name == "quick":
             self.canvas.set_quick_enabled(on)
+        elif name == "rails":
+            self.canvas.set_rails_visible(on)
+            self._place_minimap()
         elif name == "library":
             self._set_panel(0, on, save=False)
         elif name == "inspector":
@@ -630,7 +641,7 @@ class MainWindow(QMainWindow):
             action.blockSignals(False)
 
     def _place_minimap(self):
-        margin = 10
+        margin = 10 + self.canvas.rail_thickness()   # keep the guide rails clear
         self.minimap.move(margin, self.canvas.height() - self.minimap.height() - margin)
         self.minimap.raise_()
 
@@ -642,7 +653,7 @@ class MainWindow(QMainWindow):
     def _toggle_focus_canvas(self):
         """Hide every bar and panel for a clean canvas; press again to restore."""
         if any(self._view_get(n) for n in ("toolbar", "status", "levels",
-                                           "minimap", "library", "inspector")):
+                                           "minimap", "rails", "library", "inspector")):
             self._focus_restore = self._view_snapshot()
             self._apply_view(self.WORKSPACES["Canvas only"])
         else:
@@ -658,6 +669,82 @@ class MainWindow(QMainWindow):
         from ui.context_menu import build_canvas_menu
         menu = build_canvas_menu(self, hit_piece)
         menu.exec(global_pos)
+
+    # -- placed guides --------------------------------------------------------
+    def _show_guide_menu(self, global_pos, target):
+        from ui.context_menu import build_guide_menu
+        build_guide_menu(self, target).exec(global_pos)
+
+    def _set_guide_option(self, key, on):
+        if key == "show_coordinates":
+            self.canvas.set_show_coordinates(on)
+        else:
+            self.canvas.set_guide_flag(key, on)
+
+    def _sync_guide_actions(self):
+        """Reflect the project's guide settings in the menu and inspector."""
+        for key, action in getattr(self, "guide_actions", {}).items():
+            action.blockSignals(True)
+            action.setChecked(bool(getattr(self.project, key, False)))
+            action.blockSignals(False)
+        if hasattr(self, "props") and hasattr(self.props, "refresh_guide_options"):
+            self.props.refresh_guide_options()
+
+    def _edit_guide_position(self, guide_id):
+        from ui.guide_dialogs import GuidePositionDialog
+        level = self.canvas.level
+        guide = level.find_guide(guide_id) if level else None
+        if guide is None:
+            return
+        extent = self.project.canvas_w if guide.axis == "v" else self.project.canvas_h
+        dialog = GuidePositionDialog(guide.axis, guide.pos, self.project.cell_size,
+                                     self.project.feet_per_square, extent, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.canvas.set_guide_position(guide_id, dialog.position())
+
+    def _guide_layout_dialog(self):
+        from ui.guide_dialogs import GuideLayoutDialog
+        dialog = GuideLayoutDialog(self.project, len(self.project.levels), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        vertical, horizontal = dialog.positions()
+        added = self.canvas.apply_guide_layout(vertical, horizontal, dialog.replace(),
+                                               dialog.all_levels())
+        self.status.showMessage(f"Guide layout applied ({added} guide(s)).", 5000)
+
+    def _add_guides_around_selection(self, kind):
+        if not self.canvas.selected_pieces():
+            self.status.showMessage("Select one or more nodes first.", 4000)
+            return
+        added = self.canvas.add_guides_around_selection(kind)
+        self.status.showMessage(f"Added {added} guide(s).", 4000)
+
+    def _copy_guides_to_all_levels(self):
+        level = self.canvas.level
+        others = [lv for lv in self.project.levels if lv is not level]
+        if not level or not others:
+            self.status.showMessage("This map has only one level.", 4000)
+            return
+        mine = sorted((g.axis, g.pos) for g in level.guides)
+        overwrite = [lv for lv in others
+                     if lv.guides and sorted((g.axis, g.pos) for g in lv.guides) != mine]
+        if overwrite:
+            answer = QMessageBox.question(
+                self, "Copy guides to all levels",
+                f"Replace the guides on {len(overwrite)} other level(s) with this "
+                "level's guides? You can undo this.")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        count = self.canvas.copy_guides_to_all_levels()
+        self.status.showMessage(f"Copied {len(level.guides)} guide(s) to {count} level(s).", 5000)
+
+    def _pick_guide_color(self):
+        color = choose_color(QColor(self.project.guide_color), self, self.canvas,
+                             "Choose guide color")
+        if color.isValid():
+            self.project.guide_color = color.name()
+            self.canvas.update()
+            self._mark_dirty()
 
     def _act(self, label, slot, shortcut=None):
         """Menu action with an optional shortcut."""
@@ -757,6 +844,30 @@ class MainWindow(QMainWindow):
         v.addAction("Reset panel layout", lambda: (self._reset_layout(),
                                                    self._sync_view_actions()))
         v.addSeparator()
+        guides_menu = v.addMenu("Guides")
+        self.guide_actions = {}
+        for key, label, shortcut in (
+                ("show_guides", "Show guides", "Ctrl+;"),
+                ("snap_to_guides", "Snap to guides", "Ctrl+Shift+;"),
+                ("lock_guides", "Lock guides", "Ctrl+Alt+;"),
+                ("show_coordinates", "Grid coordinates on rails", None)):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            if shortcut:
+                action.setShortcut(QKeySequence(shortcut))
+            action.toggled.connect(lambda checked, k=key: self._set_guide_option(k, checked))
+            guides_menu.addAction(action)
+            self.guide_actions[key] = action
+        guides_menu.addSeparator()
+        guides_menu.addAction("Guide layout…", self._guide_layout_dialog)
+        around = guides_menu.addMenu("Add guides around selection")
+        around.addAction("At the edges", lambda: self._add_guides_around_selection("edges"))
+        around.addAction("Through the center", lambda: self._add_guides_around_selection("center"))
+        around.addAction("Edges and center", lambda: self._add_guides_around_selection("both"))
+        guides_menu.addAction("Copy guides to all levels", self._copy_guides_to_all_levels)
+        guides_menu.addAction("Clear guides on this level", self.canvas.clear_guides)
+        guides_menu.addSeparator()
+        guides_menu.addAction("Guide color…", self._pick_guide_color)
         zoom_menu = v.addMenu("Zoom")
         for label, shortcut, fn in (
                 ("Zoom in", "Ctrl+=", lambda: self.canvas.set_zoom(self.canvas.zoom * 1.25)),
@@ -1044,6 +1155,8 @@ class MainWindow(QMainWindow):
         self.canvas.level_index = 0
         self._resync_history()
         self._apply_theme()
+        self._sync_guide_actions()
+        self._place_minimap()
 
     def _apply_theme(self):
         app = QApplication.instance()
@@ -1863,6 +1976,9 @@ class MainWindow(QMainWindow):
             self._after_history(fit_canvas=label == "Resize canvas")
 
     def _after_history(self, fit_canvas=False):
+        self._sync_guide_actions()
+        self._place_minimap()
+        self.canvas._guide_hover = None
         self.canvas.selection.clear()
         self.canvas.selectionChanged.emit([])
         idx = min(self.canvas.level_index, len(self.project.levels) - 1)

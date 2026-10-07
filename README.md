@@ -120,9 +120,10 @@ clearly reports skipped GUI checks.
 - **Left-drag** a node to move. Dragging moves the whole selection as one
   rigid group — no more accidental deformation.
 - **Snapping** (on by default): nodes snap to the grid *and* to neighboring
-  nodes' edges/centers; the nearest target wins, with red smart-guide lines
-  showing node-to-node alignment. Per-node "Snap to grid" checkbox can
-  disable it for one node.
+  nodes' edges/centers, the canvas centerlines and placed guides; the nearest
+  target wins, with red smart-guide lines showing node-to-node alignment.
+  Per-node "Snap to grid" checkbox can disable grid snapping for one node;
+  hold **Alt** while dragging to place a node freely with no snapping at all.
 - **Yellow handle** = rotate (hold **Shift** for 15°). **Right/Middle-drag**
   pans; **wheel** zooms.
 - Multi-select: **Shift-click** or drag a marquee. Then align / distribute /
@@ -167,6 +168,26 @@ clearly reports skipped GUI checks.
   label when grid calibration changes.
 - **Grid**: square grid with opacity slider, solid/dashed/dotted style, major
   lines every N cells, adjustable cell size & "square = 5ft/10ft".
+- **Guides**: thin magenta lines for lining things up, separate from the grid.
+  Thin **guide rails** run along the inside edges of the canvas view (with grid
+  ticks). Drag from the left or right rail for a vertical guide, or from the
+  top or bottom rail for a horizontal one; a readout shows the position (e.g.
+  `x 14 sq · 70 ft`), and guides snap to grid lines, node edges/centers and the
+  map's middle while you drag (**Alt** = free). Drag a guide back onto any rail
+  to remove it, double-click it to type an exact position, or press **Esc**
+  mid-drag to cancel. Nodes snap to guides when moving, resizing and dropping
+  from the library, and the ruler, scale bar, connector, crop, stamp, zone and
+  patch tools snap their points to them too (Shift still means grid). Guides
+  belong to each level, are saved with the map and are undoable. Right-click
+  a guide or rail, or use **View → Guides**, to show/hide (Ctrl+;), toggle
+  snapping (Ctrl+Shift+;), lock guides against accidental drags (Ctrl+Alt+;),
+  copy guides to all levels, clear them, pick their color, add guides around
+  a selection (also on the node right-click menu) or open **Guide layout…**
+  (a guide every N squares, margin guides, center guides).
+- **Grid coordinates**: column letters (A, B … Z, AA …) and row numbers along
+  the rails, so you can call out squares like `F7`. Toggle them from
+  **View → Guides → Grid coordinates on rails**, the rail right-click menu or
+  the canvas properties; hide the rails entirely with **View → Guide rails**.
 - **Arrow keys** nudge 1px; **Shift+arrows** move exactly one square.
 
 ### 4. Generate a map (Tools → Generate Map…)
@@ -222,6 +243,11 @@ bulk. Your choices (★) are saved with the asset store and always win.
   separately when you need interactive in-game behavior such as Fog of War.
 - **Export PDF…**: choose the current level or all levels (one page per level),
   with the same sizing, transparency, and grid/color/opacity controls as PNG.
+- Editor aids are left out of exports unless you ask for them. PNG and PDF
+  exports have separate **Include canvas centerlines**, **Include guides** and
+  **Include grid coordinates** checkboxes (all off by default and remembered
+  per map). Coordinates add a labeled border exactly one square wide on every
+  side, so a virtual-tabletop grid still lines up, offset by one square.
 - **Export project bundle / PNG pack…**: creates a portable `.rpgpack` ZIP with
   the editable project, its referenced source assets, a manifest, and a PNG
   render of every level (longest edge capped at 2048 px). Open a `.rpgpack`
@@ -272,8 +298,9 @@ bulk. Your choices (★) are saved with the asset store and always win.
   import, collections, thumbnail size (presets up to 360 px, a custom slider, or
   Ctrl+wheel over the list), the folder-tree toggle and store tools.
 - Rotation snaps to 15° stops (hold **Shift** to always step, **Alt** for free).
-- **Centerlines** (Node panel → grid) draw a dashed line through each square;
-  node centers snap to them. New nodes are **auto-tightened** to their visible
+- **Centerlines** (canvas properties → grid) draw dashed amber lines through
+  the middle of the map; nodes snap to them, and they only appear in exports
+  when **Include canvas centerlines** is ticked. New nodes are **auto-tightened** to their visible
   pixels (a non-destructive crop, so transparent margins no longer spoil grid
   snapping); use Edit → Tighten selected, or turn auto-tighten off in the Edit menu.
 
@@ -291,6 +318,9 @@ bulk. Your choices (★) are saved with the asset store and always win.
 | Right-click (no drag) | Context menu; right-drag still pans |
 | Drag a handle | Resize: corners keep proportions, **Shift** frees them; edges stretch one axis; **Alt** resizes from the center |
 | Ctrl+T | Free transform: corners are free (Shift locks), Enter applies, Esc cancels; the whole session is one undo step |
+| Drag from a canvas edge rail | New guide (left/right rail = vertical, top/bottom = horizontal); drag a guide back onto a rail to remove it |
+| Ctrl+; / Ctrl+Shift+; / Ctrl+Alt+; | Show guides / Snap to guides / Lock guides |
+| Alt (while dragging) | Move a node or guide with no snapping |
 
 ---
 

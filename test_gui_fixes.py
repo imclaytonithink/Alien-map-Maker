@@ -309,7 +309,11 @@ assert abs(mover.center[0] - project.canvas_w / 2) < 1e-6 and mover.y == 100
 mid_x = project.canvas_w / 2.0
 mover.snap = False
 mover.x, mover.y = mid_x - 50 - 300, 300
+# This drag starts at x=750, on the right guide rail of the 760 px test canvas
+# (rails turn presses at the view edge into new guides), so hide the rails.
+canvas.set_rails_visible(False)
 drag_piece(mover, 300 - 6, 0)          # center ends 6px short of the middle line
+canvas.set_rails_visible(True)
 assert abs(mover.center[0] - mid_x) < 1e-6, mover.center
 level.pieces.clear()
 from core.project import Project

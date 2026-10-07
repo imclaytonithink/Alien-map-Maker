@@ -59,6 +59,11 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         add(menu, "Copy style…", main._start_copy_style)
         add(menu, "Replace image…", main._replace_selected_image)
         add(menu, "Tighten to visible pixels…", main._tighten_dialog)
+        guides = menu.addMenu("Add guides")
+        add(guides, "At the selection's edges",
+            lambda: canvas.add_guides_around_selection("edges"))
+        add(guides, "Through its center", lambda: canvas.add_guides_around_selection("center"))
+        add(guides, "Edges and center", lambda: canvas.add_guides_around_selection("both"))
     else:
         add(menu, "Paste", canvas.paste, bool(canvas._clipboard))
         add(menu, "Add text", main._add_text)
@@ -67,4 +72,47 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         add(menu, "Zoom 100%", lambda: canvas.set_zoom(1.0))
     menu.addSeparator()
     add(menu, "Command palette…", main._open_palette, shortcut="Ctrl+Shift+P")
+    return menu
+
+
+def build_guide_menu(main, target: dict) -> QMenu:
+    """Menu for a right-click on a placed guide ({"guide": id}) or on one of
+    the guide rails along the canvas edges ({"rail": side})."""
+    canvas = main.canvas
+    project = canvas.project
+    menu = QMenu(main)
+
+    def add(label, slot, enabled=True, checked=None, shortcut=""):
+        action = QAction(label + (f"\t{shortcut}" if shortcut else ""), menu)
+        action.setEnabled(enabled)
+        if checked is not None:
+            action.setCheckable(True)
+            action.setChecked(bool(checked))
+        action.triggered.connect(lambda _=False: slot())
+        menu.addAction(action)
+        return action
+
+    has_guides = bool(canvas.level and canvas.level.guides)
+    multi_level = bool(project and len(project.levels) > 1)
+    guide_id = target.get("guide")
+    if guide_id:
+        add("Set position…", lambda: main._edit_guide_position(guide_id))
+        add("Delete guide", lambda: canvas.remove_guide(guide_id))
+        menu.addSeparator()
+        add("Lock guides", lambda: canvas.set_guide_flag(
+            "lock_guides", not project.lock_guides), checked=project.lock_guides,
+            shortcut="Ctrl+Alt+;")
+    else:
+        add("Show guides", lambda: canvas.set_guide_flag(
+            "show_guides", not project.show_guides), checked=project.show_guides,
+            shortcut="Ctrl+;")
+        add("Grid coordinates", lambda: canvas.set_show_coordinates(
+            not project.show_coordinates), checked=project.show_coordinates)
+        add("Guide layout…", main._guide_layout_dialog)
+    add("Copy guides to all levels", main._copy_guides_to_all_levels,
+        has_guides and multi_level)
+    add("Clear guides on this level", canvas.clear_guides, has_guides)
+    if not guide_id:
+        menu.addSeparator()
+        add("Hide guide rails", lambda: main._view_set("rails", False))
     return menu

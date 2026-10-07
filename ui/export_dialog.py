@@ -86,6 +86,26 @@ class ExportDialog(QDialog):
         self.chk_zones.setChecked(self.project.export_zones)
         form.addRow(self.chk_zones)
 
+        # Editor aids: off unless you ask for them.
+        self.chk_centerlines = QCheckBox("Include canvas centerlines")
+        self.chk_centerlines.setToolTip(
+            "Bake the dashed amber lines through the middle of the map into the image.")
+        self.chk_centerlines.setChecked(bool(getattr(self.project, "export_centerlines", False)))
+        form.addRow(self.chk_centerlines)
+        self.chk_guides = QCheckBox("Include guides")
+        self.chk_guides.setToolTip(
+            "Bake the level's placed guide lines into the image, in the guide color.")
+        self.chk_guides.setChecked(bool(getattr(self.project, "export_guides", False)))
+        form.addRow(self.chk_guides)
+        self.chk_coordinates = QCheckBox("Include grid coordinates (labeled border)")
+        self.chk_coordinates.setToolTip(
+            "Add a border one square wide with column letters along the top and "
+            "bottom and row numbers down the sides. The image grows by one square "
+            "on every side, so a virtual-tabletop grid still lines up (offset by "
+            "one square).")
+        self.chk_coordinates.setChecked(bool(getattr(self.project, "export_coordinates", False)))
+        form.addRow(self.chk_coordinates)
+
         self.le_path = QLabel("No destination selected")
         self.le_path.setWordWrap(True)
         self.btn_path = QPushButton("Choose…")
@@ -178,10 +198,16 @@ class ExportDialog(QDialog):
         grid_color = self.project.export_grid_color
         include_node_borders = self.chk_node_borders.isChecked()
         include_zones = self.chk_zones.isChecked()
+        extras = {"include_centerlines": self.chk_centerlines.isChecked(),
+                  "include_guides": self.chk_guides.isChecked(),
+                  "include_coordinates": self.chk_coordinates.isChecked()}
         self.project.export_grid = include_grid
         self.project.export_grid_opacity = grid_opacity
         self.project.export_node_borders = include_node_borders
         self.project.export_zones = include_zones
+        self.project.export_centerlines = extras["include_centerlines"]
+        self.project.export_guides = extras["include_guides"]
+        self.project.export_coordinates = extras["include_coordinates"]
         if self.parent() and hasattr(self.parent(), "_mark_dirty"):
             self.parent()._mark_dirty()
 
@@ -197,13 +223,13 @@ class ExportDialog(QDialog):
                     transparent=transparent, grid_color=grid_color,
                     grid_opacity=grid_opacity,
                     include_node_borders=include_node_borders,
-                    include_zones=include_zones)
+                    include_zones=include_zones, **extras)
                 self.status.setText(f"Saved PDF:\n{path}")
             elif self.rb_all.isChecked():
                 files = exporter.export_all_levels(
                     self.project, path, include_grid, scale, "map", transparent,
                     grid_color, grid_opacity, include_node_borders,
-                    include_zones)
+                    include_zones, **extras)
                 self.status.setText(f"Exported {len(files)} PNG file(s) to:\n{path}")
             else:
                 level = self.canvas.level
@@ -213,7 +239,7 @@ class ExportDialog(QDialog):
                 exporter.export_level_to_file(
                     self.project, level, path, include_grid, scale, transparent,
                     grid_color, grid_opacity, include_node_borders,
-                    include_zones)
+                    include_zones, **extras)
                 self.status.setText(f"Saved PNG:\n{path}")
             QMessageBox.information(self, "Export", "Export complete.")
             self.accept()

@@ -8,12 +8,13 @@ from collections import OrderedDict
 
 from PyQt6.QtCore import (QByteArray, QBuffer, QIODevice, QPointF, Qt, QRectF,
                           QSize, QSizeF)
-from PyQt6.QtGui import (QImage, QImageReader, QPainter, QPixmap, QColor, QPen,
-                         QPdfWriter, QPageSize)
+from PyQt6.QtGui import (QImage, QImageReader, QPainter, QPainterPath, QPixmap,
+                         QColor, QPen, QPdfWriter, QPageSize, QFont, QFontMetricsF)
 from PyQt6.QtWidgets import QApplication
 
 from core.imaging import decode_guard
-from core.project import Level, Project, Piece, decode_embed
+from core.guides import column_label, grid_counts, label_step, row_label
+from core.project import DEFAULT_GUIDE_COLOR, Level, Project, Piece, decode_embed
 from core.render import draw_node_border, draw_piece, draw_zone_borders
 
 
@@ -179,7 +180,12 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
                  grid_color: str | None = None,
                  grid_opacity: float | None = None,
                  include_node_borders: bool | None = None,
-                 include_zones: bool | None = None) -> QImage:
+                 include_zones: bool | None = None,
+                 include_centerlines: bool = False,
+                 include_guides: bool = False,
+                 include_coordinates: bool = False) -> QImage:
+    """Render one level. Editor aids (canvas centerlines, placed guides and a
+    grid-coordinate border) are only drawn when explicitly requested."""
     w = max(1, int(project.canvas_w * scale))
     h = max(1, int(project.canvas_h * scale))
     image_format = (QImage.Format.Format_ARGB32 if transparent
@@ -221,26 +227,125 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
             painter, level.zones, project,
             lambda x, y: QPointF(x * scale, y * scale), scale)
     if include_grid:
-        if getattr(project, "show_centerlines", False):
-            # canvas middle, for alignment
-            mid = QPen(QColor("#ffb000"))
-            mid.setWidthF(max(1.5, scale * 1.5))
-            mid.setStyle(Qt.PenStyle.DashLine)
-            painter.setPen(mid)
-            painter.setOpacity(0.85)
-            painter.drawLine(int(project.canvas_w * scale / 2), 0,
-                             int(project.canvas_w * scale / 2),
-                             int(project.canvas_h * scale))
-            painter.drawLine(0, int(project.canvas_h * scale / 2),
-                             int(project.canvas_w * scale),
-                             int(project.canvas_h * scale / 2))
-            painter.setOpacity(1.0)
         _draw_grid(painter, project, scale,
                    grid_color or project.export_grid_color,
                    project.export_grid_opacity if grid_opacity is None
                    else grid_opacity)
+    if include_centerlines:
+        _draw_centerlines(painter, project, scale)
+    if include_guides:
+        _draw_guides(painter, project, level, scale)
     painter.end()
+    if include_coordinates:
+        img = _with_coordinate_border(img, project, level, scale, transparent)
     return img
+
+
+def _draw_centerlines(painter, project, scale):
+    """Dashed amber lines through the middle of the canvas."""
+    painter.save()
+    mid = QPen(QColor("#ffb000"))
+    mid.setWidthF(max(1.5, scale * 1.5))
+    mid.setStyle(Qt.PenStyle.DashLine)
+    painter.setPen(mid)
+    painter.setOpacity(0.85)
+    painter.drawLine(int(project.canvas_w * scale / 2), 0,
+                     int(project.canvas_w * scale / 2),
+                     int(project.canvas_h * scale))
+    painter.drawLine(0, int(project.canvas_h * scale / 2),
+                     int(project.canvas_w * scale),
+                     int(project.canvas_h * scale / 2))
+    painter.restore()
+
+
+def guide_qcolor(project) -> QColor:
+    color = QColor(getattr(project, "guide_color", DEFAULT_GUIDE_COLOR))
+    return color if color.isValid() else QColor(DEFAULT_GUIDE_COLOR)
+
+
+def _draw_guides(painter, project, level, scale):
+    """Placed guides as crisp lines with a faint dark edge (any background)."""
+    guides = list(getattr(level, "guides", []) or [])
+    if not guides:
+        return
+    width = max(1, int(round(scale * 1.5)))
+    w, h = int(project.canvas_w * scale), int(project.canvas_h * scale)
+    color = guide_qcolor(project)
+    opacity = max(0.1, min(1.0, float(getattr(project, "guide_opacity", 0.9))))
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    halo = QPen(QColor(0, 0, 0, 80))
+    halo.setWidth(width + 2)
+    line = QPen(color)
+    line.setWidth(width)
+    for pen, alpha in ((halo, 1.0), (line, opacity)):
+        painter.setPen(pen)
+        painter.setOpacity(alpha)
+        for guide in guides:
+            at = int(round(guide.pos * scale))
+            if guide.axis == "v" and 0 <= at <= w:
+                painter.drawLine(at, 0, at, h)
+            elif guide.axis == "h" and 0 <= at <= h:
+                painter.drawLine(0, at, w, at)
+    painter.restore()
+
+
+def _with_coordinate_border(image, project, level, scale, transparent):
+    """Return ``image`` inside a border one square wide, labeled with column
+    letters (top and bottom) and row numbers (left and right). The border is
+    a whole square so a VTT grid still lines up, just offset by one square."""
+    cell_px = max(1.0, project.cell_size * scale)
+    border = max(1, int(round(cell_px)))
+    w, h = image.width(), image.height()
+    out = QImage(w + 2 * border, h + 2 * border, image.format())
+    background = QColor(level.background)
+    if not background.isValid():
+        background = QColor("#10141c")
+    out.fill(QColor(0, 0, 0, 0) if transparent else background)
+    luminance = (0.2126 * background.red() + 0.7152 * background.green()
+                 + 0.0722 * background.blue())
+    if transparent or luminance < 140:
+        text, halo = QColor("#eef2f6"), QColor(0, 0, 0, 190)
+    else:
+        text, halo = QColor("#1b2129"), QColor(255, 255, 255, 190)
+
+    painter = QPainter(out)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.drawImage(border, border, image)
+    frame = QPen(text)
+    frame.setWidthF(max(1.0, scale))
+    painter.setPen(frame)
+    painter.setOpacity(0.45)
+    painter.drawRect(QRectF(border - 0.5, border - 0.5, w + 1, h + 1))
+    painter.setOpacity(1.0)
+
+    font = QFont()
+    font.setBold(True)
+    font.setPixelSize(max(6, min(64, int(border * 0.42))))
+    metrics = QFontMetricsF(font)
+    cols, rows = grid_counts(project.canvas_w, project.canvas_h, project.cell_size)
+    col_step = label_step(cell_px, metrics.horizontalAdvance(column_label(cols - 1)), 3)
+    row_step = label_step(cell_px, metrics.height(), 1)
+    halo_pen = QPen(halo, max(1.5, font.pixelSize() / 5.0))
+    halo_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+
+    def label(value: str, cx: float, cy: float):
+        path = QPainterPath()
+        path.addText(cx - metrics.horizontalAdvance(value) / 2.0,
+                     cy + (metrics.ascent() - metrics.descent()) / 2.0, font, value)
+        painter.strokePath(path, halo_pen)
+        painter.fillPath(path, text)
+
+    for i in range(0, cols, col_step):
+        cx = border + min((i + 0.5) * cell_px, w - 0.5 * min(cell_px, w))
+        label(column_label(i), cx, border / 2.0)
+        label(column_label(i), cx, border + h + border / 2.0)
+    for j in range(0, rows, row_step):
+        cy = border + min((j + 0.5) * cell_px, h - 0.5 * min(cell_px, h))
+        label(row_label(j), border / 2.0, cy)
+        label(row_label(j), border + w + border / 2.0, cy)
+    painter.end()
+    return out
 
 
 def sample_level_color(project: Project, level: Level, world_x: float,
@@ -277,10 +382,13 @@ def sample_level_color(project: Project, level: Level, world_x: float,
 
 def export_level_to_file(project, level, path, include_grid=True, scale=1.0,
                          transparent=False, grid_color=None, grid_opacity=None,
-                         include_node_borders=None, include_zones=None):
+                         include_node_borders=None, include_zones=None,
+                         include_centerlines=False, include_guides=False,
+                         include_coordinates=False):
     img = render_level(project, level, include_grid, scale, transparent,
                        grid_color, grid_opacity, include_node_borders,
-                       include_zones)
+                       include_zones, include_centerlines, include_guides,
+                       include_coordinates)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     img.save(path, "PNG")
     return path
@@ -289,7 +397,8 @@ def export_level_to_file(project, level, path, include_grid=True, scale=1.0,
 def export_all_levels(project, out_dir, include_grid=True, scale=1.0,
                       name_prefix="map", transparent=False, grid_color=None,
                       grid_opacity=None, include_node_borders=None,
-                      include_zones=None):
+                      include_zones=None, include_centerlines=False,
+                      include_guides=False, include_coordinates=False):
     os.makedirs(out_dir, exist_ok=True)
     out = []
     for i, lvl in enumerate(project.levels, 1):
@@ -297,7 +406,8 @@ def export_all_levels(project, out_dir, include_grid=True, scale=1.0,
         path = os.path.join(out_dir, f"{name_prefix}_{i:02d}_{safe}.png")
         export_level_to_file(project, lvl, path, include_grid, scale, transparent,
                              grid_color, grid_opacity, include_node_borders,
-                             include_zones)
+                             include_zones, include_centerlines, include_guides,
+                             include_coordinates)
         out.append(path)
     return out
 
@@ -331,7 +441,9 @@ def preset_scale(project: Project, name: str) -> float:
 
 def export_pdf(project, out_path, include_grid=True, scale=1.0, levels=None,
                transparent=False, grid_color=None, grid_opacity=None,
-               include_node_borders=None, include_zones=None):
+               include_node_borders=None, include_zones=None,
+               include_centerlines=False, include_guides=False,
+               include_coordinates=False):
     """Export chosen level(s) to PDF with the same grid/render options as PNG.
 
     Each selected level becomes one page. ``levels`` defaults to every level
@@ -344,9 +456,10 @@ def export_pdf(project, out_path, include_grid=True, scale=1.0, levels=None,
     selected_levels = list(project.levels if levels is None else levels)
     if not selected_levels:
         return out_path
+    extras = (include_centerlines, include_guides, include_coordinates)
     first = render_level(project, selected_levels[0], include_grid, scale,
                          transparent, grid_color, grid_opacity,
-                         include_node_borders, include_zones)
+                         include_node_borders, include_zones, *extras)
     writer.setPageSize(QPageSize(
         QSizeF(first.width() / 96.0, first.height() / 96.0),
         QPageSize.Unit.Inch))
@@ -356,7 +469,7 @@ def export_pdf(project, out_path, include_grid=True, scale=1.0, levels=None,
         writer.newPage()
         img = render_level(project, lvl, include_grid, scale, transparent,
                            grid_color, grid_opacity, include_node_borders,
-                           include_zones)
+                           include_zones, *extras)
         painter.drawImage(0, 0, img)
     painter.end()
     return out_path
