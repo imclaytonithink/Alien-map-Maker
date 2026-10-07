@@ -328,6 +328,7 @@ class MainWindow(QMainWindow):
         self.canvas.cursorMoved.connect(self._on_cursor)
         self.canvas.historyPush.connect(self._push_history)
         self.canvas.contextMenuRequested.connect(self._show_canvas_menu)
+        self.canvas.historyDiscardLast.connect(self._discard_last_history)
         center_col.addWidget(self.canvas, 1)
 
         bottom = QHBoxLayout()
@@ -485,6 +486,7 @@ class MainWindow(QMainWindow):
         e.addAction("Select similar", self._select_similar)
         e.addAction("Copy style…", self._start_copy_style)
         e.addAction("Replace selected image…", self._replace_selected_image)
+        e.addAction(self._act("Free transform", self._toggle_free_transform, "Ctrl+T"))
         e.addAction("Rotate 90°", lambda: self._rotate_sel(90))
         e.addAction("Group rotate…", self._toggle_group_rotate)
 
@@ -1363,6 +1365,16 @@ class MainWindow(QMainWindow):
         self._resync_history()
         self._mark_dirty()
 
+    def _discard_last_history(self):
+        self.history.drop_last()
+        self._resync_history()
+
+    def _toggle_free_transform(self):
+        if self.canvas.free_transform:
+            self.canvas.end_free_transform(True)
+        else:
+            self.canvas.begin_free_transform()
+
     def undo(self):
         if self.history.undo(self.project):
             self._after_history()
@@ -1424,6 +1436,8 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
+            if self.canvas.end_free_transform(False):
+                return
             if (self.canvas.cancel_color_pick() or self.canvas.cancel_zone_tool()
                     or self.canvas.cancel_patch_tool()):
                 return
@@ -1452,6 +1466,9 @@ class MainWindow(QMainWindow):
                 self.canvas.delete_selected(); return
             if e.key() == Qt.Key.Key_R:
                 self._rotate_sel(90); return
+        if (e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not typing
+                and self.canvas.end_free_transform(True)):
+            return
         if e.key() == Qt.Key.Key_Z and e.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.undo(); return
         if e.key() == Qt.Key.Key_Y and e.modifiers() & Qt.KeyboardModifier.ControlModifier:

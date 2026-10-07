@@ -29,6 +29,8 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         transform = menu.addMenu("Transform")
         add(transform, "Rotate 90° clockwise", lambda: canvas._quick("rotR"))
         add(transform, "Rotate 90° counter-clockwise", lambda: canvas._quick("rotL"))
+        add(transform, "Free transform", main._toggle_free_transform,
+            len(sel) == 1, "Ctrl+T")
         add(transform, "Flip horizontal", lambda: canvas._quick("fh"))
         add(transform, "Flip vertical", lambda: canvas._quick("fv"))
         add(menu, "Lock / unlock", lambda: canvas._quick("lock"))

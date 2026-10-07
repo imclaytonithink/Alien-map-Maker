@@ -39,6 +39,8 @@ class CanvasView(QWidget):
     colorPickStateChanged = pyqtSignal(bool)
     contextMenuRequested = pyqtSignal(QPoint, object)   # global pos, hit Piece|None
     layerSoloChanged = pyqtSignal(object)
+    historyDiscardLast = pyqtSignal()
+    freeTransformChanged = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,6 +75,9 @@ class CanvasView(QWidget):
         self._marquee: Optional[QRectF] = None
         self._cursor_world = (-1.0, -1.0)
         self._guides: list[tuple[str, float]] = []  # ("v", x) or ("h", y)
+        self.free_transform = False
+        self._ft_backup: dict | None = None
+        self._ft_pushed = False
         self.solo_layer_id: str | None = None   # view-only isolate; never saved/exported
 
         self.ref_enabled = False
@@ -431,7 +436,48 @@ class CanvasView(QWidget):
     def push_history(self, label: str, coalesce: bool = False):
         """Snapshot before an edit. ``coalesce`` merges rapid repeats of the
         same label (slider drags, held keys) into one undo step."""
+        if self.free_transform and label in ("Resize", "Rotate", "Move"):
+            # a whole free-transform session is a single undo step
+            if self._ft_pushed:
+                return
+            self._ft_pushed = True
+            label, coalesce = "Free transform", False
         self.historyPush.emit(label, coalesce)
+
+    # -- free transform mode (Ctrl+T) -----------------------------------
+    _FT_FIELDS = ("x", "y", "w", "h", "scale", "rotation", "text_auto_size")
+
+    def begin_free_transform(self) -> bool:
+        sel = self.selected_pieces()
+        if len(sel) != 1 or sel[0].locked or self.free_transform:
+            return False
+        p = sel[0]
+        self._ft_backup = {"id": p.id, **{k: getattr(p, k) for k in self._FT_FIELDS}}
+        self._ft_pushed = False
+        self.free_transform = True
+        self.freeTransformChanged.emit(True)
+        self.update()
+        return True
+
+    def end_free_transform(self, commit: bool = True) -> bool:
+        if not self.free_transform:
+            return False
+        self.free_transform = False
+        backup, self._ft_backup = self._ft_backup, None
+        pushed, self._ft_pushed = self._ft_pushed, False
+        if not commit and backup:
+            piece = next((q for q in (self.level.pieces if self.level else [])
+                          if q.id == backup["id"]), None)
+            if piece is not None:
+                for k in self._FT_FIELDS:
+                    setattr(piece, k, backup[k])
+            if pushed:
+                self.historyDiscardLast.emit()
+        self.freeTransformChanged.emit(False)
+        self.selectionChanged.emit(self.selected_pieces())
+        self.dirty.emit()
+        self.update()
+        return True
 
     def begin_color_pick(self, callback) -> bool:
         """Arm a one-shot eyedropper. The callback receives QColor or None."""
@@ -691,6 +737,8 @@ class CanvasView(QWidget):
         return [p for p in self.level.pieces if p.id in self.selection]
 
     def select(self, pieces: list[Piece]):
+        if self.free_transform and {p.id for p in pieces} != self.selection:
+            self.end_free_transform(True)
         if self.selected_zone_id is not None:
             self.selected_zone_id = None
             self.zoneSelectionChanged.emit(None)
@@ -861,6 +909,19 @@ class CanvasView(QWidget):
                 best, best_d = name, d
         return best
 
+    def _draw_free_transform_frame(self, painter, p: Piece):
+        pts = self._resize_handle_points(p)
+        painter.save()
+        pen = QPen(QColor(self.theme_accent), 1)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.drawPolygon(QPolygonF([pts["nw"], pts["ne"], pts["se"], pts["sw"]]))
+        painter.setPen(QColor(self.theme_accent))
+        painter.drawText(8, self.height() - 10,
+                         "Free transform — drag handles to stretch, Shift locks corners, "
+                         "Alt from center · Enter apply · Esc cancel")
+        painter.restore()
+
     def _draw_resize_handles(self, painter, p: Piece):
         if p.locked:
             return
@@ -888,14 +949,17 @@ class CanvasView(QWidget):
                       "center": p.center, "rot": p.rotation}
 
     def _resize_primary(self, sx, sy, e):
-        """Drag a handle. Edges stretch one axis; corners stretch both, or
-        scale uniformly with Shift. Alt resizes from the center."""
+        """Drag a handle. Edges stretch one axis; corners scale uniformly
+        (Shift = free; reversed in free-transform mode). Alt resizes from the center."""
         d = self._drag
         p: Piece = d["piece"]
         hx, hy = RESIZE_HANDLES[d["handle"]]
         mods = e.modifiers()
         from_center = bool(mods & Qt.KeyboardModifier.AltModifier)
-        keep_ratio = bool(mods & Qt.KeyboardModifier.ShiftModifier) and hx != 0 and hy != 0
+        # Corners keep proportions by default; Shift releases them. In free
+        # transform mode that flips: corners are free and Shift locks them.
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        keep_ratio = hx != 0 and hy != 0 and (shift == self.free_transform)
         wx, wy = self.screen_to_world(sx, sy)
         c0x, c0y = d["center"]
         rad = math.radians(d["rot"])
@@ -974,6 +1038,8 @@ class CanvasView(QWidget):
         if len(self.selection) == 1:
             only = next(iter(self.selected_pieces()))
             self._draw_resize_handles(painter, only)
+            if self.free_transform:
+                self._draw_free_transform_frame(painter, only)
             self._draw_rotate_handle(painter, only)
 
         if self._marquee:
@@ -1529,10 +1595,17 @@ class CanvasView(QWidget):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
+            if self.end_free_transform(False):
+                e.accept()
+                return
             if (self.cancel_color_pick() or self.cancel_zone_tool()
                     or self.cancel_patch_tool() or self.cancel_extra_tool()):
                 e.accept()
                 return
+        if (e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self.end_free_transform(True)):
+            e.accept()
+            return
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.zone_tool == "polygon":
             self.finish_zone_polygon()
             e.accept()

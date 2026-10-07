@@ -74,17 +74,46 @@ drag(300, 230, 350, 230)
 assert abs(piece.vis_w - 150) < 1e-6 and abs(piece.vis_h - 60) < 1e-6, (piece.vis_w, piece.vis_h)
 assert abs(piece.x - 200) < 1e-6          # opposite edge is the anchor
 
-# corner: free resize, then proportional with Shift
+# corner: proportional by default, free with Shift
 canvas.select([piece]); pts = canvas._resize_handle_points(piece)
-drag(pts["se"].x(), pts["se"].y(), pts["se"].x() + 50, pts["se"].y() + 20)
-assert abs(piece.vis_w - 200) < 1e-6 and abs(piece.vis_h - 80) < 1e-6
-before_ratio = piece.vis_w / piece.vis_h
+ratio0 = piece.vis_w / piece.vis_h
 base_w = piece.w
-canvas.select([piece]); pts = canvas._resize_handle_points(piece)
-drag(pts["se"].x(), pts["se"].y(), pts["se"].x() + 100, pts["se"].y() + 5,
-     mods=Qt.KeyboardModifier.ShiftModifier)
-assert abs(piece.vis_w / piece.vis_h - before_ratio) < 1e-6
+drag(pts["se"].x(), pts["se"].y(), pts["se"].x() + 50, pts["se"].y() + 5)
+assert abs(piece.vis_w / piece.vis_h - ratio0) < 1e-6
 assert piece.scale > 1.0 and abs(piece.w - base_w) < 1e-6   # uniform scale, base size kept
+canvas.select([piece]); pts = canvas._resize_handle_points(piece)
+w_before, h_before = piece.vis_w, piece.vis_h
+drag(pts["se"].x(), pts["se"].y(), pts["se"].x() + 50, pts["se"].y() + 20,
+     mods=Qt.KeyboardModifier.ShiftModifier)
+assert abs(piece.vis_w - (w_before + 50)) < 1e-6 and abs(piece.vis_h - (h_before + 20)) < 1e-6
+
+# free transform mode: corners free, Shift locks, one undo step, Esc cancels
+canvas.select([piece])
+snapshot = (piece.x, piece.y, piece.w, piece.h, piece.scale, piece.rotation)
+undo_depth = len(win.history.undos)
+assert canvas.begin_free_transform()
+pts = canvas._resize_handle_points(piece)
+w1, h1 = piece.vis_w, piece.vis_h
+drag(pts["se"].x(), pts["se"].y(), pts["se"].x() + 30, pts["se"].y() + 10)
+assert abs(piece.vis_w - (w1 + 30)) < 1e-6 and abs(piece.vis_h - (h1 + 10)) < 1e-6
+pts = canvas._resize_handle_points(piece)
+r1 = piece.vis_w / piece.vis_h
+drag(pts["se"].x(), pts["se"].y(), pts["se"].x() + 40, pts["se"].y() + 1,
+     mods=Qt.KeyboardModifier.ShiftModifier)
+assert abs(piece.vis_w / piece.vis_h - r1) < 1e-6
+assert len(win.history.undos) == undo_depth + 1
+assert canvas.end_free_transform(False)
+assert (piece.x, piece.y, piece.w, piece.h, piece.scale, piece.rotation) == snapshot
+assert len(win.history.undos) == undo_depth        # cancelled session leaves no step
+assert canvas.begin_free_transform()
+pts = canvas._resize_handle_points(piece)
+drag(pts["e"].x(), pts["e"].y(), pts["e"].x() + 20, pts["e"].y())
+assert canvas.end_free_transform(True) and not canvas.free_transform
+assert len(win.history.undos) == undo_depth + 1
+win.undo()
+assert abs(win.project.levels[0].pieces[0].vis_w - snapshot[2] * snapshot[4]) < 1e-6
+piece = win.project.levels[0].pieces[0]; level = win.project.levels[0]
+canvas.select([piece])
 
 # Alt: from center keeps the center fixed
 cx0, cy0 = piece.center

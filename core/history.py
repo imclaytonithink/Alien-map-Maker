@@ -94,6 +94,13 @@ class History:
         self._prune_blobs()
         return True
 
+    def drop_last(self) -> None:
+        """Discard the newest undo step without applying it (cancelled edit)."""
+        if self._undos:
+            self._undos.pop()
+            self._last_label = None
+            self._prune_blobs()
+
     def can_undo(self) -> bool:
         return bool(self._undos)
 

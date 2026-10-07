@@ -241,7 +241,8 @@ clearly reports skipped GUI checks.
 | Ctrl+Shift+P | Command palette (search every menu command) |
 | F2 / F3 / Ctrl+\\ | Toggle Library / Inspector / both panels |
 | Right-click (no drag) | Context menu; right-drag still pans |
-| Drag a handle | Resize: edges stretch one axis, corners both; **Shift** on a corner keeps proportions, **Alt** resizes from the center |
+| Drag a handle | Resize: corners keep proportions, **Shift** frees them; edges stretch one axis; **Alt** resizes from the center |
+| Ctrl+T | Free transform: corners are free (Shift locks), Enter applies, Esc cancels; the whole session is one undo step |
 
 ---
 
