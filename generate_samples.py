@@ -53,8 +53,6 @@ def _wrap(text, max_chars):
     return lines or [text]
 
 
-ROOT = os.path.join(os.path.dirname(__file__), "sample_assets")
-
 ASSETS = [
     ("floors/corridor_40x120.png", 40, 120, (60, 70, 90), "corridor"),
     ("floors/room_100x100.png", 100, 100, (80, 90, 110), "room"),
@@ -68,7 +66,15 @@ ASSETS = [
     ("overlays/overlay_hazard_40x120.png", 40, 120, (255, 180, 40), "hazard", True),
 ]
 
-if __name__ == "__main__":
+def generate(root: str) -> str:
+    """Write the demo PNG set under ``root`` and return it."""
     for a in ASSETS:
-        make(os.path.join(ROOT, a[0]), *a[1:])
-    print("\nSample assets ready in", ROOT)
+        make(os.path.join(root, a[0]), *a[1:])
+    return root
+
+
+if __name__ == "__main__":
+    import sys
+    target = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "sample_assets")
+    print("\nSample assets ready in", generate(target))

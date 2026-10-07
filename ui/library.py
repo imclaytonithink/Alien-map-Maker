@@ -24,7 +24,8 @@ from core.asset_taxonomy import (
     classify_asset_categories,
 )
 from core.project import Project
-from ui.branding import default_asset_store_path, seed_bundled_assets
+from ui.branding import (default_asset_store_path, prune_demo_assets,
+                         seed_bundled_assets)
 from ui.image_utils import load_scaled_image, load_scaled_pixmap
 
 
@@ -103,9 +104,10 @@ class ThumbnailTask(QRunnable):
     """Decode one bounded preview away from the GUI thread."""
 
     def __init__(self, path: str, size: int, generation: int,
-                 signals: ThumbnailSignals):
+                 signals: ThumbnailSignals, key: str = ""):
         super().__init__()
-        self.path = path
+        self.path = path            # file to decode
+        self.key = key or path      # asset id the result is reported under
         self.size = size
         self.generation = generation
         self.signals = signals
@@ -117,7 +119,7 @@ class ThumbnailTask(QRunnable):
             image = QImage()
         try:
             self.signals.completed.emit(
-                self.path, self.size, self.generation, image)
+                self.key, self.size, self.generation, image)
         except RuntimeError:
             pass   # the panel was torn down while this preview was decoding
 
@@ -253,8 +255,11 @@ class AssetListModel(QAbstractListModel):
         self._pending[key] = signals
         image_path = (self.library.abs_path(asset.path)
                       if self.library else asset.path)
+        # Report under the asset's own (store-relative) path: that is what the
+        # model's icon cache, pending table and row lookup are all keyed by.
         self._thread_pool.start(ThumbnailTask(
-            image_path, self.thumb_size, self._generation, signals))
+            image_path, self.thumb_size, self._generation, signals,
+            key=asset.path))
         return True
 
     def _thumbnail_ready(self, path: str, size: int, generation: int,
@@ -666,12 +671,23 @@ class LibraryPanel(QWidget):
                        if project.asset_store else "")
         current_root = (os.path.normcase(os.path.abspath(library.root))
                         if library.root else "")
-        if current_root != target_root or not library._scan_complete:
+        pruned = self._prune_demo_assets(project.asset_store)
+        if current_root != target_root or not library._scan_complete or pruned:
             library.scan(project.asset_store)
         self._rebuild_collections()
         self._rebuild_groups()
         self.refresh()
         self._update_store_label()
+
+    def _prune_demo_assets(self, store: str) -> int:
+        """Remove leftover placeholder images from the app's own store."""
+        if not store:
+            return 0
+        app_data_dir = getattr(self.window(), "_app_data_dir", "")
+        default_store = default_asset_store_path(__file__, app_data_dir)
+        if os.path.normcase(os.path.abspath(store)) != os.path.normcase(default_store):
+            return 0
+        return prune_demo_assets(store)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -1057,6 +1073,8 @@ class LibraryPanel(QWidget):
             else:
                 # Safe fallback for an unexpected worker-side indexing error.
                 self.library.scan(target_root)
+            if self._prune_demo_assets(target_root):
+                self.library.scan(target_root)
             self._rebuild_groups()
             self._show_all_assets()
             self.refresh()
@@ -1133,6 +1151,8 @@ class LibraryPanel(QWidget):
 
     def _after_import(self, n):
         if n:
+            if self.project and self._prune_demo_assets(self.project.asset_store):
+                self.library.scan(self.project.asset_store)
             self._rebuild_groups()
             # Don't leave a fresh import hidden behind an old search, group,
             # or collection filter. Show the complete updated library right

@@ -40,8 +40,8 @@ REM filtered archives keep their folder layout but contain supported images only
 python filter_asset_packs.py "%PACK_DIR%" "%FILTERED_PACK_DIR%"
 if errorlevel 1 goto build_error
 
-REM Bundle demo art and image-only high-resolution packs into the EXE.
-pyinstaller --noconsole --onefile --clean --noconfirm --name "SceneBoard" --add-data "sample_assets;sample_assets" --add-data "%FILTERED_PACK_DIR%;asset_packs" main.py
+REM Bundle the image-only high-resolution packs into the EXE.
+pyinstaller --noconsole --onefile --clean --noconfirm --name "SceneBoard" --add-data "%FILTERED_PACK_DIR%;asset_packs" main.py
 if errorlevel 1 goto build_error
 
 echo.

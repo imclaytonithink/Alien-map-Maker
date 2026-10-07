@@ -2,6 +2,7 @@
 import os
 import sys
 
+from sample_fixtures import sample_assets_dir
 from PyQt6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication(sys.argv)
@@ -20,7 +21,9 @@ win = MainWindow()
 print("booted, levels:", len(win.project.levels))
 
 # import sample assets into the store
-sample = os.path.join(os.path.dirname(__file__), "sample_assets")
+sample = sample_assets_dir()
+import tempfile
+win.project.asset_store = tempfile.mkdtemp(prefix="sceneboard-store-")   # not the default store
 win._ensure_store()
 win.library.library.root = win.project.asset_store
 win.library.library.scan(win.project.asset_store)
