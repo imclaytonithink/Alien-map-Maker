@@ -6,17 +6,22 @@ import math
 import os
 from typing import Optional
 
-from PyQt6.QtCore import (Qt, QObject, QPoint, QPointF, QRectF, QRunnable, QSize,
-                          QThreadPool, QTimer, pyqtSignal)
+from PyQt6.QtCore import (Qt, QEvent, QObject, QPoint, QPointF, QRectF, QRunnable,
+                          QSize, QThreadPool, QTimer, pyqtSignal)
 from PyQt6.QtGui import (
     QImageReader, QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont,
-    QPolygonF,
+    QFontMetricsF, QPolygonF, QTransform,
 )
-from PyQt6.QtWidgets import QWidget, QFrame, QPushButton, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QFrame, QPushButton, QHBoxLayout, QToolTip
 
-from core.project import Piece, Project, Level, ZoneRegion, snap_value
+from core.guides import (column_label, describe_position, grid_counts,
+                         label_step, nearest, row_label)
+from core.project import Guide, Piece, Project, Level, ZoneRegion, snap_value
+from core.transforms import (grid_offsets, mirror_piece_data, on_mirror_line,
+                             remap_groups)
 from core import exporter
 from core.render import draw_node_border, draw_piece, draw_zone_borders
+from ui.canvas_tools import CloneToolMixin, CutoutToolMixin, SelectionToolsMixin
 from ui.theme import theme_colors
 
 HANDLE_DIST = 26
@@ -28,7 +33,11 @@ RESIZE_HANDLES = {
     "nw": (-1, -1), "n": (0, -1), "ne": (1, -1), "e": (1, 0),
     "se": (1, 1), "s": (0, 1), "sw": (-1, 1), "w": (-1, 0),
 }
-GUIDE_DIST = 12  # screen px threshold for smart guides
+GUIDE_DIST = 12  # screen px threshold for smart guides (and placed guides)
+GUIDE_HIT = 5    # screen px: how close the pointer must be to grab a guide
+GUIDE_SNAP = 8   # screen px: a dragged guide snaps to grid lines / node edges
+RAIL = 8         # guide-rail thickness along the canvas edges (screen px)
+RAIL_LABELED = 20  # rail thickness when grid coordinates are shown
 
 
 class _BoundsSignals(QObject):
@@ -63,7 +72,7 @@ class _BoundsTask(QRunnable):
             pass
 
 
-class CanvasView(QWidget):
+class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
     selectionChanged = pyqtSignal(object)   # list[Piece]
     zoneSelectionChanged = pyqtSignal(object)  # ZoneRegion or None
     dirty = pyqtSignal()
@@ -76,6 +85,13 @@ class CanvasView(QWidget):
     historyDiscardLast = pyqtSignal()
     statusMessage = pyqtSignal(str)
     freeTransformChanged = pyqtSignal(bool)
+    guideMenuRequested = pyqtSignal(QPoint, object)  # global pos, {"guide": id} | {"rail": side}
+    guideEditRequested = pyqtSignal(str)             # guide id (double-click)
+    guideSettingsChanged = pyqtSignal()              # show/snap/lock flags changed here
+    railsChanged = pyqtSignal()                      # rail thickness / visibility changed
+    stampToolChanged = pyqtSignal(object)            # armed hotbar slot index, or None
+    cutoutChanged = pyqtSignal()                     # cut-out tool / area / targets changed
+    cutoutMenuRequested = pyqtSignal(QPoint)         # right-click inside the cut-out area
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -117,7 +133,14 @@ class CanvasView(QWidget):
         self._hover_handle = False
         self._marquee: Optional[QRectF] = None
         self._cursor_world = (-1.0, -1.0)
-        self._guides: list[tuple[str, float]] = []  # ("v", x) or ("h", y)
+        self._smart_guides: list[tuple[str, float]] = []  # ("v", x) or ("h", y)
+        # placed guides: rails along the view edges create them
+        self.rails_visible = True
+        self._guide_drag: dict | None = None
+        self._guide_hover: str | None = None   # id of the guide under the pointer
+        self._rail_hover: str | None = None    # "left" | "right" | "top" | "bottom"
+        self._guide_flash: set[str] = set()    # guides a moving node is snapped to
+        self._remove_cursor: QCursor | None = None
         self.quick_enabled = False   # floating node buttons; right-click covers them
         self.auto_tighten = True     # trim transparent margins when nodes are placed
         self._suppress_history = False
@@ -147,6 +170,11 @@ class CanvasView(QWidget):
         self.stamp_tool = False
         self._stamp_template = None
         self._stamp_drag_last = None
+        self.stamp_slot = None          # hotbar slot that armed the stamp tool
+        self._stamp_tighten = False     # trim stamped library assets like drops
+        self._stamp_hover = None        # world point of the stamp preview
+        self._stamp_edge = False        # door mode: copies sit on grid lines
+        self._stamp_last_spot = None    # door mode: last spot placed while dragging
         self.crop_tool = False
         self._crop_target_id = None
         self._crop_drag = None
@@ -163,6 +191,8 @@ class CanvasView(QWidget):
         self._lasso_add = False
         self.copy_style_mode = False
         self._style_template = None
+        self._init_cutout_state()
+        self._init_clone_state()
 
         # quick toolbar (J3)
         self.quick = QFrame(self)
@@ -207,6 +237,14 @@ class CanvasView(QWidget):
         self.update()
 
     def _reset_tool_state(self):
+        was_stamping = self.stamp_tool
+        was_cutting = self._reset_cutout_state()
+        self._reset_clone_state()
+        self.stamp_slot = None
+        self._stamp_tighten = False
+        self._stamp_hover = None
+        self._stamp_edge = False
+        self._stamp_last_spot = None
         self.zone_tool = None
         self._zone_drag_start = None
         self._zone_preview = None
@@ -232,6 +270,10 @@ class CanvasView(QWidget):
         self._lasso_points = []
         self.copy_style_mode = False
         self._style_template = None
+        if was_stamping:
+            self.stampToolChanged.emit(None)
+        if was_cutting:
+            self.cutoutChanged.emit()
 
     def set_project(self, project: Project, library=None):
         self.project = project
@@ -240,6 +282,7 @@ class CanvasView(QWidget):
         self.selection.clear()
         self.selected_zone_id = None
         self._reset_tool_state()
+        self._reset_guide_state()
         self._zone_edit_drag = None
         self.zoom = 1.0
         self.pan_x = self.pan_y = 0.0
@@ -253,6 +296,7 @@ class CanvasView(QWidget):
         if self.project and 0 <= index < len(self.project.levels):
             self.level_index = index
             self._reset_tool_state()
+            self._reset_guide_state()
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
             self.selection.clear()
             self.selected_zone_id = None
@@ -359,7 +403,7 @@ class CanvasView(QWidget):
     def cancel_extra_tool(self) -> bool:
         active = (self.stamp_tool or self.crop_tool or self.ruler_tool
                   or self.scale_tool or self.connector_tool or self.lasso_tool
-                  or self.copy_style_mode)
+                  or self.copy_style_mode or self.cutout_tool or self.clone_tool)
         if active:
             self._reset_tool_state()
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -582,7 +626,82 @@ class CanvasView(QWidget):
         return exporter.sample_level_color(
             self.project, self.level, wx, wy, self._cache)
 
-    def _place_stamp(self, wx: float, wy: float):
+    def set_stamp_template(self, template: dict, slot=None,
+                           tighten: bool = False, edge: bool = False) -> bool:
+        """Arm the stamp tool with node data (used by the hotbar keys 1-9).
+        ``tighten`` trims each copy to its visible pixels, like a library drop;
+        ``edge`` (door mode) puts each copy on the nearest grid line."""
+        if not self.project or not self.level or not isinstance(template, dict):
+            return False
+        self._reset_tool_state()
+        self.stamp_tool = True
+        self._stamp_template = (self._tightened_template(dict(template)) if tighten
+                                else dict(template))
+        self.stamp_slot = slot
+        self._stamp_tighten = bool(tighten)
+        self._stamp_edge = bool(edge)
+        self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+        if self._cursor_world[0] >= 0:
+            self._stamp_hover = self._cursor_world
+        self.stampToolChanged.emit(slot)
+        self.update()
+        return True
+
+    def _tightened_template(self, template: dict) -> dict:
+        """Trim an asset stamp to its visible pixels up front when the image's
+        bounds are already known, so the preview matches what gets placed.
+        (Otherwise each placed copy is trimmed afterwards, like a drop.)"""
+        path = template.get("asset_path")
+        if (not path or template.get("is_overlay") or not self.auto_tighten
+                or list(template.get("crop_rect", [0, 0, 1, 1])) != [0.0, 0.0, 1.0, 1.0]):
+            return template
+        from ui.image_utils import bounds_table_for_file, has_cached_bounds, nearest_threshold
+        resolved = self.project.resolve_asset(path)
+        if not has_cached_bounds(resolved):
+            return template
+        bounds = (bounds_table_for_file(resolved) or {}).get(
+            nearest_threshold(self.tighten_options.get("threshold", 16)))
+        if bounds is None:
+            return template
+        scale = float(template.get("scale", 1.0) or 1.0)
+        kx = float(template.get("w", 0.0)) * scale
+        ky = float(template.get("h", 0.0)) * scale
+        if kx <= 0 or ky <= 0:
+            return template
+        pad = max(0.0, float(self.tighten_options.get("padding", 0.0)))
+        sides = tuple(self.tighten_options.get("sides", (True, True, True, True)))
+        target = [max(0.0, bounds[0] - pad / kx) if sides[0] else 0.0,
+                  max(0.0, bounds[1] - pad / ky) if sides[1] else 0.0,
+                  min(1.0, bounds[2] + pad / kx) if sides[2] else 1.0,
+                  min(1.0, bounds[3] + pad / ky) if sides[3] else 1.0]
+        if target[2] - target[0] < 0.02 or target[3] - target[1] < 0.02:
+            return template
+        out = dict(template)
+        out["crop_rect"] = [float(v) for v in target]
+        out["w"] = (target[2] - target[0]) * kx / scale
+        out["h"] = (target[3] - target[1]) * ky / scale
+        return out
+
+    def asset_template(self, store_rel_path: str) -> Optional[dict]:
+        """Node data for a library asset, sized and flagged like a library drop
+        (None when the image can't be found)."""
+        if not self.project or not store_rel_path:
+            return None
+        if not os.path.isfile(self.project.resolve_asset(store_rel_path)):
+            return None
+        asset = self.library.get(store_rel_path) if self.library else None
+        w, h = self.asset_world_size(store_rel_path, asset)
+        is_overlay = bool(asset and asset.is_overlay)
+        name = asset.name if asset else store_rel_path.split("/")[-1]
+        data = Piece(asset_path=store_rel_path, name=name, w=w, h=h,
+                     is_overlay=is_overlay, snap=not is_overlay).to_dict()
+        for key in ("id", "x", "y", "z", "layer", "group_id", "locked"):
+            data.pop(key, None)
+        return data
+
+    def _stamp_piece_at(self, wx: float, wy: float) -> Optional[Piece]:
+        """The node a stamp click at (wx, wy) would place (not yet added)."""
         if not self.level or not self._stamp_template:
             return None
         import copy
@@ -595,15 +714,203 @@ class CanvasView(QWidget):
         data["z"] = self.level.next_z()
         data["locked"] = False
         data["group_id"] = ""
+        if self._stamp_edge:
+            cx, cy, angle = self._edge_stamp_spot(wx, wy, data)
+            data["rotation"] = angle
+            data["x"] = cx - float(data.get("w", 0)) * float(data.get("scale", 1)) / 2
+            data["y"] = cy - float(data.get("h", 0)) * float(data.get("scale", 1)) / 2
+            return Piece.from_dict(data)
         piece = Piece.from_dict(data)
         if piece.snap:
             piece.x = snap_value(piece.x, self.project.cell_size)
             piece.y = snap_value(piece.y, self.project.cell_size)
+        return piece
+
+    def _place_stamp(self, wx: float, wy: float):
+        piece = self._stamp_piece_at(wx, wy)
+        if piece is None:
+            return None
+        if self._stamp_edge:
+            spot = (round(piece.center[0], 2), round(piece.center[1], 2),
+                    round(piece.rotation % 360.0, 1))
+            if spot == self._stamp_last_spot or self._stamp_spot_taken(piece):
+                return None
+            self._stamp_last_spot = spot
         self.push_history("Stamp node")
         self.level.add(piece)
+        if self._stamp_tighten and self.auto_tighten and not piece.is_overlay:
+            self.tighten_piece_async(piece, only_if_untouched=True)
         self.dirty.emit()
         self.update()
         return piece
+
+    def _draw_stamp_preview(self, painter):
+        """Faint copy of the armed stamp where a click would place it."""
+        if not (self.stamp_tool and self._stamp_template and self._stamp_hover):
+            return
+        if self._stamp_drag_last is not None:
+            return
+        ghost = self._stamp_piece_at(*self._stamp_hover)
+        if ghost is None:
+            return
+        self._draw_piece(painter, ghost, 0.5, mark_missing=False)
+        accent = QColor(self.theme_accent)
+        pen = QPen(accent)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setWidthF(1.0)
+        painter.save()
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        corners = self._piece_corners_screen(ghost)
+        painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in corners]))
+        painter.restore()
+
+    def _piece_corners_screen(self, p: Piece) -> list[tuple[float, float]]:
+        cx, cy = p.center
+        half_w, half_h = p.vis_w / 2.0, p.vis_h / 2.0
+        angle = math.radians(p.rotation)
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        out = []
+        for lx, ly in ((-half_w, -half_h), (half_w, -half_h),
+                       (half_w, half_h), (-half_w, half_h)):
+            wx = cx + lx * cos_a - ly * sin_a
+            wy = cy + lx * sin_a + ly * cos_a
+            out.append(self.world_to_screen(wx, wy))
+        return out
+
+    # -- mirror copies and grid copies -----------------------------------
+    def mirror_lines(self) -> list[tuple[str, float, str]]:
+        """Lines a selection can be mirrored across: (axis, world pos, label).
+        The map's center lines come first, then this level's guides."""
+        if not self.project:
+            return []
+        lines = [("v", self.project.canvas_w / 2.0, "Vertical center line of the map"),
+                 ("h", self.project.canvas_h / 2.0, "Horizontal center line of the map")]
+        if self.level:
+            for guide in sorted(self.level.guides, key=lambda g: (g.axis, g.pos)):
+                where = describe_position(guide.axis, guide.pos, self.project.cell_size,
+                                          self.project.feet_per_square)
+                kind = "Vertical" if guide.axis == "v" else "Horizontal"
+                lines.append((guide.axis, guide.pos, f"{kind} guide at {where}"))
+        return lines
+
+    def nearest_mirror_line(self, axis: str) -> Optional[tuple[str, float, str]]:
+        """The guide on ``axis`` nearest the selection's center, else the map's
+        center line on that axis."""
+        lines = [line for line in self.mirror_lines() if line[0] == axis]
+        if not lines:
+            return None
+        bounds = self.selection_bounds()
+        guides = lines[1:]
+        if not guides or bounds is None:
+            return lines[0]
+        middle = ((bounds[0] + bounds[2]) / 2.0 if axis == "v"
+                  else (bounds[1] + bounds[3]) / 2.0)
+        return min(guides, key=lambda line: abs(line[1] - middle))
+
+    def mirror_selection(self, axis: str, pos: float) -> list[Piece]:
+        """Place mirrored copies of the selection on the other side of a line.
+        Nodes centered on the line are left alone (their mirror image would
+        land exactly on top of them). The copies become the selection."""
+        if not self.level or axis not in ("v", "h"):
+            return []
+        selected = sorted(self.selected_pieces(), key=lambda piece: piece.z)
+        if not selected:
+            self.statusMessage.emit("Select the nodes to mirror first.")
+            return []
+        copies, skipped = [], 0
+        for piece in selected:
+            data = piece.to_dict()
+            if on_mirror_line(data, axis, pos):
+                skipped += 1
+                continue
+            copies.append(mirror_piece_data(data, axis, pos))
+        if not copies:
+            self.statusMessage.emit(
+                "The selection is centered on that line, so a mirror copy would "
+                "land on top of it.")
+            return []
+        remap_groups(copies)
+        self.push_history("Mirror copy")
+        created = []
+        for data in copies:
+            piece = Piece.from_dict(data)
+            self.level.add(piece)
+            created.append(piece)
+        self.select(created)
+        message = f"Mirrored {len(created)} node(s)."
+        if skipped:
+            message += f" {skipped} centered on the line stayed as they were."
+        self.statusMessage.emit(message)
+        self.dirty.emit()
+        self.update()
+        return created
+
+    def selection_bounds(self) -> Optional[tuple[float, float, float, float]]:
+        selected = self.selected_pieces()
+        if not selected:
+            return None
+        boxes = [self._aabb(piece) for piece in selected]
+        return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+    def duplicate_as_grid(self, rows: int, cols: int, gap_x: float = 0.0,
+                          gap_y: float = 0.0) -> list[Piece]:
+        """Repeat the selection (as one block) in a rows x cols grid, ``gap_x``
+        / ``gap_y`` world px apart. Originals and copies end up selected."""
+        if not self.level:
+            return []
+        selected = sorted(self.selected_pieces(), key=lambda piece: piece.z)
+        bounds = self.selection_bounds()
+        if not selected or bounds is None:
+            self.statusMessage.emit("Select the nodes to repeat first.")
+            return []
+        step_x = max(1.0, bounds[2] - bounds[0] + max(0.0, float(gap_x)))
+        step_y = max(1.0, bounds[3] - bounds[1] + max(0.0, float(gap_y)))
+        offsets = grid_offsets(rows, cols, step_x, step_y)
+        if not offsets:
+            return []
+        from core.project import uuid
+        self.push_history("Duplicate as grid")
+        created = []
+        for dx, dy in offsets:
+            batch = []
+            for piece in selected:
+                data = piece.to_dict()
+                data["id"] = uuid.uuid4().hex
+                data["x"] = piece.x + dx
+                data["y"] = piece.y + dy
+                batch.append(data)
+            remap_groups(batch)
+            for data in batch:
+                copy_piece = Piece.from_dict(data)
+                self.level.add(copy_piece)
+                created.append(copy_piece)
+        self.select(selected + created)
+        self.statusMessage.emit(
+            f"Made {len(offsets)} cop{'y' if len(offsets) == 1 else 'ies'} "
+            f"in a {max(1, int(rows))} x {max(1, int(cols))} grid.")
+        self.dirty.emit()
+        self.update()
+        return created
+
+    def _with_groups(self, pieces) -> list[Piece]:
+        """Grouped ("glued") nodes are picked together: add the other unlocked,
+        visible members of every group in ``pieces``."""
+        pieces = list(pieces)
+        if not self.level:
+            return pieces
+        groups = {piece.group_id for piece in pieces if piece.group_id}
+        if not groups:
+            return pieces
+        blocked = {layer.id for layer in self.level.layers
+                   if layer.locked or not layer.visible}
+        chosen = {piece.id: piece for piece in pieces}
+        for piece in self.level.pieces:
+            if (piece.group_id in groups and piece.id not in chosen
+                    and not piece.locked and piece.layer not in blocked):
+                chosen[piece.id] = piece
+        return list(chosen.values())
 
     def _piece_local_fraction(self, piece: Piece, wx: float, wy: float):
         cx, cy = piece.center
@@ -661,7 +968,7 @@ class CanvasView(QWidget):
         piece = selected[0]
         if piece.is_text or piece.is_patch or piece.is_connector or piece.is_scale_bar:
             return False
-        if piece.crop_rect == [0.0, 0.0, 1.0, 1.0]:
+        if piece.crop_rect == [0.0, 0.0, 1.0, 1.0] and not piece.clip_shapes:
             return False
         crop_w = max(1e-6, piece.crop_rect[2] - piece.crop_rect[0])
         crop_h = max(1e-6, piece.crop_rect[3] - piece.crop_rect[1])
@@ -670,6 +977,8 @@ class CanvasView(QWidget):
         piece.w /= crop_w
         piece.h /= crop_h
         piece.crop_rect = [0.0, 0.0, 1.0, 1.0]
+        piece.clip_shapes = []
+        piece.clone_home = []
         piece.x = center_x - piece.w * piece.scale / 2.0
         piece.y = center_y - piece.h * piece.scale / 2.0
         self.selectionChanged.emit(self.selected_pieces())
@@ -761,6 +1070,8 @@ class CanvasView(QWidget):
         piece.name = os.path.basename(path)
         piece.w, piece.h = float(size.width()), float(size.height())
         piece.crop_rect = [0.0, 0.0, 1.0, 1.0]
+        piece.clip_shapes = []          # the shape of a pasted part doesn't carry over
+        piece.clone_home = []
         piece.x = center_x - piece.w * piece.scale / 2.0
         piece.y = center_y - piece.h * piece.scale / 2.0
         self._cache.pop("emb:" + piece.id, None)
@@ -844,7 +1155,10 @@ class CanvasView(QWidget):
         vw, vh = self.width(), self.height()
         if vw <= 0 or vh <= 0:
             return
-        self.zoom = min(vw / self.project.canvas_w, vh / self.project.canvas_h) * 0.95
+        rail = self.rail_thickness()
+        avail_w, avail_h = max(1, vw - 2 * rail), max(1, vh - 2 * rail)
+        self.zoom = min(avail_w / self.project.canvas_w,
+                        avail_h / self.project.canvas_h) * 0.95
         self.pan_x = (vw - self.project.canvas_w * self.zoom) / 2.0
         self.pan_y = (vh - self.project.canvas_h * self.zoom) / 2.0
         self.update()
@@ -868,6 +1182,636 @@ class CanvasView(QWidget):
         self.pan_y = self.height() / 2.0 - wy * self.zoom
         self.update()
         self.viewChanged.emit()
+
+    # -- placed guides & rails ---------------------------------------------
+    # Thin rails along the inside of the view edges create guides: drag from
+    # the left/right rail for a vertical guide, top/bottom for a horizontal
+    # one, and drag a guide back onto any rail to remove it. Guides belong to
+    # the current level and are undoable, saved, and optionally exported.
+    def _reset_guide_state(self):
+        self._guide_drag = None
+        self._guide_hover = None
+        self._rail_hover = None
+        self._guide_flash = set()
+
+    def rail_thickness(self) -> int:
+        if not self.rails_visible:
+            return 0
+        if self.project is not None and getattr(self.project, "show_coordinates", False):
+            return RAIL_LABELED
+        return RAIL
+
+    def set_rails_visible(self, on: bool):
+        on = bool(on)
+        if on == self.rails_visible:
+            return
+        self.rails_visible = on
+        self._rail_hover = None
+        self._update_quick()
+        self.railsChanged.emit()
+        self.update()
+
+    def set_show_coordinates(self, on: bool):
+        if not self.project:
+            return
+        self.project.show_coordinates = bool(on)
+        self._update_quick()
+        self.railsChanged.emit()
+        self.guideSettingsChanged.emit()
+        self.dirty.emit()
+        self.update()
+
+    GUIDE_FLAGS = ("show_guides", "snap_to_guides", "lock_guides")
+
+    def set_guide_flag(self, name: str, on: bool):
+        """Toggle show_guides, snap_to_guides or lock_guides."""
+        if not self.project or name not in self.GUIDE_FLAGS:
+            return
+        setattr(self.project, name, bool(on))
+        self._guide_hover = None
+        self.guideSettingsChanged.emit()
+        self.dirty.emit()
+        self.update()
+
+    def _rail_at(self, sx: float, sy: float) -> str | None:
+        """Which rail the point is on (corners are dead zones), or None."""
+        t = self.rail_thickness()
+        if not t or not self.project:
+            return None
+        w, h = self.width(), self.height()
+        if not (0 <= sx < w and 0 <= sy < h):
+            return None
+        near_x = sx < t or sx >= w - t
+        near_y = sy < t or sy >= h - t
+        if near_x and near_y:
+            return None
+        if sx < t:
+            return "left"
+        if sx >= w - t:
+            return "right"
+        if sy < t:
+            return "top"
+        if sy >= h - t:
+            return "bottom"
+        return None
+
+    @staticmethod
+    def _rail_axis(side: str) -> str:
+        return "v" if side in ("left", "right") else "h"
+
+    @staticmethod
+    def _split_cursor(axis: str) -> QCursor:
+        return QCursor(Qt.CursorShape.SplitHCursor if axis == "v"
+                       else Qt.CursorShape.SplitVCursor)
+
+    def _guide_screen_pos(self, guide) -> float:
+        return guide.pos * self.zoom + (self.pan_x if guide.axis == "v" else self.pan_y)
+
+    def _guides_visible(self) -> bool:
+        return bool(self.project and self.level
+                    and getattr(self.project, "show_guides", True))
+
+    def _guide_at(self, sx: float, sy: float, include_locked: bool = False):
+        """The visible guide nearest the pointer, within GUIDE_HIT px."""
+        if not self._guides_visible():
+            return None
+        if self.project.lock_guides and not include_locked:
+            return None
+        best, best_d = None, GUIDE_HIT + 0.5
+        for guide in self.level.guides:
+            d = abs((sx if guide.axis == "v" else sy) - self._guide_screen_pos(guide))
+            if d <= best_d:
+                best, best_d = guide, d
+        return best
+
+    def _guide_positions(self, axis: str) -> list[float]:
+        """Guide positions that nodes and tools snap to (when enabled)."""
+        if not (self._guides_visible() and getattr(self.project, "snap_to_guides", True)):
+            return []
+        return self.level.guide_positions(axis)
+
+    def _flash_guides(self, axis: str, pos: float):
+        for guide in self.level.guides:
+            if guide.axis == axis and abs(guide.pos - pos) < 1e-6:
+                self._guide_flash.add(guide.id)
+
+    def _snap_point_to_guides(self, wx: float, wy: float):
+        thr = GUIDE_DIST / max(self.zoom, 1e-6)
+        gx = nearest(wx, self._guide_positions("v"), thr)
+        gy = nearest(wy, self._guide_positions("h"), thr)
+        return (wx if gx is None else gx), (wy if gy is None else gy)
+
+    def _snap_tool_point(self, wx, wy, mods, grid: bool = False):
+        """Point snapping shared by drawing tools: Shift (or a drag started
+        with Shift) snaps to the grid, otherwise a nearby guide pulls the point
+        onto it. Alt places it freely."""
+        if mods & Qt.KeyboardModifier.AltModifier:
+            return wx, wy
+        if grid or mods & Qt.KeyboardModifier.ShiftModifier:
+            cell = self.project.cell_size
+            return snap_value(wx, cell), snap_value(wy, cell)
+        return self._snap_point_to_guides(wx, wy)
+
+    def _guide_snap_value(self, axis: str, raw: float, mods) -> float:
+        """Where a dragged guide lands: a grid line, a node edge or center, or
+        the canvas middle / edge within GUIDE_SNAP px. Alt places it freely."""
+        if mods & Qt.KeyboardModifier.AltModifier or not self.project:
+            return raw
+        thr = GUIDE_SNAP / max(self.zoom, 1e-6)
+        extent = self.project.canvas_w if axis == "v" else self.project.canvas_h
+        targets = [0.0, extent / 2.0, float(extent)]
+        for piece in self.level.pieces:
+            x0, y0, x1, y1 = self._aabb(piece)
+            lo, hi = (x0, x1) if axis == "v" else (y0, y1)
+            targets += [lo, (lo + hi) / 2.0, hi]
+        best = nearest(raw, targets, thr)
+        cell = max(1, self.project.cell_size)
+        line = round(raw / cell) * cell
+        if abs(line - raw) <= thr and (best is None or abs(line - raw) < abs(best - raw) - 1e-9):
+            best = line
+        return raw if best is None else best
+
+    def _begin_guide_drag(self, sx, sy, axis, guide=None):
+        self._guide_drag = {
+            "axis": axis, "id": guide.id if guide else None,
+            "new": guide is None, "orig": guide.pos if guide else None,
+            "pushed": False, "remove": guide is None, "start": (sx, sy),
+            "pos": guide.pos if guide else None, "cursor": None,
+        }
+        self._rail_hover = None
+        self._guide_hover = guide.id if guide else None
+        self.setCursor(self._split_cursor(axis))
+        self.update()
+
+    def _update_guide_drag(self, sx, sy, mods):
+        drag = self._guide_drag
+        level = self.level
+        axis = drag["axis"]
+        remove = (self._rail_at(sx, sy) is not None
+                  or not self.rect().contains(QPoint(int(sx), int(sy))))
+        wx, wy = self.screen_to_world(sx, sy)
+        pos = self._guide_snap_value(axis, wx if axis == "v" else wy, mods)
+        if drag["new"] and drag["id"] is None:
+            if remove:
+                return               # still on the rail: no guide yet
+            self.push_history("Add guide")
+            drag["pushed"] = True
+            if not self.project.show_guides:
+                self.project.show_guides = True
+                self.guideSettingsChanged.emit()
+            guide = Guide(axis=axis, pos=pos)
+            level.guides.append(guide)
+            drag["id"] = guide.id
+        elif not drag["new"] and not drag["pushed"]:
+            x0, y0 = drag["start"]
+            if abs(sx - x0) + abs(sy - y0) < 3:
+                return               # a click, not a drag (yet)
+            self.push_history("Move guide")
+            drag["pushed"] = True
+        guide = level.find_guide(drag["id"])
+        if guide is None:
+            self._guide_drag = None
+            return
+        guide.pos = pos
+        drag.update(pos=pos, remove=remove, cursor=(sx, sy))
+        self.setCursor(self._removal_cursor() if remove else self._split_cursor(axis))
+        self.update()
+
+    def _finish_guide_drag(self, sx, sy):
+        drag, self._guide_drag = self._guide_drag, None
+        level = self.level
+        guide = level.find_guide(drag["id"]) if (level and drag["id"]) else None
+        if guide is not None and drag["pushed"]:
+            if drag["remove"]:
+                if drag["new"]:
+                    # dragged out and straight back: nothing changed
+                    level.guides.remove(guide)
+                    self.historyDiscardLast.emit()
+                else:
+                    self.historyDiscardLast.emit()
+                    guide.pos = drag["orig"]
+                    self.push_history("Remove guide")
+                    level.guides.remove(guide)
+                    self.dirty.emit()
+                    self.statusMessage.emit("Guide removed.")
+            else:
+                self.dirty.emit()
+        self._guide_hover = None
+        self._restore_cursor(sx, sy)
+        self.update()
+
+    def cancel_guide_drag(self) -> bool:
+        """Esc while dragging a guide: put everything back."""
+        drag = self._guide_drag
+        if drag is None:
+            return False
+        self._guide_drag = None
+        level = self.level
+        guide = level.find_guide(drag["id"]) if (level and drag["id"]) else None
+        if guide is not None and drag["pushed"]:
+            if drag["new"]:
+                level.guides.remove(guide)
+            else:
+                guide.pos = drag["orig"]
+            self.historyDiscardLast.emit()
+        self._guide_hover = None
+        self.setCursor(self._default_cursor())
+        self.update()
+        return True
+
+    def _removal_cursor(self) -> QCursor:
+        """A small × shown while a released guide would be removed."""
+        if self._remove_cursor is None:
+            pm = QPixmap(22, 22)
+            pm.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pm)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            for color, width in ((QColor(0, 0, 0, 210), 5.0), (QColor("#ffffff"), 2.2)):
+                pen = QPen(color, width)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.drawLine(QPointF(5, 5), QPointF(17, 17))
+                painter.drawLine(QPointF(17, 5), QPointF(5, 17))
+            painter.end()
+            self._remove_cursor = QCursor(pm, 11, 11)
+        return self._remove_cursor
+
+    def _default_cursor(self) -> QCursor:
+        return QCursor(Qt.CursorShape.CrossCursor if self._any_tool_active()
+                       else Qt.CursorShape.ArrowCursor)
+
+    def _restore_cursor(self, sx, sy):
+        side = self._rail_at(sx, sy)
+        self.setCursor(self._split_cursor(self._rail_axis(side)) if side
+                       else self._default_cursor())
+
+    def _press_target_beats_guide(self, sx, sy) -> bool:
+        """True where a press grabs something that wins over a guide: a zone
+        vertex or edge, or the selected node's resize / rotate handle."""
+        zone = self.selected_zone
+        if zone and self._zone_vertex_at_screen(zone, sx, sy) is not None:
+            return True
+        if self._zone_near_edge(sx, sy):
+            return True
+        if self.selection and len(self.selection) == 1:
+            if self._resize_handle_at(sx, sy):
+                return True
+            hp = self._rotate_handle_screen(next(iter(self.selected_pieces())))
+            if (QPointF(sx, sy) - hp).manhattanLength() <= HANDLE_R + 5:
+                return True
+        return False
+
+    def _update_guide_hover(self, sx, sy) -> bool:
+        """Hover feedback for rails and guides; True when one is under the pointer."""
+        side = self._rail_at(sx, sy)
+        guide = None if (side or self._any_tool_active()) else self._guide_at(sx, sy)
+        if guide is not None and self._press_target_beats_guide(sx, sy):
+            guide = None
+        hover = (side, guide.id if guide else None)
+        was_hovering = bool(self._rail_hover or self._guide_hover)
+        if hover != (self._rail_hover, self._guide_hover):
+            self._rail_hover, self._guide_hover = hover
+            self.update()
+        if side or guide:
+            self.setCursor(self._split_cursor(self._rail_axis(side) if side else guide.axis))
+            return True
+        if was_hovering:
+            self.setCursor(self._default_cursor())
+        return False
+
+    def event(self, e):
+        if e.type() == QEvent.Type.ToolTip and self.project and self.level:
+            text = self._guide_tooltip(e.pos().x(), e.pos().y())
+            if text:
+                QToolTip.showText(e.globalPos(), text, self)
+            else:
+                QToolTip.hideText()
+                e.ignore()
+            return True
+        return super().event(e)
+
+    def _guide_tooltip(self, sx, sy) -> str:
+        side = self._rail_at(sx, sy)
+        if side:
+            kind = "vertical" if self._rail_axis(side) == "v" else "horizontal"
+            return (f"Drag onto the map to add a {kind} guide.\n"
+                    "Drag a guide back onto any rail to remove it.\n"
+                    "Right-click for guide options.")
+        guide = None if self._any_tool_active() else self._guide_at(sx, sy, include_locked=True)
+        if guide is None:
+            return ""
+        where = describe_position(guide.axis, guide.pos, self.project.cell_size,
+                                  getattr(self.project, "feet_per_square", 5))
+        if self.project.lock_guides:
+            return f"Guide at {where} (guides are locked)"
+        return (f"Guide at {where}\nDrag to move, double-click for an exact "
+                "position, drag onto a rail to remove. Alt: no snapping.")
+
+    # Guide edits used by menus and dialogs — each one is a single undo step.
+    def _show_guides_after_edit(self):
+        if not self.project.show_guides:
+            self.project.show_guides = True
+            self.guideSettingsChanged.emit()
+        self.dirty.emit()
+        self.update()
+
+    def add_guide(self, axis: str, pos: float, label: str = "Add guide"):
+        if not self.level or self.level.has_guide(axis, pos):
+            return None
+        self.push_history(label)
+        guide = self.level.add_guide(axis, pos)
+        self._show_guides_after_edit()
+        return guide
+
+    def remove_guide(self, guide_id: str) -> bool:
+        if not self.level or self.level.find_guide(guide_id) is None:
+            return False
+        self.push_history("Remove guide")
+        self.level.remove_guide(guide_id)
+        self._guide_hover = None
+        self.dirty.emit()
+        self.update()
+        return True
+
+    def set_guide_position(self, guide_id: str, pos: float) -> bool:
+        guide = self.level.find_guide(guide_id) if self.level else None
+        if guide is None or not math.isfinite(pos) or abs(guide.pos - pos) < 1e-9:
+            return False
+        self.push_history("Move guide")
+        guide.pos = float(pos)
+        self.dirty.emit()
+        self.update()
+        return True
+
+    def clear_guides(self) -> int:
+        """Remove every guide on the current level."""
+        if not self.level or not self.level.guides:
+            return 0
+        count = len(self.level.guides)
+        self.push_history("Clear guides")
+        self.level.guides.clear()
+        self._guide_hover = None
+        self.dirty.emit()
+        self.update()
+        return count
+
+    def copy_guides_to_all_levels(self) -> int:
+        """Give every other level exactly the current level's guides."""
+        if not self.project or not self.level or len(self.project.levels) < 2:
+            return 0
+        source = [(g.axis, g.pos) for g in self.level.guides]
+        self.push_history("Copy guides to all levels")
+        for level in self.project.levels:
+            if level is not self.level:
+                level.guides = [Guide(axis=a, pos=p) for a, p in source]
+        self.dirty.emit()
+        self.update()
+        return len(self.project.levels) - 1
+
+    def add_guides_around_selection(self, kind: str = "edges") -> int:
+        """Guides at the selection's outer edges, its center, or both."""
+        sel = self.selected_pieces()
+        if not sel or not self.level:
+            return 0
+        boxes = [self._aabb(p) for p in sel]
+        x0, x1 = min(b[0] for b in boxes), max(b[2] for b in boxes)
+        y0, y1 = min(b[1] for b in boxes), max(b[3] for b in boxes)
+        wanted = []
+        if kind in ("edges", "both"):
+            wanted += [("v", x0), ("v", x1), ("h", y0), ("h", y1)]
+        if kind in ("center", "both"):
+            wanted += [("v", (x0 + x1) / 2.0), ("h", (y0 + y1) / 2.0)]
+        wanted = [(a, p) for a, p in dict.fromkeys(wanted)
+                  if not self.level.has_guide(a, p)]
+        if not wanted:
+            return 0
+        self.push_history("Add guides around selection")
+        for axis, pos in wanted:
+            self.level.add_guide(axis, pos)
+        self._show_guides_after_edit()
+        return len(wanted)
+
+    def apply_guide_layout(self, vertical, horizontal, replace: bool = True,
+                           all_levels: bool = False) -> int:
+        """Place guides at world positions computed by the layout dialog."""
+        if not self.project or not self.level:
+            return 0
+        levels = list(self.project.levels) if all_levels else [self.level]
+        wanted = sorted({("v", float(p)) for p in vertical}
+                        | {("h", float(p)) for p in horizontal})
+
+        def result(level):
+            keep = [] if replace else [(g.axis, g.pos) for g in level.guides]
+            return sorted(set(keep) | set(wanted))
+
+        if all(result(lv) == sorted((g.axis, g.pos) for g in lv.guides)
+               for lv in levels):
+            return 0
+        self.push_history("Guide layout")
+        added = 0
+        for level in levels:
+            if replace:
+                level.guides.clear()
+            for axis, pos in wanted:
+                added += level.add_guide(axis, pos) is not None
+        self._show_guides_after_edit()
+        return added
+
+    # drawing ----------------------------------------------------------------
+    def _draw_guides(self, painter):
+        level = self.level
+        if not level or not level.guides:
+            return
+        dragging = self._guide_drag.get("id") if self._guide_drag else None
+        show = self.project.show_guides
+        if not show and dragging is None:
+            return
+        base = exporter.guide_qcolor(self.project)
+        opacity = max(0.1, min(1.0, float(self.project.guide_opacity)))
+        locked = bool(self.project.lock_guides)
+        rect = self._canvas_rect_screen()
+        w, h = self.width(), self.height()
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        for guide in level.guides:
+            if not show and guide.id != dragging:
+                continue
+            at = int(round(self._guide_screen_pos(guide)))
+            if not (-3 <= at <= (w if guide.axis == "v" else h) + 3):
+                continue
+            active = (guide.id in (dragging, self._guide_hover)
+                      or guide.id in self._guide_flash)
+            removing = guide.id == dragging and bool(self._guide_drag.get("remove"))
+            width = 2 if active else 1
+            alpha = opacity * (0.7 if locked and not active else 1.0)
+            if guide.axis == "v":
+                full = (QPoint(at, 0), QPoint(at, h))
+                inside = (QPoint(at, int(max(0.0, rect.top()))),
+                          QPoint(at, int(min(float(h), rect.bottom()))))
+            else:
+                full = (QPoint(0, at), QPoint(w, at))
+                inside = (QPoint(int(max(0.0, rect.left())), at),
+                          QPoint(int(min(float(w), rect.right())), at))
+            halo = QPen(QColor(0, 0, 0, 90))
+            halo.setWidth(width + 2)
+            painter.setOpacity(1.0)
+            painter.setPen(halo)
+            painter.drawLine(*full)
+            pen = QPen(QColor("#9aa3ad") if removing else QColor(base))
+            pen.setWidth(width)
+            if removing:
+                pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.setOpacity(alpha * 0.45)       # dimmer over the pasteboard
+            painter.drawLine(*full)
+            painter.setOpacity(alpha)
+            painter.drawLine(*inside)
+        painter.restore()
+
+    def _draw_rails(self, painter):
+        t = self.rail_thickness()
+        if not t or not self.project:
+            return
+        colors = getattr(self, "theme_colors", None) or theme_colors("dark")
+        w, h = self.width(), self.height()
+        panel = QColor(colors["panel"])
+        panel.setAlpha(235)
+        tick = QColor(colors["muted"])
+        tick.setAlpha(170)
+        text = QColor(colors["text"])
+        text.setAlpha(230)
+        guide_color = exporter.guide_qcolor(self.project)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.setOpacity(1.0)
+        rails = {"top": QRectF(0, 0, w, t), "bottom": QRectF(0, h - t, w, t),
+                 "left": QRectF(0, t, t, h - 2 * t), "right": QRectF(w - t, t, t, h - 2 * t)}
+        drag_side = None
+        if self._guide_drag and self._guide_drag.get("remove"):
+            pointer = self._guide_drag.get("cursor") or self._guide_drag["start"]
+            drag_side = self._rail_at(*pointer)
+        for side, r in rails.items():
+            painter.fillRect(r, panel)
+            if side in (self._rail_hover, drag_side):
+                glow = QColor(guide_color)
+                glow.setAlpha(70)
+                painter.fillRect(r, glow)
+        edge = QColor(colors["muted"])
+        edge.setAlpha(110)
+        painter.setPen(QPen(edge, 1))
+        painter.drawLine(t, t - 1, w - t, t - 1)
+        painter.drawLine(t, h - t, w - t, h - t)
+        painter.drawLine(t - 1, t, t - 1, h - t)
+        painter.drawLine(w - t, t, w - t, h - t)
+        self._draw_rail_scale(painter, True, t, tick, text)
+        self._draw_rail_scale(painter, False, t, tick, text)
+        if self.project.show_guides and self.level:
+            marker = QPen(guide_color)
+            marker.setWidth(2)
+            painter.setPen(marker)
+            for guide in self.level.guides:
+                at = int(round(self._guide_screen_pos(guide)))
+                if guide.axis == "v" and t <= at <= w - t:
+                    painter.drawLine(at, 0, at, t - 1)
+                    painter.drawLine(at, h - t, at, h)
+                elif guide.axis == "h" and t <= at <= h - t:
+                    painter.drawLine(0, at, t - 1, at)
+                    painter.drawLine(w - t, at, w, at)
+        painter.restore()
+
+    def _draw_rail_scale(self, painter, horizontal: bool, t: int, tick: QColor,
+                         text: QColor):
+        """Grid ticks (and coordinates, when enabled) along one pair of rails."""
+        project = self.project
+        cell = max(1, project.cell_size)
+        extent = project.canvas_w if horizontal else project.canvas_h
+        cols, rows = grid_counts(project.canvas_w, project.canvas_h, cell)
+        count = cols if horizontal else rows
+        spacing = cell * self.zoom
+        offset = self.pan_x if horizontal else self.pan_y
+        length = self.width() if horizontal else self.height()
+        far = self.height() if horizontal else self.width()
+        if spacing <= 0:
+            return
+        first = max(0, int(math.floor((t - offset) / spacing)) - 1)
+        last = min(count, int(math.ceil((length - t - offset) / spacing)) + 1)
+        major = max(1, int(project.grid_major or 5))
+        painter.setPen(QPen(tick, 1))
+        for i in range(first, last + 1):
+            if i * cell > extent + 1e-6:
+                break
+            at = int(round(i * spacing + offset))
+            if not (t <= at <= length - t):
+                continue
+            is_major = i % major == 0 or i == count
+            if not is_major and spacing < 5:
+                continue
+            size = max(2, int(t * (0.55 if is_major else 0.3)))
+            if horizontal:
+                painter.drawLine(at, t - 1 - size, at, t - 1)
+                painter.drawLine(at, far - t, at, far - t + size)
+            else:
+                painter.drawLine(t - 1 - size, at, t - 1, at)
+                painter.drawLine(far - t, at, far - t + size, at)
+        if not getattr(project, "show_coordinates", False):
+            return
+        font = QFont(self.font())
+        font.setBold(True)
+        font.setPixelSize(9)
+        metrics = QFontMetricsF(font)
+        name = column_label if horizontal else row_label
+        widest = metrics.horizontalAdvance(name(count - 1))
+        if not horizontal and widest > t - 3:
+            font.setPixelSize(8)
+            metrics = QFontMetricsF(font)
+            widest = metrics.horizontalAdvance(name(count - 1))
+        step = label_step(spacing, widest if horizontal else metrics.height(), 4)
+        painter.setFont(font)
+        painter.setPen(QPen(text))
+        for i in range((first // step) * step, min(count, last + 1), step):
+            center = min((i + 0.5) * cell, extent - min(cell, extent) / 2.0)
+            at = center * self.zoom + offset
+            if not (t + 2 <= at <= length - t - 2):
+                continue
+            label = name(i)
+            if horizontal:
+                boxes = (QRectF(at - 30, 0, 60, t), QRectF(at - 30, far - t, 60, t))
+            else:
+                boxes = (QRectF(0, at - 8, t, 16), QRectF(far - t, at - 8, t, 16))
+            for box in boxes:
+                painter.drawText(box, Qt.AlignmentFlag.AlignCenter, label)
+
+    def _draw_guide_readout(self, painter):
+        drag = self._guide_drag
+        if not drag or drag.get("cursor") is None or drag.get("pos") is None:
+            return
+        if drag.get("remove"):
+            message = "Release to remove"
+        else:
+            message = describe_position(drag["axis"], drag["pos"], self.project.cell_size,
+                                        getattr(self.project, "feet_per_square", 5))
+        colors = getattr(self, "theme_colors", None) or theme_colors("dark")
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        font.setBold(True)
+        metrics = QFontMetricsF(font)
+        bw, bh = metrics.horizontalAdvance(message) + 14, metrics.height() + 8
+        sx, sy = drag["cursor"]
+        bx = min(max(4.0, sx + 16), self.width() - bw - 4)
+        by = min(max(4.0, sy + 16), self.height() - bh - 4)
+        box = QRectF(bx, by, bw, bh)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setOpacity(1.0)
+        fill = QColor(colors["panel"])
+        fill.setAlpha(240)
+        painter.setPen(QPen(exporter.guide_qcolor(self.project), 1))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(box, 4, 4)
+        painter.setFont(font)
+        painter.setPen(QColor(colors["text"]))
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, message)
+        painter.restore()
 
     # ------------------------------------------------------------------
     def selected_pieces(self) -> list[Piece]:
@@ -907,7 +1851,8 @@ class CanvasView(QWidget):
                     lock_button.setToolTip("Lock all selected nodes")
             if self.quick_enabled:
                 self.quick.show()
-                self.quick.move(self.width() - self.quick.width() - 6, 6)
+                rail = self.rail_thickness()
+                self.quick.move(self.width() - self.quick.width() - 6 - rail, 6 + rail)
             else:
                 self.quick.hide()
         else:
@@ -995,11 +1940,7 @@ class CanvasView(QWidget):
         name = asset.name if asset else store_rel_path.split("/")[-1]
         p = Piece(asset_path=store_rel_path, name=name, w=w, h=h,
                   is_overlay=is_overlay, snap=not is_overlay)
-        p.x = world_x - w / 2.0
-        p.y = world_y - h / 2.0
-        if p.snap:
-            p.x = snap_value(p.x, self.project.cell_size)
-            p.y = snap_value(p.y, self.project.cell_size)
+        p.x, p.y = self._drop_origin(world_x, world_y, w, h, p.snap)
         self.push_history("Add node")
         self.level.add(p)
         self.select([p])
@@ -1007,6 +1948,25 @@ class CanvasView(QWidget):
         if self.auto_tighten and not is_overlay:
             self.tighten_piece_async(p, only_if_untouched=True)
         return p
+
+    def _drop_origin(self, wx, wy, w, h, snap=True):
+        """Top-left for a w x h node dropped at (wx, wy): grid-snapped as
+        before, unless a nearby guide pulls an edge or the center onto it."""
+        x, y = wx - w / 2.0, wy - h / 2.0
+        cell = self.project.cell_size
+        out_x = snap_value(x, cell) if snap else x
+        out_y = snap_value(y, cell) if snap else y
+        thr = GUIDE_DIST / max(self.zoom, 1e-6)
+        guide_xs, guide_ys = self._guide_positions("v"), self._guide_positions("h")
+        if guide_xs:
+            tx, hit = self._nearest_target(x, (0.0, w / 2.0, w), guide_xs, thr, None)
+            if hit is not None:
+                out_x = tx
+        if guide_ys:
+            ty, hit = self._nearest_target(y, (0.0, h / 2.0, h), guide_ys, thr, None)
+            if hit is not None:
+                out_y = ty
+        return out_x, out_y
 
     # -- tighten to visible pixels ---------------------------------------
     def tighten_piece_async(self, piece: Piece, only_if_untouched=False,
@@ -1093,7 +2053,13 @@ class CanvasView(QWidget):
             min(1.0, bounds[2] + pad / kx) if sides[2] else 1.0,
             min(1.0, bounds[3] + pad / ky) if sides[3] else 1.0,
         ]
-        if target[2] - target[0] < 0.02 or target[3] - target[1] < 0.02:
+        if piece.clip_shapes:
+            # a pasted part only ever shrinks inside the piece it already shows
+            target = [max(target[0], crop[0]), max(target[1], crop[1]),
+                      min(target[2], crop[2]), min(target[3], crop[3])]
+            if target[2] - target[0] <= 1e-4 or target[3] - target[1] <= 1e-4:
+                return False
+        elif target[2] - target[0] < 0.02 or target[3] - target[1] < 0.02:
             return False
         if all(abs(a - b) < 0.0005 for a, b in zip(target, crop)):
             return False                      # already exactly this tight
@@ -1324,7 +2290,7 @@ class CanvasView(QWidget):
         """Snap the dragged edge/corner to grid lines and neighbor edges.
         Only for upright (multiples of 90°) nodes, where handle axes line up
         with the world axes."""
-        self._guides = []
+        self._smart_guides = []
         quarter = round(drag["rot"] / 90.0)
         if abs(drag["rot"] - quarter * 90.0) > 0.01:
             return wx, wy
@@ -1343,6 +2309,10 @@ class CanvasView(QWidget):
         mid_x, mid_y = self._canvas_middle_lines()
         xs += mid_x
         ys += mid_y
+        guide_xs, guide_ys = self._guide_positions("v"), self._guide_positions("h")
+        xs += guide_xs
+        ys += guide_ys
+        self._guide_flash = set()
 
         def pick(value, edges):
             best, guide = value, None
@@ -1360,11 +2330,17 @@ class CanvasView(QWidget):
         if hx:
             wx, gx = pick(wx, xs)
             if gx is not None:
-                self._guides.append(("v", gx))
+                if gx in guide_xs:
+                    self._flash_guides("v", gx)
+                else:
+                    self._smart_guides.append(("v", gx))
         if hy:
             wy, gy = pick(wy, ys)
             if gy is not None:
-                self._guides.append(("h", gy))
+                if gy in guide_ys:
+                    self._flash_guides("h", gy)
+                else:
+                    self._smart_guides.append(("h", gy))
         return wx, wy
 
     def _piece_rect_screen(self, p: Piece) -> QRectF:
@@ -1407,8 +2383,12 @@ class CanvasView(QWidget):
         self._draw_zone_tool_preview(painter)
         self._draw_patch_tool_preview(painter)
         self._draw_compose_tool_previews(painter)
+        self._draw_stamp_preview(painter)
+        self._draw_cutout_overlay(painter)
+        self._draw_clone_overlay(painter)
         if self.selected_zone:
             self._draw_zone_edit_overlay(painter, self.selected_zone)
+        self._draw_guides(painter)
 
         # selection outlines
         for p in self.selected_pieces():
@@ -1432,7 +2412,7 @@ class CanvasView(QWidget):
             painter.fillRect(r, QColor(0, 255, 180, 25))
             painter.drawRect(r)
 
-        for g in self._guides:
+        for g in self._smart_guides:
             pen = QPen(QColor("#ff5a5a"))
             pen.setWidthF(1)
             painter.setPen(pen)
@@ -1446,6 +2426,8 @@ class CanvasView(QWidget):
         if self._group_rotate:
             self._draw_group_arrows(painter)
 
+        self._draw_rails(painter)
+        self._draw_guide_readout(painter)
         painter.end()
 
     def _canvas_middle_lines(self):
@@ -1453,6 +2435,20 @@ class CanvasView(QWidget):
         if not self.project or not getattr(self.project, "show_centerlines", False):
             return [], []
         return [self.project.canvas_w / 2.0], [self.project.canvas_h / 2.0]
+
+    def _centerline_at(self, sx: float, sy: float) -> Optional[str]:
+        """Return "v" or "h" when the pointer is on a visible canvas centerline."""
+        if not self.project or not getattr(self.project, "show_centerlines", False):
+            return None
+        rect = self._canvas_rect_screen()
+        if not rect.adjusted(-GUIDE_HIT, -GUIDE_HIT, GUIDE_HIT, GUIDE_HIT).contains(
+                QPointF(sx, sy)):
+            return None
+        if abs(sx - rect.center().x()) <= GUIDE_HIT:
+            return "v"
+        if abs(sy - rect.center().y()) <= GUIDE_HIT:
+            return "h"
+        return None
 
     def _draw_canvas_centerlines(self, painter):
         """Vertical and horizontal lines through the middle of the canvas, for
@@ -1531,10 +2527,35 @@ class CanvasView(QWidget):
         painter.restore()
 
     def _draw_bg(self, painter):
+        """The level's backdrop: a color, a tiled floor texture, or (when it is
+        transparent) an editor-only checkerboard."""
         x0, y0 = self.world_to_screen(0, 0)
         w = self.project.canvas_w * self.zoom
         h = self.project.canvas_h * self.zoom
-        painter.fillRect(QRectF(x0, y0, w, h), QColor(self.level.background))
+        rect = QRectF(x0, y0, w, h)
+        if exporter.backdrop_is_transparent(self.level):
+            painter.fillRect(rect, self._checker_brush(x0, y0))
+            return
+        exporter.draw_backdrop(painter, self.project, self.level, rect, self.zoom,
+                               self._cache, origin=(x0, y0))
+
+    def _checker_brush(self, x0: float, y0: float) -> QBrush:
+        """Grey checkerboard that marks a transparent backdrop on screen."""
+        dark = self.theme_mode != "light"
+        key = ("checker", dark)
+        tile = getattr(self, "_checker_tiles", {}).get(key)
+        if tile is None:
+            tile = QPixmap(16, 16)
+            tile.fill(QColor("#2b2f36" if dark else "#e4e6ea"))
+            tile_painter = QPainter(tile)
+            other = QColor("#363b44" if dark else "#cfd3d9")
+            tile_painter.fillRect(0, 0, 8, 8, other)
+            tile_painter.fillRect(8, 8, 8, 8, other)
+            tile_painter.end()
+            self._checker_tiles = {**getattr(self, "_checker_tiles", {}), key: tile}
+        brush = QBrush(tile)
+        brush.setTransform(QTransform.fromTranslate(x0, y0))
+        return brush
 
     def _draw_grid(self, painter, color, opacity):
         """Grid lines are anchored to the map origin (world x/y = 0), so they
@@ -1609,8 +2630,7 @@ class CanvasView(QWidget):
         # landing box of a piece being dragged in from the library / OS
         if self._drop_target is not None:
             dw, dh = self._drop_target
-            target = (snap_value(wx - dw / 2.0, cell),
-                      snap_value(wy - dh / 2.0, cell), dw, dh)
+            target = (*self._drop_origin(wx, wy, dw, dh, True), dw, dh)
         elif self._drag and self._drag.get("mode") == "move":
             prim = self._drag.get("primary")
             if prim is not None and prim.id in self.selection:
@@ -1660,19 +2680,18 @@ class CanvasView(QWidget):
         if not (0 <= idx < len(self.project.levels)):
             return
         lvl = self.project.levels[idx]
-        prev = painter.opacity()
-        painter.setOpacity(self.ref_opacity)
         for p in lvl.paint_order():
-            self._draw_piece(painter, p, 1.0)
-        painter.setOpacity(prev)
+            # the ghosted floor is drawn at the reference opacity
+            self._draw_piece(painter, p, self.ref_opacity, mark_missing=False)
 
-    def _draw_piece(self, painter, p: Piece, opacity: float):
-        target_size = (max(1, round(p.w * p.scale * self.zoom)),
-                       max(1, round(p.h * p.scale * self.zoom)))
-        pm = self.pixmap(p, target_size)
+    def _draw_piece(self, painter, p: Piece, opacity: float, mark_missing: bool = True):
+        pm = self.pixmap(p, exporter.source_target_size(p, self.zoom))
         cx, cy = p.center
         scx, scy = self.world_to_screen(cx, cy)
         lyr = self.level.layer_by_id(p.layer)
+        if lyr is None and self.project:
+            lyr = next((layer for level in self.project.levels
+                        for layer in level.layers if layer.id == p.layer), None)
         lop = lyr.opacity if lyr else 1.0
         painter.save()
         painter.translate(scx, scy)
@@ -1680,10 +2699,43 @@ class CanvasView(QWidget):
         sx = self.zoom * p.scale * (-1 if p.flip_h else 1)
         sy = self.zoom * p.scale * (-1 if p.flip_v else 1)
         painter.scale(sx, sy)
-        painter.setOpacity(lop * p.opacity)
+        painter.setOpacity(max(0.0, min(1.0, opacity)) * lop * p.opacity)
         draw_piece(painter, p, pm, self.project)
         if self.project.show_node_borders:
             draw_node_border(painter, p, pm, self.project)
+        painter.restore()
+        is_image = not (p.is_text or p.is_patch or p.is_scale_bar or p.is_connector)
+        if (mark_missing and is_image and (p.asset_path or p.embedded)
+                and (pm is None or pm.isNull())):
+            self._draw_missing_marker(painter, p)
+
+    def _draw_missing_marker(self, painter, p: Piece):
+        """Editor-only hint over an image that can't be found (exports just show
+        the grey box): a red dashed outline and the file name."""
+        corners = self._piece_corners_screen(p)
+        painter.save()
+        pen = QPen(QColor("#ff4d4d"))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setWidthF(1.5)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in corners]))
+        xs = [x for x, _y in corners]
+        ys = [y for _x, y in corners]
+        box = QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+        if box.width() >= 40 and box.height() >= 18:
+            name = os.path.basename(p.asset_path.replace("\\", "/")) or p.name
+            font = QFont(painter.font())
+            font.setPixelSize(11)
+            painter.setFont(font)
+            metrics = QFontMetricsF(font)
+            text = metrics.elidedText(f"Missing: {name}", Qt.TextElideMode.ElideMiddle,
+                                      max(30.0, box.width() - 8))
+            label = QRectF(box.center().x() - (metrics.horizontalAdvance(text) + 10) / 2,
+                           box.center().y() - 9, metrics.horizontalAdvance(text) + 10, 18)
+            painter.fillRect(label, QColor(20, 6, 6, 200))
+            painter.setPen(QColor("#ffb3b3"))
+            painter.drawText(label, Qt.AlignmentFlag.AlignCenter, text)
         painter.restore()
 
     def _draw_patch_tool_preview(self, painter):
@@ -1861,10 +2913,16 @@ class CanvasView(QWidget):
         return self.level.selectable_at(wx, wy) if self.level else None
 
     def _tool_press(self, sx, sy, event):
+        if self.cutout_tool:
+            return self._cutout_press(sx, sy, event)
+        if self.clone_tool:
+            return self._clone_press(sx, sy, event)
         wx, wy = self.screen_to_world(sx, sy)
         left = event.button() == Qt.MouseButton.LeftButton
         right = event.button() == Qt.MouseButton.RightButton
         snap = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        # grid with Shift, otherwise pulled onto a nearby guide (Alt = free)
+        pwx, pwy = self._snap_tool_point(wx, wy, event.modifiers())
         if snap:
             wx = snap_value(wx, self.project.cell_size)
             wy = snap_value(wy, self.project.cell_size)
@@ -1872,8 +2930,8 @@ class CanvasView(QWidget):
             if right:
                 self.cancel_extra_tool()
             elif left:
-                self._place_stamp(wx, wy)
-                self._stamp_drag_last = (wx, wy)
+                self._place_stamp(pwx, pwy)
+                self._stamp_drag_last = (pwx, pwy)
             else:
                 return False
             event.accept()
@@ -1885,7 +2943,7 @@ class CanvasView(QWidget):
                 piece = next((p for p in self.level.pieces
                               if p.id == self._crop_target_id), None)
                 if piece:
-                    fx, fy = self._piece_local_fraction(piece, wx, wy)
+                    fx, fy = self._piece_local_fraction(piece, pwx, pwy)
                     if 0 <= fx <= 1 and 0 <= fy <= 1:
                         self._crop_drag = {"start": (fx, fy), "current": (fx, fy)}
                         self._crop_preview = (fx, fy, fx, fy)
@@ -1910,7 +2968,7 @@ class CanvasView(QWidget):
                 self.cancel_extra_tool()
             elif left:
                 self._ruler_result = None
-                self._ruler_drag = {"start": (wx, wy), "current": (wx, wy),
+                self._ruler_drag = {"start": (pwx, pwy), "current": (pwx, pwy),
                                     "snap": snap}
                 self.update()
             else:
@@ -1921,7 +2979,7 @@ class CanvasView(QWidget):
             if right:
                 self.cancel_extra_tool()
             elif left:
-                self._scale_drag = {"start": (wx, wy), "current": (wx, wy),
+                self._scale_drag = {"start": (pwx, pwy), "current": (pwx, pwy),
                                     "snap": snap}
                 self.update()
             else:
@@ -1932,7 +2990,7 @@ class CanvasView(QWidget):
             if right:
                 self.cancel_extra_tool()
             elif left:
-                self._connector_drag = {"start": (wx, wy), "current": (wx, wy),
+                self._connector_drag = {"start": (pwx, pwy), "current": (pwx, pwy),
                                         "snap": snap}
                 self.update()
             else:
@@ -1956,7 +3014,15 @@ class CanvasView(QWidget):
     def _tool_move(self, sx, sy, event):
         wx, wy = self.screen_to_world(sx, sy)
         self._cursor_world = (wx, wy)
+        if self.cutout_tool and self._cutout_motion(sx, sy, event):
+            return True
+        if self.clone_tool and self._clone_motion(sx, sy, event):
+            return True
         if self.stamp_tool and self._stamp_drag_last is not None:
+            if self._stamp_edge:
+                self._place_stamp(wx, wy)      # skips spots already filled
+                self.update()
+                return True
             lx, ly = self._stamp_drag_last
             template = Piece.from_dict(self._stamp_template or {})
             spacing = max(8.0, min(template.vis_w, template.vis_h) * 0.75)
@@ -1969,7 +3035,8 @@ class CanvasView(QWidget):
             piece = next((p for p in self.level.pieces
                           if p.id == self._crop_target_id), None)
             if piece:
-                fx, fy = self._piece_local_fraction(piece, wx, wy)
+                fx, fy = self._piece_local_fraction(
+                    piece, *self._snap_tool_point(wx, wy, event.modifiers()))
                 fx, fy = self._clamp_crop_fraction(fx), self._clamp_crop_fraction(fy)
                 self._crop_drag["current"] = (fx, fy)
                 x0, y0 = self._crop_drag["start"]
@@ -1980,9 +3047,8 @@ class CanvasView(QWidget):
             return True
         for drag in (self._ruler_drag, self._scale_drag, self._connector_drag):
             if drag is not None:
-                if drag.get("snap") or event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                    wx = snap_value(wx, self.project.cell_size)
-                    wy = snap_value(wy, self.project.cell_size)
+                wx, wy = self._snap_tool_point(wx, wy, event.modifiers(),
+                                               grid=bool(drag.get("snap")))
                 drag["current"] = (wx, wy)
                 self.cursorMoved.emit(wx, wy)
                 self.update()
@@ -2010,9 +3076,14 @@ class CanvasView(QWidget):
         return inside
 
     def _tool_release(self, sx, sy, event):
+        if self.cutout_tool and self._cutout_release(sx, sy, event):
+            return True
+        if self.clone_tool and self._clone_release(sx, sy, event):
+            return True
         wx, wy = self.screen_to_world(sx, sy)
         if self.stamp_tool and self._stamp_drag_last is not None:
             self._stamp_drag_last = None
+            self._stamp_last_spot = None
             event.accept()
             return True
         if self._crop_drag:
@@ -2022,7 +3093,8 @@ class CanvasView(QWidget):
             piece = next((p for p in self.level.pieces
                           if p.id == self._crop_target_id), None)
             if piece:
-                fx, fy = self._piece_local_fraction(piece, wx, wy)
+                fx, fy = self._piece_local_fraction(
+                    piece, *self._snap_tool_point(wx, wy, event.modifiers()))
                 x0, y0 = drag["start"]
                 if self._apply_crop(piece, (x0, y0, fx, fy)):
                     self.set_crop_tool(False)
@@ -2032,9 +3104,8 @@ class CanvasView(QWidget):
             return True
         if self._ruler_drag:
             drag = self._ruler_drag
-            if drag.get("snap") or event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                wx = snap_value(wx, self.project.cell_size)
-                wy = snap_value(wy, self.project.cell_size)
+            wx, wy = self._snap_tool_point(wx, wy, event.modifiers(),
+                                           grid=bool(drag.get("snap")))
             self._ruler_result = (drag["start"], (wx, wy))
             self._ruler_drag = None
             self.update()
@@ -2042,9 +3113,8 @@ class CanvasView(QWidget):
             return True
         if self._scale_drag:
             drag = self._scale_drag
-            if drag.get("snap") or event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                wx = snap_value(wx, self.project.cell_size)
-                wy = snap_value(wy, self.project.cell_size)
+            wx, wy = self._snap_tool_point(wx, wy, event.modifiers(),
+                                           grid=bool(drag.get("snap")))
             start = drag["start"]
             self._scale_drag = None
             self._create_scale_bar(start, (wx, wy))
@@ -2053,9 +3123,8 @@ class CanvasView(QWidget):
             return True
         if self._connector_drag:
             drag = self._connector_drag
-            if drag.get("snap") or event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                wx = snap_value(wx, self.project.cell_size)
-                wy = snap_value(wy, self.project.cell_size)
+            wx, wy = self._snap_tool_point(wx, wy, event.modifiers(),
+                                           grid=bool(drag.get("snap")))
             start = drag["start"]
             self._connector_drag = None
             if math.dist(start, (wx, wy)) >= 4:
@@ -2070,6 +3139,7 @@ class CanvasView(QWidget):
             if len(points) >= 3:
                 hits = [piece for piece in self.level.pieces
                         if not piece.locked and self._point_in_polygon(piece.center, points)]
+                hits = self._with_groups(hits)
                 if not self._lasso_add:
                     self.select(hits)
                 else:
@@ -2081,6 +3151,12 @@ class CanvasView(QWidget):
         return False
 
     def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Escape and self.cancel_guide_drag():
+            e.accept()
+            return
+        if self.handle_cutout_key(e) or self.handle_clone_key(e):
+            e.accept()
+            return
         if e.key() == Qt.Key.Key_Escape:
             if self.end_free_transform(False):
                 e.accept()
@@ -2107,6 +3183,16 @@ class CanvasView(QWidget):
         if not self.project or not self.level:
             return
         sx, sy = e.position().x(), e.position().y()
+        if self._guide_drag is not None:
+            e.accept()               # finish the guide drag before anything else
+            return
+        if (e.button() == Qt.MouseButton.LeftButton
+                and self._color_pick_callback is None):
+            side = self._rail_at(sx, sy)
+            if side:
+                self._begin_guide_drag(sx, sy, self._rail_axis(side))
+                e.accept()
+                return
         if self._color_pick_callback is not None:
             if e.button() in (Qt.MouseButton.RightButton,
                               Qt.MouseButton.MiddleButton):
@@ -2130,7 +3216,7 @@ class CanvasView(QWidget):
                 e.accept()
                 return
             if e.button() == Qt.MouseButton.LeftButton:
-                wx, wy = self.screen_to_world(sx, sy)
+                wx, wy = self._snap_tool_point(*self.screen_to_world(sx, sy), e.modifiers())
                 self._cursor_world = (wx, wy)
                 self._patch_drag_start = (wx, wy)
                 self._patch_preview = (wx, wy, wx, wy)
@@ -2147,7 +3233,7 @@ class CanvasView(QWidget):
                 e.accept()
                 return
             if e.button() == Qt.MouseButton.LeftButton:
-                wx, wy = self.screen_to_world(sx, sy)
+                wx, wy = self._snap_tool_point(*self.screen_to_world(sx, sy), e.modifiers())
                 self._cursor_world = (wx, wy)
                 if self.zone_tool == "rectangle":
                     self._zone_drag_start = (wx, wy)
@@ -2199,19 +3285,32 @@ class CanvasView(QWidget):
                 self._drag = {"mode": "rotate", "center": next(iter(self.selected_pieces())).center}
                 self.push_history("Rotate")
                 return
+        if e.button() == Qt.MouseButton.LeftButton and not self._any_tool_active():
+            guide = self._guide_at(sx, sy)
+            if guide is not None:
+                self._begin_guide_drag(sx, sy, guide.axis, guide)
+                return
         hit = self._piece_at_screen(sx, sy)
         mods = e.modifiers()
         if hit:
+            # grouped nodes are picked together; Ctrl+click picks just one
+            single = bool(mods & Qt.KeyboardModifier.ControlModifier)
+            members = [hit] if single else self._with_groups([hit])
             if mods & Qt.KeyboardModifier.ShiftModifier:
                 if hit.id in self.selection:
-                    self.selection.discard(hit.id)
+                    for member in members:
+                        self.selection.discard(member.id)
                 else:
-                    self.selection.add(hit.id)
+                    for member in members:
+                        self.selection.add(member.id)
                 self.select(self.selected_pieces())
                 self.update()
                 return
-            if hit.id not in self.selection:
-                self.select([hit])
+            if single:
+                if self.selection != {hit.id}:
+                    self.select([hit])
+            elif hit.id not in self.selection:
+                self.select(members)
             self._start_move(sx, sy, hit)
         else:
             zone = next((item for item in reversed(self.level.zones)
@@ -2259,10 +3358,18 @@ class CanvasView(QWidget):
             return
         wx, wy = self.screen_to_world(sx, sy)
         self._cursor_world = (wx, wy)
+        if self._guide_drag is not None:
+            self._update_guide_drag(sx, sy, e.modifiers())
+            self.cursorMoved.emit(wx, wy)
+            return
+        if self.stamp_tool:
+            self._stamp_hover = self._snap_tool_point(wx, wy, e.modifiers())
+            self.update()
         if self._tool_move(sx, sy, e):
             return
         if self._patch_drag_start is not None and self.patch_tool:
             x0, y0 = self._patch_drag_start
+            wx, wy = self._snap_tool_point(wx, wy, e.modifiers())
             self._patch_preview = (min(x0, wx), min(y0, wy),
                                    max(x0, wx), max(y0, wy))
             self.cursorMoved.emit(wx, wy)
@@ -2270,6 +3377,7 @@ class CanvasView(QWidget):
             return
         if self._zone_drag_start is not None and self.zone_tool == "rectangle":
             x0, y0 = self._zone_drag_start
+            wx, wy = self._snap_tool_point(wx, wy, e.modifiers())
             self._zone_preview = (min(x0, wx), min(y0, wy),
                                   max(x0, wx), max(y0, wy))
             self.cursorMoved.emit(wx, wy)
@@ -2285,7 +3393,7 @@ class CanvasView(QWidget):
                 zone = edit["zone"]
                 if edit["kind"] == "vertex":
                     points = list(edit["points"])
-                    points[edit["index"]] = (wx, wy)
+                    points[edit["index"]] = self._snap_tool_point(wx, wy, e.modifiers())
                     zone.points = points
                 else:
                     zone.points = [(x + dx, y + dy)
@@ -2295,6 +3403,9 @@ class CanvasView(QWidget):
             self.cursorMoved.emit(wx, wy)
             return
         if self._drag is None:
+            if self._update_guide_hover(sx, sy):
+                self.cursorMoved.emit(wx, wy)
+                return
             if self.selection and len(self.selection) == 1:
                 hp = self._rotate_handle_screen(next(iter(self.selected_pieces())))
                 self._hover_handle = (QPointF(sx, sy) - hp).manhattanLength() <= HANDLE_R + 5
@@ -2320,7 +3431,7 @@ class CanvasView(QWidget):
             self.update()
             self.viewChanged.emit()
         elif mode == "move":
-            self._move_selected(sx, sy)
+            self._move_selected(sx, sy, e.modifiers())
             self.update()
         elif mode == "rotate":
             self._rotate_primary(sx, sy, e)
@@ -2341,9 +3452,10 @@ class CanvasView(QWidget):
         self._cursor_world = (wx, wy)
         self.cursorMoved.emit(wx, wy)
 
-    def _move_selected(self, sx, sy):
+    def _move_selected(self, sx, sy, mods=Qt.KeyboardModifier.NoModifier):
         """Move the selection rigidly; the primary picks the nearest target
-        (grid line or another piece's edge) and everything follows it."""
+        (grid line, another piece's edge, a centerline or a placed guide) and
+        everything follows it. Hold Alt to place freely without snapping."""
         wx, wy = self.screen_to_world(sx, sy)
         offs = self._drag["offs"]
         sel = self.selected_pieces()
@@ -2357,6 +3469,14 @@ class CanvasView(QWidget):
         cell = max(1, self.project.cell_size)
         raw_x = wx - offs[primary.id][0]
         raw_y = wy - offs[primary.id][1]
+        self._guide_flash = set()
+        if mods & Qt.KeyboardModifier.AltModifier:
+            dx, dy = raw_x - primary.x, raw_y - primary.y
+            for p in sel:
+                p.x += dx
+                p.y += dy
+            self._smart_guides = []
+            return
 
         # gather other pieces' visual edges (x and y), rotation-aware
         thr = GUIDE_DIST / max(self.zoom, 1e-6)
@@ -2373,6 +3493,10 @@ class CanvasView(QWidget):
         mid_x, mid_y = self._canvas_middle_lines()
         x_edges += mid_x
         y_edges += mid_y
+        # placed guides go last so they win ties against neighbors and the grid
+        guide_xs, guide_ys = self._guide_positions("v"), self._guide_positions("h")
+        x_edges += guide_xs
+        y_edges += guide_ys
         tgt_x, guide_x = self._nearest_target(raw_x, x_offs, x_edges, thr, grid)
         tgt_y, guide_y = self._nearest_target(raw_y, y_offs, y_edges, thr, grid)
 
@@ -2383,11 +3507,14 @@ class CanvasView(QWidget):
             p.x += dx
             p.y += dy
 
-        self._guides = []
-        if guide_x is not None:
-            self._guides.append(("v", guide_x))
-        if guide_y is not None:
-            self._guides.append(("h", guide_y))
+        self._smart_guides = []
+        for axis, line, placed in (("v", guide_x, guide_xs), ("h", guide_y, guide_ys)):
+            if line is None:
+                continue
+            if line in placed:
+                self._flash_guides(axis, line)      # the guide itself lights up
+            else:
+                self._smart_guides.append((axis, line))
 
     @staticmethod
     def _aabb(p: Piece) -> tuple[float, float, float, float]:
@@ -2489,11 +3616,17 @@ class CanvasView(QWidget):
                 sum(p.center[1] for p in sel) / len(sel))
 
     def mouseReleaseEvent(self, e):
+        if self._guide_drag is not None:
+            if e.button() == Qt.MouseButton.LeftButton:
+                self._finish_guide_drag(e.position().x(), e.position().y())
+            e.accept()
+            return
         if self._tool_release(e.position().x(), e.position().y(), e):
             return
         if self._patch_drag_start is not None:
             x0, y0 = self._patch_drag_start
-            wx, wy = self.screen_to_world(e.position().x(), e.position().y())
+            wx, wy = self._snap_tool_point(
+                *self.screen_to_world(e.position().x(), e.position().y()), e.modifiers())
             self._patch_drag_start = None
             self._patch_preview = None
             if abs(wx - x0) >= 2 and abs(wy - y0) >= 2:
@@ -2505,7 +3638,8 @@ class CanvasView(QWidget):
             return
         if self._zone_drag_start is not None:
             x0, y0 = self._zone_drag_start
-            wx, wy = self.screen_to_world(e.position().x(), e.position().y())
+            wx, wy = self._snap_tool_point(
+                *self.screen_to_world(e.position().x(), e.position().y()), e.modifiers())
             self._zone_drag_start = None
             self._zone_preview = None
             if abs(wx - x0) >= 2 and abs(wy - y0) >= 2:
@@ -2535,7 +3669,8 @@ class CanvasView(QWidget):
             return
         if self._drag and self._drag["mode"] == "resize":
             self._drag = None
-            self._guides = []
+            self._smart_guides = []
+            self._guide_flash = set()
             self.selectionChanged.emit(self.selected_pieces())   # refresh inspector
             self.dirty.emit()
             self.update()
@@ -2549,10 +3684,12 @@ class CanvasView(QWidget):
             self._select_marquee(self._drag.get("add", False))
             self._marquee = None
         self._drag = None
-        self._guides = []
+        self._smart_guides = []
+        self._guide_flash = set()
         if (self.zone_tool or self.patch_tool or self.stamp_tool or self.crop_tool
                 or self.ruler_tool or self.scale_tool or self.connector_tool
-                or self.lasso_tool or self.copy_style_mode):
+                or self.lasso_tool or self.copy_style_mode or self.cutout_tool
+                or self.clone_tool):
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -2562,13 +3699,26 @@ class CanvasView(QWidget):
         return bool(self.zone_tool or self.patch_tool or self.stamp_tool
                     or self.crop_tool or self.ruler_tool or self.scale_tool
                     or self.connector_tool or self.lasso_tool
-                    or self.copy_style_mode or self._color_pick_callback)
+                    or self.copy_style_mode or self.cutout_tool or self.clone_tool
+                    or self._color_pick_callback)
 
     def _open_context_menu(self, e):
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        sx, sy = e.position().x(), e.position().y()
+        side = self._rail_at(sx, sy)
+        guide = None if side else self._guide_at(sx, sy, include_locked=True)
+        if side or guide:
+            self.guideMenuRequested.emit(e.globalPosition().toPoint(),
+                                         {"rail": side} if side else {"guide": guide.id})
+            return
         hit = self._piece_at_screen(e.position().x(), e.position().y())
+        line = self._centerline_at(sx, sy) if hit is None else None
+        if line:
+            self.guideMenuRequested.emit(e.globalPosition().toPoint(),
+                                         {"centerline": line})
+            return
         if hit is not None and hit.id not in self.selection:
-            self.select([hit])
+            self.select(self._with_groups([hit]))
         elif hit is None:
             self.clear_selection()
         self.update()
@@ -2584,10 +3734,20 @@ class CanvasView(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self._cutout_double_click():
+            e.accept()
+            return
         if self.zone_tool == "polygon" and e.button() == Qt.MouseButton.LeftButton:
             self.finish_zone_polygon()
             e.accept()
             return
+        if e.button() == Qt.MouseButton.LeftButton and not self._any_tool_active():
+            guide = self._guide_at(e.position().x(), e.position().y())
+            if guide is not None:
+                self._guide_drag = None
+                self.guideEditRequested.emit(guide.id)
+                e.accept()
+                return
         super().mouseDoubleClickEvent(e)
 
     def _select_marquee(self, add):
@@ -2597,6 +3757,7 @@ class CanvasView(QWidget):
         hits = [p for p in self.level.paint_order()
                 if not (p.locked) and m.intersects(
                     QRectF(p.x, p.y, p.w * p.scale, p.h * p.scale))]
+        hits = self._with_groups(hits)
         if not add:
             self.selection.clear()
         for p in hits:
@@ -2614,6 +3775,12 @@ class CanvasView(QWidget):
     def leaveEvent(self, e):
         self.cursorMoved.emit(-1, -1)
         self._cursor_world = (-1, -1)
+        if self._stamp_hover is not None:
+            self._stamp_hover = None
+            self.update()
+        if self._rail_hover or self._guide_hover:
+            self._rail_hover = self._guide_hover = None
+            self.update()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -2693,10 +3860,11 @@ class CanvasView(QWidget):
             return
         self.push_history("Duplicate")
         new_ids = []
-        for p in sel:
-            np = Piece(**p.to_dict())
-            np.id = None
-            from core.project import uuid
+        from core.project import uuid
+        batch = [p.to_dict() for p in sorted(sel, key=lambda piece: piece.z)]
+        remap_groups(batch)              # copies form their own groups
+        for data in batch:
+            np = Piece(**data)
             np.id = uuid.uuid4().hex
             np.x += self.project.cell_size
             np.y += self.project.cell_size
@@ -2715,10 +3883,12 @@ class CanvasView(QWidget):
             return
         self.push_history("Paste")
         new_ids = []
-        for d in self._clipboard:
+        from core.project import uuid
+        import copy as _copy
+        batch = _copy.deepcopy(self._clipboard)
+        remap_groups(batch)              # pasted copies form their own groups
+        for d in batch:
             np = Piece(**d)
-            np.id = None
-            from core.project import uuid
             np.id = uuid.uuid4().hex
             np.x += self.project.cell_size
             np.y += self.project.cell_size
@@ -2834,6 +4004,7 @@ class CanvasView(QWidget):
         sel = self.selected_pieces()
         if len(sel) < 2:
             return
+        self.push_history("Group")
         from core.project import uuid
         gid = uuid.uuid4().hex
         for p in sel:
@@ -2841,18 +4012,22 @@ class CanvasView(QWidget):
         self.dirty.emit()
 
     def ungroup(self):
-        for p in self.selected_pieces():
+        grouped = [p for p in self.selected_pieces() if p.group_id]
+        if not grouped:
+            return
+        self.push_history("Ungroup")
+        for p in grouped:
             p.group_id = ""
         self.dirty.emit()
 
     def _raise(self, sel):
-        for p in sel:
-            p.z += 1
+        """Bring forward: past the next node above that overlaps it."""
+        self._step_order(sel, up=True)
         self.dirty.emit()
 
     def _lower(self, sel):
-        for p in sel:
-            p.z -= 1
+        """Send backward: below the next node underneath that overlaps it."""
+        self._step_order(sel, up=False)
         self.dirty.emit()
 
     def nudge(self, dx, dy):

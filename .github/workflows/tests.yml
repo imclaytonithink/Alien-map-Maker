@@ -10,6 +10,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -21,9 +22,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install Qt runtime libraries
+        # Usually preinstalled on the runner. Otherwise use apt, but never let a
+        # stalled package mirror hang the job: each attempt is time-limited.
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libdbus-1-3 libegl1 libgl1 libxkbcommon0
+          packages="libdbus-1-3 libegl1 libgl1 libxkbcommon0"
+          if dpkg -s $packages >/dev/null 2>&1; then
+            echo "Qt runtime libraries are already installed."
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            if timeout 240 sudo apt-get update -o Acquire::Retries=3 &&
+               timeout 240 sudo apt-get install -y -o Acquire::Retries=3 $packages; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed or stalled; retrying" >&2
+            sleep 15
+          done
+          exit 1
       - name: Install Python requirements
         run: python -m pip install -r requirements.txt
       - name: Run unit and offscreen GUI checks
@@ -35,6 +51,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # GitHub release holding the asset ZIPs; keep in sync with build.bat.
+      ASSET_RELEASE_TAG: Released
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -46,17 +65,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/sceneboard-packs"
-          if gh release view asset-intake-temp-20261006 \
+          if gh release view "$ASSET_RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" --json assets \
               --jq '.assets[].name' 2>/dev/null \
               | grep -q 'RPG-Mobius-Geomorphs-.*-High-Res-Teal\.zip'; then
-            gh release download asset-intake-temp-20261006 \
+            gh release download "$ASSET_RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --pattern 'RPG-Mobius-Geomorphs-*-High-Res-Teal.zip' \
               --dir "$RUNNER_TEMP/sceneboard-packs"
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::Release asset-intake-temp-20261006 is no longer published; skipping the real-pack integration check."
+            echo "::warning::Release $ASSET_RELEASE_TAG has no published asset packs; skipping the real-pack integration check. build.bat downloads from the same release, so Windows builds will fail too."
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Import real packs and generate a sample map

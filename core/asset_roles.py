@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from core import generator
 from core.asset_taxonomy import _ROOM_WORDS, classify_asset_categories
+from core.project import BACKDROP_FOLDER
 
 # (role id, short label, what it is, how the generator uses it)
 ROLE_DEFS = (
@@ -245,6 +246,12 @@ def classify_role(asset, tags: set[str] | None = None) -> RoleInfo:
 
     room_word = room_word_in(outside_words)
     head = _head_words(outside_words)
+
+    # -- floor textures uploaded for level backdrops are not map pieces
+    top_folder = re.split(r"[\\/]", getattr(asset, "folder", "") or "")[0].strip()
+    if top_folder.casefold() == BACKDROP_FOLDER.casefold():
+        return result("other", "high",
+                      f"Backdrop texture ({BACKDROP_FOLDER} folder) - not used by the generator")
 
     # -- overlays first: they pair with a module and are never a module
     if generator._is_geomorph_overlay(asset) or getattr(asset, "is_overlay", False):

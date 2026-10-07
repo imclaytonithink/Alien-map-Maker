@@ -480,6 +480,10 @@ class AssetList(QListView):
 class LibraryPanel(QWidget):
     assetActivated = pyqtSignal(str)   # double-click -> add at center
     collectionsChanged = pyqtSignal()
+    pinStampRequested = pyqtSignal(int, str)   # hotbar slot (0-8), asset path
+    swapRequested = pyqtSignal(str)            # swap selected map nodes to this asset
+    swapAllRequested = pyqtSignal(str)         # swap every copy of the selected image
+    backdropRequested = pyqtSignal(str, bool)  # asset path, all levels?
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -500,6 +504,8 @@ class LibraryPanel(QWidget):
         self._folder_groups = []
         self._zip_worker = None
         self._zip_import_target_root = ""
+        self.stamp_labels = None    # callable -> names on the stamp keys 1-9
+        self.canvas_swap_info = None  # callable -> (selected map images, first's path)
         self._build_ui()
 
     def _build_ui(self):
@@ -1154,9 +1160,24 @@ class LibraryPanel(QWidget):
         menu.exec(self.group_tree.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------
+    def _import_start_dir(self) -> str:
+        """Import dialogs open where the last import came from (not the folder
+        the program happened to start in)."""
+        window = self.window()
+        if hasattr(window, "_last_dir"):
+            return window._last_dir("files/last_import_dir")
+        return os.getcwd()
+
+    def _remember_import_dir(self, path: str):
+        window = self.window()
+        if path and hasattr(window, "_remember_dir"):
+            window._remember_dir(path, "files/last_import_dir")
+
     def _import_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Import asset folder",
-                                            os.getcwd())
+                                            self._import_start_dir())
+        if d:
+            self._remember_import_dir(os.path.dirname(os.path.abspath(d)))
         if d and self.project:
             self._ensure_store()
             self.library.root = self.project.asset_store
@@ -1165,8 +1186,9 @@ class LibraryPanel(QWidget):
 
     def _import_file(self):
         fn, _ = QFileDialog.getOpenFileName(self, "Import image",
-                                           os.getcwd(),
+                                           self._import_start_dir(),
                                            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tiff)")
+        self._remember_import_dir(fn)
         if fn and self.project:
             self._ensure_store()
             self.library.root = self.project.asset_store
@@ -1177,8 +1199,10 @@ class LibraryPanel(QWidget):
         if not self.project or (self._zip_worker and self._zip_worker.isRunning()):
             return
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Import asset ZIP archives", os.getcwd(), "ZIP archives (*.zip)")
+            self, "Import asset ZIP archives", self._import_start_dir(),
+            "ZIP archives (*.zip)")
         if paths:
+            self._remember_import_dir(paths[0])
             self.import_zip_paths(
                 paths, status_text=f"Importing {len(paths)} ZIP archive(s)… "
                                    "original files are unchanged.")
@@ -1307,6 +1331,29 @@ class LibraryPanel(QWidget):
             self.group_tree.setCurrentItem(all_item)
             self.group_tree.blockSignals(False)
 
+    def library_changed(self):
+        """Pick up images added to the library from elsewhere (a floor texture
+        uploaded for a backdrop, say) without losing the folder, category,
+        collection or search the user is browsing."""
+        view = self._view
+        current = self.group_tree.currentItem()
+        token = current.data(0, Qt.ItemDataRole.UserRole) if current is not None else None
+        expanded = {tok: item.isExpanded() for tok, item in self._tree_items.items()}
+        self._rebuild_groups()              # (resets the tree to "All assets")
+        self.group_tree.blockSignals(True)
+        for tok, item in self._tree_items.items():
+            if tok in expanded:
+                item.setExpanded(expanded[tok])
+        if view[0] == "collection":
+            self.group_tree.setCurrentItem(None)
+            self._view = view
+        elif token in self._tree_items:
+            self.group_tree.setCurrentItem(self._tree_items[token])
+            self._view = view
+        self.group_tree.blockSignals(False)
+        self._update_folder_reorder_buttons()
+        self.refresh()
+
     def _after_import(self, n):
         if n:
             if self.project and self._prune_demo_assets(self.project.asset_store):
@@ -1346,6 +1393,29 @@ class LibraryPanel(QWidget):
         act.triggered.connect(lambda: self._view_large(asset))
         act2 = menu.addAction("Add to canvas")
         act2.triggered.connect(lambda: self.assetActivated.emit(asset.path))
+        info_fn = getattr(self, "canvas_swap_info", None)
+        swap_count, swap_first = info_fn() if callable(info_fn) else (0, "")
+        swap = menu.addAction(
+            f"Swap the {swap_count} selected node(s) on the map to this" if swap_count
+            else "Swap the selected node(s) on the map to this")
+        swap.setToolTip("They keep their place, rotation, flips, layer, tint and cut-outs.")
+        swap.setEnabled(swap_count > 0)
+        swap.triggered.connect(lambda: self.swapRequested.emit(asset.path))
+        every = menu.addAction("Swap every copy of the selected node's image to this")
+        every.setToolTip("Every node on every level that uses the same picture as the "
+                         "selected node.")
+        every.setEnabled(bool(swap_first) and swap_first != asset.path)
+        every.triggered.connect(lambda: self.swapAllRequested.emit(asset.path))
+        backdrop = menu.addMenu("Use as backdrop (floor texture)")
+        backdrop.addAction("This level", lambda: self.backdropRequested.emit(asset.path, False))
+        backdrop.addAction("Every level", lambda: self.backdropRequested.emit(asset.path, True))
+        pin_menu = menu.addMenu("Pin to stamp key")
+        labels = self.stamp_labels() if callable(self.stamp_labels) else [""] * 9
+        for index in range(9):
+            label = labels[index] if index < len(labels) else ""
+            text = f"{index + 1}  —  " + (f"replace “{label}”" if label else "empty")
+            pin_menu.addAction(text, lambda n=index, ap=asset.path:
+                               self.pinStampRequested.emit(n, ap))
         if self.project and self.project.collections:
             coll = menu.addMenu("Add to collection")
             for name in self.project.collections:

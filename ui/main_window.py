@@ -7,19 +7,28 @@ import os
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint, QPointF, QEvent, QSettings, QStandardPaths
-from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QColor, QPixmap, QPainter, QPen, QCursor
+from PyQt6.QtCore import (Qt, QTimer, QRectF, QPoint, QPointF, QEvent, QSettings,
+                          QStandardPaths, QUrl)
+from PyQt6.QtGui import (QAction, QActionGroup, QKeySequence, QColor, QPixmap, QPainter,
+                         QPen, QCursor, QDesktopServices, QIcon)
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTabBar, QPushButton,
     QFileDialog, QInputDialog, QMessageBox, QLabel, QStatusBar, QToolBar,
     QTabWidget, QListWidget, QListWidgetItem, QGroupBox, QSlider, QCheckBox,
     QApplication, QDoubleSpinBox, QLineEdit, QTextEdit, QComboBox,
-    QAbstractSpinBox, QDialog, QSplitter, QSplitterHandle,
+    QAbstractSpinBox, QDialog, QSplitter, QSplitterHandle, QMenu,
 )
 
-from core.project import Project, Level, Piece, new_project, uuid
+from core.project import Project, Level, Piece, choose_asset_store, new_project, uuid
 from core.history import History
 from core import exporter, bundle
+from core.backups import BACKUP_SLOTS, backup_folder, list_backups, rotate_backup
+from core.relink import relink_plan
+from core.stamps import (SLOT_COUNT, StampError, asset_slot, is_edge_slot,
+                         looks_like_door, node_slot, slot_label, slots_from_json,
+                         slots_to_json, with_edge)
+from core.userfiles import (load_path_list, map_base_name, recent_file_path,
+                            save_path_list, thumbnail_path)
 from ui.canvas import CanvasView
 from ui.library import LibraryPanel
 from ui.properties import PropertiesPanel
@@ -33,31 +42,61 @@ from ui.branding import (APP_NAME, ALIEN_NAME, SETTINGS_ID,
                          bundled_asset_pack_paths, default_asset_store_path,
                          seed_bundled_assets)
 from ui.custom_toolbar import CustomizableToolBar, CustomizeToolbarDialog
+from ui.color_picker import choose_color
+from ui.app_icon import app_icon
+from ui.stamp_bar import StampBar
+from ui.cutout_bar import CutoutBar
 from core import generator as gen
 
-RECENT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recent.json")
+# Older builds kept the recent-maps list beside this file. That works from a
+# source checkout, but a one-file EXE runs from a temporary folder that is
+# deleted on exit, so the list never survived. It now lives in the per-user
+# app-data folder; MainWindow points RECENT_FILE there at startup.
+LEGACY_RECENT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recent.json")
+RECENT_FILE = LEGACY_RECENT_FILE
 BMAP_EXT = ".bmap"
 
 
-def load_recent() -> list:
-    try:
-        with open(RECENT_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return []
+def destroy_before_qt_exits(window) -> None:
+    """Delete ``window`` (and every widget in it) when Python exits, before
+    Qt's own objects go away. Otherwise the window can outlive QApplication
+    and crash on the way out (seen with styled floating bars on the canvas)."""
+    import atexit
+    import weakref
+    ref = weakref.ref(window)
+
+    def destroy():
+        alive = ref()
+        if alive is None:
+            return
+        try:
+            from PyQt6 import sip
+            if not sip.isdeleted(alive):
+                sip.delete(alive)
+        except (ImportError, RuntimeError, TypeError):
+            pass
+    atexit.register(destroy)
 
 
-def save_recent(items: list):
-    try:
-        with open(RECENT_FILE, "w") as f:
-            json.dump(items[:12], f)
-    except Exception:
-        pass
+def load_recent(path: Optional[str] = None) -> list:
+    return load_path_list(path or RECENT_FILE)
+
+
+def save_recent(items: list, path: Optional[str] = None) -> bool:
+    return save_path_list(items, path or RECENT_FILE)
 
 
 # Tools shown on the toolbar by default; the rest live in the menus (and the
 # right-click menu) and can be added back via View → Customize toolbar.
 COMPACT_TOOLBAR = ("new", "open", "save", "export", "undo", "redo", "generate")
+
+# The inspector (Node / Layers / Zones / History) can be dragged this narrow
+# at the normal text size; its rows wrap to fit. Larger text needs more room.
+INSPECTOR_MIN_WIDTH = 220
+
+
+def inspector_min_width(text_scale: float) -> int:
+    return max(INSPECTOR_MIN_WIDTH, int(round(INSPECTOR_MIN_WIDTH * float(text_scale or 1.0))))
 
 
 class GripSplitterHandle(QSplitterHandle):
@@ -407,6 +446,8 @@ class MainWindow(QMainWindow):
         self._autosave_dir = os.path.join(app_data, "autosave")
         self._recovery_file = os.path.join(self._autosave_dir, "recovery.bmap")
         self._recovery_meta = os.path.join(self._autosave_dir, "recovery.json")
+        self._recent_file = recent_file_path(app_data)
+        self._backup_root = os.path.join(app_data, "backups")
         self._autosave_timer = QTimer(self)
         self._autosave_timer.timeout.connect(self._autosave_tick)
         if self.autosave_interval_minutes:
@@ -414,11 +455,14 @@ class MainWindow(QMainWindow):
 
         self.project = new_project()
         self.history = History()
-        self.recent = load_recent()
+        self.recent = self._load_recent_list()
+        self.stamp_slots = slots_from_json(self.settings.value("stamps/slots", "[]"))
         self._current_file: Optional[str] = None
         self._dirty = False
         self._gen_output = None    # tracks last Generate output for Regenerate
+        self.setWindowIcon(app_icon())
         self._build_ui()
+        destroy_before_qt_exits(self)
         self._show_launch()
         QTimer.singleShot(0, self._install_bundled_asset_packs)
 
@@ -440,6 +484,12 @@ class MainWindow(QMainWindow):
         self.library.setMinimumWidth(180)
         self.library.assetActivated.connect(self._add_at_center)
         self.library.collectionsChanged.connect(self._mark_dirty)
+        self.library.pinStampRequested.connect(self._pin_asset_stamp)
+        self.library.stamp_labels = lambda: [slot_label(slot) for slot in self.stamp_slots]
+        self.library.swapRequested.connect(self._swap_selected_to)
+        self.library.swapAllRequested.connect(self._swap_every_copy_to)
+        self.library.backdropRequested.connect(self._use_backdrop_texture)
+        self.library.canvas_swap_info = self._canvas_swap_info
         self.splitter.addWidget(self.library)
 
         center_col = QVBoxLayout()
@@ -457,6 +507,11 @@ class MainWindow(QMainWindow):
             "editing/auto_tighten", True, type=bool)
         self._load_tighten_options()
         self.canvas.contextMenuRequested.connect(self._show_canvas_menu)
+        self.canvas.guideMenuRequested.connect(self._show_guide_menu)
+        self.canvas.guideEditRequested.connect(
+            lambda guide_id: QTimer.singleShot(0, lambda: self._edit_guide_position(guide_id)))
+        self.canvas.guideSettingsChanged.connect(self._sync_guide_actions)
+        self.canvas.railsChanged.connect(self._place_minimap)
         self.canvas.historyDiscardLast.connect(self._discard_last_history)
         center_col.addWidget(self.canvas, 1)
 
@@ -466,6 +521,24 @@ class MainWindow(QMainWindow):
         self.minimap = Minimap(self.canvas)
         self.minimap.setParent(self.canvas)
         self.minimap.raise_()
+        # quick-stamp hotbar (keys 1-9) floats at the bottom of the canvas
+        self.stamp_bar = StampBar(self.canvas)
+        self.stamp_bar.slotClicked.connect(self._arm_stamp)
+        self.stamp_bar.slotMenuRequested.connect(self._stamp_slot_menu)
+        self.stamp_bar.assetDropped.connect(self._pin_asset_stamp)
+        self.canvas.stampToolChanged.connect(self.stamp_bar.set_active)
+        self._stamps_enabled = True
+        # cut-out tool options and actions float at the top of the canvas
+        self.cutout_bar = CutoutBar(self.canvas)
+        self.cutout_bar.shapeChosen.connect(self._set_cutout_shape)
+        self.cutout_bar.snapToggled.connect(self._set_cutout_snap)
+        self.cutout_bar.actionRequested.connect(self._cutout_action)
+        self.canvas.cutout_shape = str(self.settings.value("tools/cutout_shape", "rect"))
+        if self.canvas.cutout_shape not in ("rect", "ellipse", "lasso", "polygon"):
+            self.canvas.cutout_shape = "rect"
+        self.canvas.cutout_snap = self.settings.value("tools/cutout_snap", True, type=bool)
+        self.canvas.cutoutChanged.connect(self._refresh_cutout_bar)
+        self.canvas.cutoutMenuRequested.connect(self._show_cutout_menu)
         self.canvas.installEventFilter(self)
         center_widget = QWidget()
         cb = QVBoxLayout(center_widget)
@@ -485,7 +558,7 @@ class MainWindow(QMainWindow):
         right.addTab(self.layers, "Layers")
         right.addTab(self.zones, "Zones")
         right.addTab(self.hist, "History")
-        right.setMinimumWidth(220)
+        right.setMinimumWidth(INSPECTOR_MIN_WIDTH)
         right.tabBar().setUsesScrollButtons(False)
         right.tabBar().setExpanding(True)
         right.tabBar().setElideMode(Qt.TextElideMode.ElideNone)
@@ -551,15 +624,16 @@ class MainWindow(QMainWindow):
         self._sync_view_actions()
 
     # -- view toggles (Photoshop-style Window menu) ------------------------
-    VIEW_ITEMS = ("toolbar", "status", "levels", "minimap", "quick",
-                  "library", "inspector")
+    VIEW_ITEMS = ("toolbar", "status", "levels", "minimap", "quick", "rails",
+                  "stamps", "library", "inspector")
     VIEW_DEFAULTS = {"toolbar": True, "status": True, "levels": True,
-                     "minimap": True, "quick": False, "library": True,
-                     "inspector": True}
+                     "minimap": True, "quick": False, "rails": True,
+                     "stamps": True, "library": True, "inspector": True}
     VIEW_LABELS = {"toolbar": "Toolbar", "status": "Status bar",
                    "levels": "Level tabs", "minimap": "Minimap",
-                   "quick": "Floating node buttons", "library": "Library panel",
-                   "inspector": "Inspector panel"}
+                   "quick": "Floating node buttons", "rails": "Guide rails",
+                   "stamps": "Stamp hotbar (keys 1–9)",
+                   "library": "Library panel", "inspector": "Inspector panel"}
     WORKSPACES = {
         "Standard": dict(VIEW_DEFAULTS),
         "Minimal": {**VIEW_DEFAULTS, "toolbar": False, "minimap": False},
@@ -577,6 +651,10 @@ class MainWindow(QMainWindow):
             return self.minimap.isVisibleTo(self.canvas)
         if name == "quick":
             return self.canvas.quick_enabled
+        if name == "rails":
+            return self.canvas.rails_visible
+        if name == "stamps":
+            return self._stamps_enabled
         if name == "library":
             return self._panel_visible(0)
         return self._panel_visible(2)
@@ -594,6 +672,12 @@ class MainWindow(QMainWindow):
             self._place_minimap()
         elif name == "quick":
             self.canvas.set_quick_enabled(on)
+        elif name == "rails":
+            self.canvas.set_rails_visible(on)
+            self._place_minimap()
+        elif name == "stamps":
+            self._stamps_enabled = on
+            self._refresh_stamp_bar()
         elif name == "library":
             self._set_panel(0, on, save=False)
         elif name == "inspector":
@@ -630,9 +714,34 @@ class MainWindow(QMainWindow):
             action.blockSignals(False)
 
     def _place_minimap(self):
-        margin = 10
+        margin = 10 + self.canvas.rail_thickness()   # keep the guide rails clear
         self.minimap.move(margin, self.canvas.height() - self.minimap.height() - margin)
         self.minimap.raise_()
+        self._place_stamp_bar()
+
+    def _place_cutout_bar(self):
+        if not hasattr(self, "cutout_bar") or not self.cutout_bar.isVisible():
+            return
+        bar = self.cutout_bar
+        margin = 8 + self.canvas.rail_thickness()
+        bar.fit_width(self.canvas.width() - 2 * margin)
+        left = max(margin, (self.canvas.width() - bar.width()) // 2)
+        bar.move(left, margin)
+        bar.raise_()
+
+    def _place_stamp_bar(self):
+        self._place_cutout_bar()
+        if not hasattr(self, "stamp_bar"):
+            return
+        bar = self.stamp_bar
+        bar.adjustSize()
+        margin = 10 + self.canvas.rail_thickness()
+        left = (self.canvas.width() - bar.width()) // 2
+        if self.minimap.isVisibleTo(self.canvas):
+            # stay clear of the minimap in the bottom-left corner
+            left = max(left, self.minimap.x() + self.minimap.width() + 10)
+        bar.move(max(margin, left), self.canvas.height() - bar.height() - margin)
+        bar.raise_()
 
     def eventFilter(self, obj, event):
         if obj is self.canvas and event.type() == QEvent.Type.Resize:
@@ -641,8 +750,8 @@ class MainWindow(QMainWindow):
 
     def _toggle_focus_canvas(self):
         """Hide every bar and panel for a clean canvas; press again to restore."""
-        if any(self._view_get(n) for n in ("toolbar", "status", "levels",
-                                           "minimap", "library", "inspector")):
+        if any(self._view_get(n) for n in ("toolbar", "status", "levels", "minimap",
+                                           "rails", "stamps", "library", "inspector")):
             self._focus_restore = self._view_snapshot()
             self._apply_view(self.WORKSPACES["Canvas only"])
         else:
@@ -656,8 +765,96 @@ class MainWindow(QMainWindow):
 
     def _show_canvas_menu(self, global_pos, hit_piece):
         from ui.context_menu import build_canvas_menu
-        menu = build_canvas_menu(self, hit_piece)
+        local = self.canvas.mapFromGlobal(global_pos)
+        world = self.canvas.screen_to_world(local.x(), local.y())
+        menu = build_canvas_menu(self, hit_piece, world)
         menu.exec(global_pos)
+        menu.deleteLater()      # menus are rebuilt each time; don't pile them up
+
+    def _show_backdrop_settings(self):
+        """Show the level's Backdrop settings (Node tab, nothing selected)."""
+        self.canvas.clear_selection()
+        if not self._view_get("inspector"):
+            self._view_set("inspector", True)
+        self.inspector.setCurrentWidget(self.props)
+        self.props.refresh_backdrop()
+        self.props.show_backdrop()
+
+    # -- placed guides --------------------------------------------------------
+    def _show_guide_menu(self, global_pos, target):
+        from ui.context_menu import build_guide_menu
+        build_guide_menu(self, target).exec(global_pos)
+
+    def _set_guide_option(self, key, on):
+        if key == "show_coordinates":
+            self.canvas.set_show_coordinates(on)
+        else:
+            self.canvas.set_guide_flag(key, on)
+
+    def _sync_guide_actions(self):
+        """Reflect the project's guide settings in the menu and inspector."""
+        for key, action in getattr(self, "guide_actions", {}).items():
+            action.blockSignals(True)
+            action.setChecked(bool(getattr(self.project, key, False)))
+            action.blockSignals(False)
+        if hasattr(self, "props") and hasattr(self.props, "refresh_guide_options"):
+            self.props.refresh_guide_options()
+
+    def _edit_guide_position(self, guide_id):
+        from ui.guide_dialogs import GuidePositionDialog
+        level = self.canvas.level
+        guide = level.find_guide(guide_id) if level else None
+        if guide is None:
+            return
+        extent = self.project.canvas_w if guide.axis == "v" else self.project.canvas_h
+        dialog = GuidePositionDialog(guide.axis, guide.pos, self.project.cell_size,
+                                     self.project.feet_per_square, extent, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.canvas.set_guide_position(guide_id, dialog.position())
+
+    def _guide_layout_dialog(self):
+        from ui.guide_dialogs import GuideLayoutDialog
+        dialog = GuideLayoutDialog(self.project, len(self.project.levels), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        vertical, horizontal = dialog.positions()
+        added = self.canvas.apply_guide_layout(vertical, horizontal, dialog.replace(),
+                                               dialog.all_levels())
+        self.status.showMessage(f"Guide layout applied ({added} guide(s)).", 5000)
+
+    def _add_guides_around_selection(self, kind):
+        if not self.canvas.selected_pieces():
+            self.status.showMessage("Select one or more nodes first.", 4000)
+            return
+        added = self.canvas.add_guides_around_selection(kind)
+        self.status.showMessage(f"Added {added} guide(s).", 4000)
+
+    def _copy_guides_to_all_levels(self):
+        level = self.canvas.level
+        others = [lv for lv in self.project.levels if lv is not level]
+        if not level or not others:
+            self.status.showMessage("This map has only one level.", 4000)
+            return
+        mine = sorted((g.axis, g.pos) for g in level.guides)
+        overwrite = [lv for lv in others
+                     if lv.guides and sorted((g.axis, g.pos) for g in lv.guides) != mine]
+        if overwrite:
+            answer = QMessageBox.question(
+                self, "Copy guides to all levels",
+                f"Replace the guides on {len(overwrite)} other level(s) with this "
+                "level's guides? You can undo this.")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        count = self.canvas.copy_guides_to_all_levels()
+        self.status.showMessage(f"Copied {len(level.guides)} guide(s) to {count} level(s).", 5000)
+
+    def _pick_guide_color(self):
+        color = choose_color(QColor(self.project.guide_color), self, self.canvas,
+                             "Choose guide color")
+        if color.isValid():
+            self.project.guide_color = color.name()
+            self.canvas.update()
+            self._mark_dirty()
 
     def _act(self, label, slot, shortcut=None):
         """Menu action with an optional shortcut."""
@@ -674,6 +871,8 @@ class MainWindow(QMainWindow):
         f.addAction(self._act("Open…", self._open, "Ctrl+O"))
         f.addAction(self._act("Save", self._save, "Ctrl+S"))
         f.addAction(self._act("Save As…", self._save_as, "Ctrl+Shift+S"))
+        f.addAction("Restore from backup…", self._restore_backup_dialog)
+        f.addAction("Find missing images…", self._find_missing_images)
         f.addSeparator()
         f.addAction("Export PNG…", self._export)
         f.addAction("Export PDF…", self._export_pdf)
@@ -701,10 +900,42 @@ class MainWindow(QMainWindow):
         e.addAction(self._act("Undo", self.undo, "Ctrl+Z"))
         e.addAction(self._act("Redo", self.redo, "Ctrl+Y"))
         e.addSeparator()
-        e.addAction("Copy", self.canvas.copy)
-        e.addAction("Paste", self.canvas.paste)
-        e.addAction("Duplicate", self.canvas.duplicate)
-        e.addAction("Delete", self.canvas.delete_selected)
+        # Ctrl+X/C/V/D/A are handled in keyPressEvent so text boxes and the
+        # library keep their own copy/paste/select-all; the menu shows them.
+        e.addAction("Cut\tCtrl+X", self._cut)
+        e.addAction("Copy\tCtrl+C", self._copy)
+        e.addAction("Paste\tCtrl+V", self.canvas.paste)
+        e.addAction("Duplicate\tCtrl+D", self.canvas.duplicate)
+        e.addAction(self._act("Duplicate as grid…", self._duplicate_as_grid_dialog,
+                              "Ctrl+Shift+D"))
+        mirror_menu = e.addMenu("Mirror copy")
+        mirror_menu.addAction("Across the vertical center line",
+                              lambda: self._mirror_selection_center("v"))
+        mirror_menu.addAction("Across the horizontal center line",
+                              lambda: self._mirror_selection_center("h"))
+        mirror_menu.addAction("Across the nearest vertical guide",
+                              lambda: self._mirror_selection_nearest("v"))
+        mirror_menu.addAction("Across the nearest horizontal guide",
+                              lambda: self._mirror_selection_nearest("h"))
+        e.addAction("Delete\tDel", self.canvas.delete_selected)
+        e.addSeparator()
+        select_menu = e.addMenu("Select")
+        select_menu.addAction("Select all\tCtrl+A", self._select_all)
+        select_menu.addAction("Invert selection\tCtrl+Shift+I", self._invert_selection)
+        select_menu.addAction("Deselect\tCtrl+Shift+A", self.canvas.clear_selection)
+        select_menu.addAction("Everything on the active layer", self._select_active_layer)
+        select_menu.addAction("Similar nodes", self._select_similar)
+        arrange_menu = e.addMenu("Arrange")
+        arrange_menu.addAction("Bring to front", self.canvas.bring_to_front)
+        arrange_menu.addAction("Bring forward", lambda: self.canvas._quick("up"))
+        arrange_menu.addAction("Send backward", lambda: self.canvas._quick("down"))
+        arrange_menu.addAction("Send to back", self.canvas.send_to_back)
+        self.send_level_menu = e.addMenu("Send to level")
+        self.send_level_menu.aboutToShow.connect(
+            lambda: self._fill_send_level_menu(self.send_level_menu))
+        self.swap_menu = e.addMenu("Swap image")
+        self.swap_menu.aboutToShow.connect(lambda: self._fill_swap_menu(self.swap_menu))
+        e.addSeparator()
         e.addAction("Select similar", self._select_similar)
         e.addAction("Copy style…", self._start_copy_style)
         e.addAction("Replace selected image…", self._replace_selected_image)
@@ -733,6 +964,7 @@ class MainWindow(QMainWindow):
 
         v = mb.addMenu("&View")
         v.addAction("Canvas size…", self._edit_canvas_size)
+        v.addAction("Backdrop (color, floor texture or none)…", self._show_backdrop_settings)
         v.addSeparator()
         # Window-style toggles: everything on screen can be switched off.
         self.view_actions = {}
@@ -757,6 +989,30 @@ class MainWindow(QMainWindow):
         v.addAction("Reset panel layout", lambda: (self._reset_layout(),
                                                    self._sync_view_actions()))
         v.addSeparator()
+        guides_menu = v.addMenu("Guides")
+        self.guide_actions = {}
+        for key, label, shortcut in (
+                ("show_guides", "Show guides", "Ctrl+;"),
+                ("snap_to_guides", "Snap to guides", "Ctrl+Shift+;"),
+                ("lock_guides", "Lock guides", "Ctrl+Alt+;"),
+                ("show_coordinates", "Grid coordinates on rails", None)):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            if shortcut:
+                action.setShortcut(QKeySequence(shortcut))
+            action.toggled.connect(lambda checked, k=key: self._set_guide_option(k, checked))
+            guides_menu.addAction(action)
+            self.guide_actions[key] = action
+        guides_menu.addSeparator()
+        guides_menu.addAction("Guide layout…", self._guide_layout_dialog)
+        around = guides_menu.addMenu("Add guides around selection")
+        around.addAction("At the edges", lambda: self._add_guides_around_selection("edges"))
+        around.addAction("Through the center", lambda: self._add_guides_around_selection("center"))
+        around.addAction("Edges and center", lambda: self._add_guides_around_selection("both"))
+        guides_menu.addAction("Copy guides to all levels", self._copy_guides_to_all_levels)
+        guides_menu.addAction("Clear guides on this level", self.canvas.clear_guides)
+        guides_menu.addSeparator()
+        guides_menu.addAction("Guide color…", self._pick_guide_color)
         zoom_menu = v.addMenu("Zoom")
         for label, shortcut, fn in (
                 ("Zoom in", "Ctrl+=", lambda: self.canvas.set_zoom(self.canvas.zoom * 1.25)),
@@ -813,6 +1069,11 @@ class MainWindow(QMainWindow):
         t.addAction("Lasso select", self._start_lasso_tool)
         t.addAction("Stamp selected node", self._start_stamp_tool)
         t.addAction("Crop selected image…", self._start_crop_tool)
+        cut_menu = t.addMenu("Cut out part of an image")
+        for shape, label in (("rect", "Rectangle"), ("ellipse", "Ellipse / circle"),
+                             ("lasso", "Lasso (freehand)"), ("polygon", "Polygon")):
+            cut_menu.addAction(label, lambda s=shape: self._start_cutout_tool(s))
+        t.addAction("Clone patch over a label", self._start_clone_tool)
         t.addSeparator()
         t.addAction("Draw rectangle gameplay zone",
                     lambda: self.canvas.set_zone_tool("rectangle"))
@@ -840,8 +1101,18 @@ class MainWindow(QMainWindow):
             ("text", "Text", self._add_text, "Add an editable text label."),
             ("stamp", "Stamp", self._start_stamp_tool,
              "Repeatedly place copies of the selected node."),
+            ("mirror", "Mirror", self._show_mirror_menu_at_cursor,
+             "Place mirrored copies of the selection across a guide or the "
+             "map's center line."),
+            ("grid_copy", "Grid Copy", self._duplicate_as_grid_dialog,
+             "Repeat the selection in rows and columns."),
             ("crop", "Crop", self._start_crop_tool,
              "Crop the selected image non-destructively."),
+            ("cutout", "Cut Out", self._start_cutout_tool,
+             "Select part of an image (rectangle, ellipse, lasso or polygon), then "
+             "delete it, cut or copy it, or make it a new node."),
+            ("clone", "Clone", self._start_clone_tool,
+             "Cover a baked-in label with a clean piece of the same picture."),
             ("ruler", "Ruler", self._start_ruler_tool,
              "Measure map distance; hold Shift to snap endpoints to the grid."),
             ("scale", "Scale", self._start_scale_tool,
@@ -1016,6 +1287,7 @@ class MainWindow(QMainWindow):
             try:
                 with open(self._recovery_file, "r", encoding="utf-8") as fh:
                     self.project = Project.from_dict(json.load(fh))
+                self._settle_asset_store()
                 self._current_file = None
                 self._apply_project()
                 self._mark_dirty(True)
@@ -1044,6 +1316,9 @@ class MainWindow(QMainWindow):
         self.canvas.level_index = 0
         self._resync_history()
         self._apply_theme()
+        self._sync_guide_actions()
+        self._place_minimap()
+        self._refresh_stamp_bar()
 
     def _apply_theme(self):
         app = QApplication.instance()
@@ -1052,9 +1327,16 @@ class MainWindow(QMainWindow):
         text_scale = self.project.text_scale
         thememod.apply_stylesheet(app, self.theme_accent, text_scale,
                                   self.theme_mode)
+        # bigger text needs a wider inspector before its rows can fit
+        self.inspector.setMinimumWidth(inspector_min_width(text_scale))
         self.canvas.set_theme(self.theme_mode, self.theme_accent)
         self.minimap.set_theme(self.theme_mode, self.theme_accent)
         self.layers.set_theme(self.theme_mode, self.theme_accent)
+        if hasattr(self, "stamp_bar"):
+            self.stamp_bar.set_theme(self.theme_mode, self.theme_accent)
+            self._refresh_stamp_bar()          # text/marker glyphs follow the theme
+        if hasattr(self, "cutout_bar"):
+            self.cutout_bar.set_theme(self.theme_mode, self.theme_accent)
         self.scanlines.set_accent(accent)
         self.scanlines.setVisible(
             self.theme_mode == "alien" and self.alien_scanlines)
@@ -1185,11 +1467,69 @@ class MainWindow(QMainWindow):
                 os.path.normcase(default_store):
             seed_bundled_assets(self.project.asset_store, __file__)
 
+    def _default_store(self) -> str:
+        return default_asset_store_path(__file__, self._app_data_dir)
+
+    @staticmethod
+    def _same_path(a: str, b: str) -> bool:
+        return bool(a) and bool(b) and (os.path.normcase(os.path.abspath(a)) ==
+                                        os.path.normcase(os.path.abspath(b)))
+
+    def _settle_asset_store(self) -> str:
+        """Pick the asset folder for a just-loaded map. A map records the folder
+        it was made with; when that folder isn't on this computer (another PC,
+        another Windows account, a moved folder) the map uses this app's own
+        library instead, and image lookups fall back to it either way.
+        Returns a note for the status bar, or ""."""
+        default_store = self._default_store()
+        saved = self.project.asset_store
+        note = ""
+        if saved:
+            chosen = choose_asset_store(saved, default_store,
+                                        self.project.referenced_assets())
+            if not self._same_path(chosen, saved):
+                self.project.asset_store = chosen
+                note = ("This map's asset folder isn't on this computer, so it uses "
+                        "this app's asset library instead.")
+        store = self.project.asset_store
+        self.project.fallback_asset_stores = (
+            [default_store] if store and not self._same_path(store, default_store) else [])
+        return note
+
+    def _project_data_for_disk(self) -> dict:
+        """Saved form of the map. The app's own asset library is stored as ""
+        ("this app's library"), so the map finds its images on any computer
+        where the same packs are installed, instead of a path from this PC."""
+        data = self.project.to_dict()
+        if self._same_path(data.get("asset_store") or "", self._default_store()):
+            data["asset_store"] = ""
+        return data
+
+    def _last_dir(self, key: str = "files/last_dir") -> str:
+        saved = str(self.settings.value(key, "") or "")
+        if saved and os.path.isdir(saved):
+            return saved
+        if key != "files/last_dir":
+            return self._last_dir()
+        documents = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DocumentsLocation)
+        return documents if documents and os.path.isdir(documents) else os.path.expanduser("~")
+
+    def _remember_dir(self, path: str, key: str = "files/last_dir"):
+        if not path:
+            return
+        folder = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
+        if folder:
+            self.settings.setValue(key, folder)
+
+    def _map_base_name(self) -> str:
+        return map_base_name(self.project.name, self._current_file)
+
     def _open(self):
         if self._dirty and not self._confirm_discard():
             return
         fn, _ = QFileDialog.getOpenFileName(
-            self, "Open project or map pack", os.getcwd(),
+            self, "Open project or map pack", self._last_dir(),
             f"Map projects and packs (*{BMAP_EXT} *.rpgpack);;Map projects (*{BMAP_EXT});;RPG Map Packs (*.rpgpack)")
         if fn:
             self._load_file(fn)
@@ -1208,36 +1548,47 @@ class MainWindow(QMainWindow):
             if self.project.asset_store and not os.path.isabs(self.project.asset_store):
                 self.project.asset_store = os.path.abspath(os.path.join(
                     os.path.dirname(fn), self.project.asset_store))
+            store_note = self._settle_asset_store()
             self._current_file = fn
             self._apply_project()
             self._mark_dirty(False)
             self._update_window_title()
             self._remove_recovery()
             self._push_recent(fn)
+            self._remember_dir(pack_path if opened_bundle else fn)
             if opened_bundle:
                 missing = bundle_manifest.get("missing_assets", []) if bundle_manifest else []
                 message = "Map pack opened as a local working copy. Save or export a new pack when ready."
                 if missing:
                     message += f" {len(missing)} source asset(s) were missing from the pack."
                 self.status.showMessage(message, 12000)
+            elif store_note:
+                self.status.showMessage(store_note, 12000)
         except Exception as e:
             QMessageBox.critical(self, "Open failed", str(e))
+            return False
+        # tell the user right away if some images can't be found
+        QTimer.singleShot(0, lambda: self._find_missing_images(quiet_if_none=True))
+        return True
 
-    def _save(self):
+    def _save(self) -> bool:
         if not self._current_file:
-            self._save_as()
-            return
-        self._write(self._current_file)
+            return self._save_as()
+        return self._write(self._current_file)
 
-    def _save_as(self):
-        fn, _ = QFileDialog.getSaveFileName(self, "Save project", os.getcwd(),
+    def _save_as(self) -> bool:
+        start = os.path.join(self._last_dir(), self._map_base_name() + BMAP_EXT)
+        fn, _ = QFileDialog.getSaveFileName(self, "Save project", start,
                                             f"Map projects (*{BMAP_EXT})")
-        if fn:
-            if not fn.endswith(BMAP_EXT):
-                fn += BMAP_EXT
-            self._current_file = fn
-            self._write(fn)
-            self._update_window_title()
+        if not fn:
+            return False
+        if not fn.lower().endswith(BMAP_EXT):
+            fn += BMAP_EXT
+        self._current_file = fn
+        saved = self._write(fn)
+        self._remember_dir(fn)
+        self._update_window_title()
+        return saved
 
     @staticmethod
     def _atomic_json_write(data, path):
@@ -1259,8 +1610,14 @@ class MainWindow(QMainWindow):
 
     def _write(self, fn, autosave=False):
         try:
-            self._atomic_json_write(self.project.to_dict(), fn)
-            exporter.save_thumbnail(self.project, fn)
+            self._atomic_json_write(self._project_data_for_disk(), fn)
+            try:
+                # kept in app data: a "<map>.png" beside the map could overwrite
+                # an export with the same name
+                exporter.save_thumbnail(self.project, fn,
+                                        thumb_path=thumbnail_path(self._app_data_dir, fn))
+            except Exception:
+                pass                     # a preview must never block saving
             if not autosave:
                 self._push_recent(fn)
                 self._remove_recovery()
@@ -1278,12 +1635,13 @@ class MainWindow(QMainWindow):
         if not self._dirty:
             return
         if self._current_file:
+            self._backup_before_autosave(self._current_file)
             if self._write(self._current_file, autosave=True):
                 self.status.showMessage("Auto-saved project.", 4000)
             return
         try:
             os.makedirs(self._autosave_dir, exist_ok=True)
-            self._atomic_json_write(self.project.to_dict(), self._recovery_file)
+            self._atomic_json_write(self._project_data_for_disk(), self._recovery_file)
             meta = {"project_name": self.project.name,
                     "updated": time.time()}
             self._atomic_json_write(meta, self._recovery_meta)
@@ -1302,9 +1660,137 @@ class MainWindow(QMainWindow):
             except OSError:
                 pass
 
+    # -- recent maps, thumbnails and backups (all kept in app data) -------------
+    def _load_recent_list(self) -> list:
+        global RECENT_FILE
+        RECENT_FILE = self._recent_file
+        items = load_path_list(self._recent_file)
+        if (not items and not os.path.exists(self._recent_file)
+                and os.path.isfile(LEGACY_RECENT_FILE)):
+            items = load_path_list(LEGACY_RECENT_FILE)   # carry over a source checkout's list
+            if items:
+                save_path_list(items, self._recent_file)
+        return items
+
+    def _save_recent(self) -> bool:
+        return save_path_list(self.recent, self._recent_file)
+
     def _push_recent(self, fn):
-        self.recent = [fn] + [x for x in self.recent if x != fn]
-        save_recent(self.recent)
+        fn = os.path.abspath(fn)
+        self.recent = [fn] + [x for x in self.recent if not self._same_path(x, fn)]
+        self.recent = self.recent[:12]
+        self._save_recent()
+
+    def _thumbnail_for(self, map_path: str) -> str:
+        """Preview for a recent map: the app's own copy, else the "<map>.png"
+        that older versions wrote beside the map."""
+        own = thumbnail_path(self._app_data_dir, map_path)
+        if os.path.isfile(own):
+            return own
+        legacy = os.path.splitext(map_path)[0] + ".png"
+        return legacy if os.path.isfile(legacy) else ""
+
+    def _delete_map_thumbnails(self, map_path: str):
+        """Remove a deleted map's previews. A "<map>.png" beside it is only
+        removed when it is thumbnail-sized, so an export is never deleted."""
+        from PyQt6.QtGui import QImageReader
+        own = thumbnail_path(self._app_data_dir, map_path)
+        legacy = os.path.splitext(map_path)[0] + ".png"
+        candidates = [own]
+        size = QImageReader(legacy).size() if os.path.isfile(legacy) else None
+        if size is not None and size.isValid() and max(size.width(), size.height()) <= 256:
+            candidates.append(legacy)
+        for path in candidates:
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except OSError:
+                pass
+
+    def _backup_folder(self) -> Optional[str]:
+        return (backup_folder(self._backup_root, self._current_file)
+                if self._current_file else None)
+
+    def _backup_before_autosave(self, fn: str):
+        """Keep the version that is on disk before auto-save replaces it, in the
+        oldest of the four backup slots."""
+        try:
+            rotate_backup(fn, backup_folder(self._backup_root, fn), BACKUP_SLOTS)
+        except OSError as exc:
+            self.status.showMessage(f"Could not write a backup: {exc}", 8000)
+
+    def _open_folder(self, folder: str):
+        os.makedirs(folder, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _restore_backup_dialog(self):
+        if not self._current_file:
+            QMessageBox.information(
+                self, "Restore from backup",
+                "Backups are kept for maps that have been saved. Save this map "
+                f"first; auto-save then keeps its last {BACKUP_SLOTS} versions.")
+            return
+        from ui.tool_dialogs import BackupDialog
+        folder = self._backup_folder()
+        dialog = BackupDialog(os.path.basename(self._current_file),
+                              list_backups(folder, BACKUP_SLOTS),
+                              self.autosave_interval_minutes,
+                              lambda: self._open_folder(folder), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.chosen_path:
+            self._restore_backup(dialog.chosen_path)
+
+    def _restore_backup(self, path: str) -> bool:
+        """Load a backup into the editor as one undoable step; the map file on
+        disk is only replaced when the user saves."""
+        from ui.tool_dialogs import describe_time
+        try:
+            with open(path, encoding="utf-8") as fh:
+                restored = Project.from_dict(json.load(fh))
+            when = describe_time(os.path.getmtime(path))
+        except (OSError, ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Restore failed", str(exc))
+            return False
+        store = self.project.asset_store
+        fallbacks = list(self.project.fallback_asset_stores)
+        self.canvas.push_history("Restore backup")
+        self.project.restore_from(restored)
+        if not self.project.asset_store:
+            self.project.asset_store = store
+        self.project.fallback_asset_stores = fallbacks
+        self._after_history(fit_canvas=True)
+        self._mark_dirty(True)
+        self.status.showMessage(
+            f"Restored the backup from {when}. Save to keep it, or undo to go back.", 12000)
+        return True
+
+    # -- missing images -----------------------------------------------------------
+    def _relink_missing(self):
+        """Relink missing images by file name; returns
+        (relinked, ambiguous, not found, images still missing)."""
+        missing = self.project.missing_assets()
+        known = [asset.path for asset in self.library.library.assets]
+        plan, ambiguous, not_found = relink_plan(list(missing), known)
+        if plan:
+            self.canvas.push_history("Relink missing images")
+            self.project.relink_assets(plan)
+            self.canvas.update()
+            self.canvas.dirty.emit()
+            self._refresh_stamp_bar()
+        return len(plan), len(ambiguous), len(not_found), self.project.missing_assets()
+
+    def _find_missing_images(self, quiet_if_none: bool = False):
+        missing = self.project.missing_assets()
+        if not missing:
+            if not quiet_if_none:
+                used = len(self.project.referenced_assets())
+                QMessageBox.information(
+                    self, "Missing images",
+                    f"All {used} library image(s) this map uses were found." if used
+                    else "This map doesn't use any library images yet.")
+            return
+        from ui.tool_dialogs import MissingAssetsDialog
+        MissingAssetsDialog(missing, self.project.asset_store, self._relink_missing,
+                            self).exec()
 
     # ------------------------------------------------------------------
     def _export(self):
@@ -1320,14 +1806,24 @@ class MainWindow(QMainWindow):
         ExportDialog(self.project, self.canvas, self, file_format="png",
                      default_preset="Tabletop Sim (2048px)").exec()
 
+    def export_defaults(self) -> tuple[str, str]:
+        """(base file name, folder) for export dialogs: named after the map, in
+        the folder used for the last export."""
+        return self._map_base_name(), self._last_dir("files/last_export_dir")
+
+    def remember_export_dir(self, path: str):
+        self._remember_dir(path, "files/last_export_dir")
+
     def _export_bundle(self):
+        base, folder = self.export_defaults()
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export project bundle and PNG pack", os.getcwd(),
-            "RPG Map Pack (*.rpgpack)")
+            self, "Export project bundle and PNG pack",
+            os.path.join(folder, base + ".rpgpack"), "RPG Map Pack (*.rpgpack)")
         if not path:
             return
         if not path.lower().endswith(".rpgpack"):
             path += ".rpgpack"
+        self.remember_export_dir(path)
         try:
             bundle.export_project_bundle(self.project, path, include_renders=True)
             manifest = bundle.read_bundle_manifest(path)
@@ -1696,6 +2192,596 @@ class MainWindow(QMainWindow):
         self.zones.refresh_level()
         self.canvas.update()
 
+    # -- quick-stamp hotbar (keys 1-9) ----------------------------------------
+    def _save_stamp_slots(self):
+        self.settings.setValue("stamps/slots", slots_to_json(self.stamp_slots))
+
+    def _stamp_glyph(self, template: dict) -> QPixmap:
+        """Icon for a pinned node that has no image (text, patch, marker)."""
+        colors = thememod.theme_colors(self.theme_mode, self.theme_accent)
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if template.get("is_patch"):
+            painter.setPen(QPen(QColor(colors["text"]), 2))
+            painter.setBrush(QColor(template.get("patch_color") or "#10141c"))
+            painter.drawRoundedRect(QRectF(10, 14, 44, 36), 5, 5)
+        elif template.get("is_connector") or template.get("is_scale_bar"):
+            pen = QPen(QColor(template.get("connector_color") or template.get("scale_color")
+                              or colors["text"]), 5)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(12, 46), QPointF(52, 18))
+        else:
+            font = painter.font()
+            font.setPixelSize(40)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor(template.get("text_color") or colors["text"])
+                           if template.get("is_text") else QColor("#ff6b6b"))
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "T" if template.get("is_text") else "?")
+        painter.end()
+        return pixmap
+
+    def _stamp_icon(self, slot) -> Optional[QIcon]:
+        if not slot:
+            return None
+        path = slot.get("asset_path") or ""
+        if path:
+            from ui.image_utils import load_scaled_pixmap
+            pixmap = load_scaled_pixmap(self.project.resolve_asset(path), 64)
+            if not pixmap.isNull():
+                return QIcon(pixmap)
+        return QIcon(self._stamp_glyph(slot.get("template") or {}))
+
+    def _stamp_tip(self, index: int, slot) -> str:
+        key = index + 1
+        if not slot:
+            return (f"Stamp key {key} — empty.\nRight-click a library asset or a node "
+                    "and choose “Pin to stamp key”, or drag an asset onto this slot.")
+        door = ("\nDoor mode: each copy sits on the nearest grid line and turns "
+                "to match it." if is_edge_slot(slot) else "")
+        return (f"{key}: {slot_label(slot)}\nPress {key} (or click here), then click "
+                "the map to place copies. Esc or right-click stops."
+                f"{door}\nRight-click this slot to change or clear it.")
+
+    def _refresh_stamp_bar(self):
+        if not hasattr(self, "stamp_bar"):
+            return
+        icons = [self._stamp_icon(slot) for slot in self.stamp_slots]
+        tips = [self._stamp_tip(index, slot) for index, slot in enumerate(self.stamp_slots)]
+        self.stamp_bar.set_slots(icons, tips, [is_edge_slot(slot) for slot in self.stamp_slots])
+        self.stamp_bar.setVisible(self._stamps_enabled and any(self.stamp_slots))
+        self._place_stamp_bar()
+
+    def _pin_stamp(self, index: int, slot: dict):
+        if not (0 <= index < SLOT_COUNT) or not slot:
+            return
+        self.stamp_slots[index] = slot
+        self._save_stamp_slots()
+        self._refresh_stamp_bar()
+        if hasattr(self, "status"):
+            self.status.showMessage(
+                f"Pinned “{slot_label(slot)}” to stamp key {index + 1}. Press "
+                f"{index + 1}, then click the map to place it.", 7000)
+
+    def _is_door_asset(self, path: str) -> bool:
+        info = getattr(self.library, "_roles", {}).get(path) if path else None
+        return bool(info and info.role == "door") or looks_like_door(path)
+
+    def _pin_asset_stamp(self, index: int, path: str):
+        asset = self.library.library.get(path) if path else None
+        try:
+            slot = asset_slot(path, asset.name if asset else "", self._is_door_asset(path))
+        except StampError as exc:
+            QMessageBox.information(self, "Stamp keys", str(exc))
+            return
+        self._pin_stamp(index, slot)
+
+    def _pin_selected_stamp(self, index: int):
+        selected = self.canvas.selected_pieces()
+        if len(selected) != 1:
+            self.status.showMessage(
+                "Select exactly one node to pin it to a stamp key.", 5000)
+            return
+        piece = selected[0]
+        door = bool(piece.asset_path) and self._is_door_asset(piece.asset_path)
+        try:
+            slot = node_slot(piece.to_dict(), door)
+        except StampError as exc:
+            QMessageBox.information(self, "Stamp keys", str(exc))
+            return
+        self._pin_stamp(index, slot)
+
+    def _set_stamp_door_mode(self, index: int, on: bool):
+        slot = self.stamp_slots[index] if 0 <= index < SLOT_COUNT else None
+        if not slot:
+            return
+        self.stamp_slots[index] = with_edge(slot, on)
+        self._save_stamp_slots()
+        self._refresh_stamp_bar()
+        if self.canvas.stamp_tool and self.canvas.stamp_slot == index:
+            self.canvas._stamp_edge = bool(on)
+            self.canvas.update()
+        self.status.showMessage(
+            f"Stamp key {index + 1}: door mode {'on' if on else 'off'}.", 4000)
+
+    def _clear_stamp(self, index: int):
+        if self.canvas.stamp_tool and self.canvas.stamp_slot == index:
+            self.canvas.cancel_extra_tool()
+        self.stamp_slots[index] = None
+        self._save_stamp_slots()
+        self._refresh_stamp_bar()
+
+    def _clear_all_stamps(self):
+        if self.canvas.stamp_tool and self.canvas.stamp_slot is not None:
+            self.canvas.cancel_extra_tool()
+        self.stamp_slots = [None] * SLOT_COUNT
+        self._save_stamp_slots()
+        self._refresh_stamp_bar()
+
+    def _arm_stamp(self, index: int):
+        """Key 1-9 / slot click: pick up that stamp (again: put it away)."""
+        if not (0 <= index < SLOT_COUNT):
+            return
+        canvas = self.canvas
+        key = index + 1
+        if canvas.stamp_tool and canvas.stamp_slot == index:
+            canvas.cancel_extra_tool()
+            self.status.showMessage(f"Stamp {key} put away.", 3000)
+            return
+        slot = self.stamp_slots[index]
+        if not slot:
+            self.status.showMessage(
+                f"Stamp key {key} is empty — right-click a library asset or a node "
+                "and choose “Pin to stamp key”.", 7000)
+            return
+        if slot["kind"] == "asset":
+            template, tighten = canvas.asset_template(slot["asset_path"]), True
+        else:
+            template, tighten = dict(slot["template"]), False
+            image = template.get("asset_path")
+            if image and not os.path.isfile(self.project.resolve_asset(image)):
+                template = None
+        if template is None:
+            self.status.showMessage(
+                f"Stamp {key}: “{slot_label(slot)}” isn't in this map's asset library.",
+                7000)
+            return
+        door = is_edge_slot(slot)
+        if canvas.set_stamp_template(template, slot=index, tighten=tighten, edge=door):
+            where = " on grid lines (door mode)" if door else ""
+            self.status.showMessage(
+                f"Stamp {key}: {slot_label(slot)} — click the map to place copies"
+                f"{where}; Esc or right-click to stop.", 8000)
+
+    def _stamp_slot_menu(self, index: int, global_pos):
+        key = index + 1
+        menu = QMenu(self)
+        slot = self.stamp_slots[index]
+        if slot:
+            title = menu.addAction(f"{key}: {slot_label(slot)}")
+            title.setEnabled(False)
+            menu.addSeparator()
+        pin = menu.addAction(f"Pin the selected node to key {key}")
+        pin.setEnabled(len(self.canvas.selected_pieces()) == 1)
+        pin.triggered.connect(lambda: self._pin_selected_stamp(index))
+        current = self.library.list.current_path()
+        asset = menu.addAction(f"Pin the highlighted library asset to key {key}")
+        asset.setEnabled(bool(current))
+        asset.triggered.connect(lambda: self._pin_asset_stamp(index, current))
+        door = menu.addAction("Door mode — sit on grid lines and turn to match")
+        door.setCheckable(True)
+        door.setChecked(is_edge_slot(slot))
+        door.setEnabled(bool(slot))
+        door.setToolTip("For doors, hatches, airlocks and vents: each copy is centered "
+                        "on the nearest grid line and runs along it.")
+        door.triggered.connect(lambda checked=False: self._set_stamp_door_mode(index, checked))
+        clear = menu.addAction(f"Clear key {key}")
+        clear.setEnabled(bool(slot))
+        clear.triggered.connect(lambda: self._clear_stamp(index))
+        menu.addSeparator()
+        clear_all = menu.addAction("Clear all stamp keys")
+        clear_all.setEnabled(any(self.stamp_slots))
+        clear_all.triggered.connect(self._clear_all_stamps)
+        hide = menu.addAction("Hide the hotbar")
+        hide.triggered.connect(lambda: self._view_set("stamps", False))
+        menu.exec(global_pos)
+
+    def _stamp_key(self, event) -> bool:
+        """Plain 1-9 (top row or keypad) picks up that stamp key."""
+        if event.modifiers() not in (Qt.KeyboardModifier.NoModifier,
+                                     Qt.KeyboardModifier.KeypadModifier):
+            return False
+        key = getattr(event.key(), "value", event.key())
+        first = getattr(Qt.Key.Key_1, "value", Qt.Key.Key_1)
+        if first <= key < first + SLOT_COUNT:
+            self._arm_stamp(key - first)
+            return True
+        return False
+
+    # -- clipboard & selection basics ----------------------------------------
+    def _cut(self):
+        if self.canvas.cutout_tool:
+            self.canvas.cutout_cut()
+            return
+        count = self.canvas.cut()
+        if count:
+            self.status.showMessage(f"Cut {count} node(s). Ctrl+V pastes them.", 4000)
+
+    def _copy(self):
+        if self.canvas.cutout_tool:
+            self.canvas.cutout_copy()
+            return
+        if self.canvas.selected_pieces():
+            self.canvas.copy()
+            self.status.showMessage(
+                f"Copied {len(self.canvas.selected_pieces())} node(s).", 3000)
+
+    def _select_all(self):
+        pieces = self.canvas.select_all()
+        self.status.showMessage(f"Selected {len(pieces)} node(s).", 3000)
+
+    def _invert_selection(self):
+        pieces = self.canvas.invert_selection()
+        self.status.showMessage(f"Selected {len(pieces)} node(s).", 3000)
+
+    def _select_active_layer(self):
+        level = self.canvas.level
+        if level is None:
+            return
+        pieces = self.canvas.select_layer(level.current_layer)
+        layer = level.layer_by_id(level.current_layer)
+        if pieces and layer is not None:
+            self.status.showMessage(
+                f"Selected {len(pieces)} node(s) on “{layer.name}”.", 3000)
+
+    def _edit_key(self, event) -> bool:
+        """Ctrl+A/C/X/V/D and [ ] (outside text boxes)."""
+        mods = event.modifiers()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+        key = event.key()
+        if alt:
+            return False
+        if ctrl and not shift:
+            actions = {Qt.Key.Key_A: self._select_all, Qt.Key.Key_C: self._copy,
+                       Qt.Key.Key_X: self._cut, Qt.Key.Key_V: self.canvas.paste,
+                       Qt.Key.Key_D: self.canvas.duplicate}
+            if key in actions:
+                actions[key]()
+                return True
+        if ctrl and shift:
+            if key == Qt.Key.Key_A:
+                self.canvas.clear_selection()
+                return True
+            if key == Qt.Key.Key_I:
+                self._invert_selection()
+                return True
+        if not ctrl and key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
+            self._cycle_variant(1 if key == Qt.Key.Key_BracketRight else -1)
+            return True
+        return False
+
+    # -- send to another level --------------------------------------------------
+    def _fill_send_level_menu(self, menu: QMenu):
+        menu.clear()
+        level_index = self.canvas.level_index
+        others = [(i, level) for i, level in enumerate(self.project.levels)
+                  if i != level_index]
+        has_selection = bool(self.canvas.selected_pieces())
+        add = self._menu_action
+        if not others:
+            add(menu, "This map has only one level", lambda: None, False)
+            return
+        if not has_selection:
+            add(menu, "Select the nodes to send first", lambda: None, False)
+        move = menu.addMenu("Move to")
+        copy_menu = menu.addMenu("Copy to")
+        for index, level in others:
+            add(move, level.name, lambda i=index: self._send_to_levels([i], False),
+                has_selection)
+            add(copy_menu, level.name, lambda i=index: self._send_to_levels([i], True),
+                has_selection)
+        if len(others) > 1:
+            copy_menu.addSeparator()
+            add(copy_menu, "Every other level",
+                lambda ids=[i for i, _lv in others]: self._send_to_levels(ids, True),
+                has_selection)
+
+    def _send_to_levels(self, indexes, copy_nodes: bool):
+        if not self.canvas.selected_pieces():
+            self.status.showMessage("Select the nodes to send first.", 4000)
+            return 0
+        return self.canvas.send_to_levels(indexes, copy_nodes)
+
+    # -- swapping pictures --------------------------------------------------
+    def _canvas_swap_info(self) -> tuple[int, str]:
+        """(selected image nodes, file name of the first one's picture)."""
+        images = [piece for piece in self.canvas.selected_pieces()
+                  if not (piece.is_text or piece.is_patch or piece.is_scale_bar
+                          or piece.is_connector) and (piece.asset_path or piece.embedded)]
+        first = images[0].asset_path if images and not images[0].embedded else ""
+        return len(images), first
+
+    def _swap_selected_to(self, path: str):
+        count, _first = self._canvas_swap_info()
+        if not count:
+            self.status.showMessage("Select the node(s) on the map to swap first.", 5000)
+            return 0
+        changed = self.canvas.swap_image(self.canvas.selected_pieces(), path)
+        asset = self.library.library.get(path)
+        name = asset.name if asset else os.path.basename(path)
+        self.status.showMessage(f"Swapped {changed} node(s) to “{name}”.", 5000)
+        return changed
+
+    def _swap_every_copy_to(self, path: str):
+        _count, old = self._canvas_swap_info()
+        if not old:
+            self.status.showMessage(
+                "Select a node on the map whose picture should be swapped everywhere.", 5000)
+            return 0
+        changed = self.canvas.swap_every_copy(old, path)
+        asset = self.library.library.get(path)
+        name = asset.name if asset else os.path.basename(path)
+        self.status.showMessage(
+            f"Swapped {changed} node(s) on every level to “{name}”.", 6000)
+        return changed
+
+    def _cycle_variant(self, step: int):
+        changed, label = self.canvas.cycle_variant(step)
+        if changed:
+            self.status.showMessage(f"Swapped to {label}.  [ and ] step through the "
+                                    "images in its library folder.", 5000)
+        elif self.canvas.selected_pieces():
+            self.status.showMessage("No other images in that library folder.", 4000)
+        return changed
+
+    @staticmethod
+    def _menu_action(menu: QMenu, label: str, slot, enabled: bool = True) -> QAction:
+        """A menu entry owned by ``menu`` (slot called without arguments)."""
+        action = QAction(label, menu)
+        action.setEnabled(bool(enabled))
+        action.triggered.connect(lambda _=False: slot())
+        menu.addAction(action)
+        return action
+
+    def _fill_swap_menu(self, menu: QMenu):
+        menu.clear()
+        count, first = self._canvas_swap_info()
+        current = self.library.list.current_path()
+        asset = self.library.library.get(current) if current else None
+        add = self._menu_action
+        add(menu, "Next image in its folder\t]", lambda: self._cycle_variant(1), count)
+        add(menu, "Previous image in its folder\t[", lambda: self._cycle_variant(-1), count)
+        menu.addSeparator()
+        label = f"“{asset.name}”" if asset else "the highlighted library image"
+        add(menu, f"Swap to {label}", lambda: self._swap_selected_to(current),
+            count and asset)
+        add(menu, f"Swap every copy on the map to {label}",
+            lambda: self._swap_every_copy_to(current),
+            first and asset and first != current)
+        menu.addSeparator()
+        add(menu, "Replace with a file from disk (embedded)…",
+            self._replace_selected_image, count == 1)
+
+    # -- cut-out tool ---------------------------------------------------------
+    def _start_cutout_tool(self, shape=None):
+        shape = shape if shape in ("rect", "ellipse", "lasso", "polygon") else None
+        self.canvas.set_cutout_tool(True, shape)
+        if shape:
+            self.settings.setValue("tools/cutout_shape", shape)
+        targets = len(self.canvas.cutout_target_pieces())
+        what = (f"{targets} selected image(s)" if targets
+                else "the image under the area you draw")
+        self.status.showMessage(
+            f"Cut out: draw an area over {what}. Ctrl+click adds or removes an image; "
+            "Esc puts the tool away.", 9000)
+
+    def _set_cutout_shape(self, shape: str):
+        self.canvas.set_cutout_shape(shape)
+        self.settings.setValue("tools/cutout_shape", shape)
+
+    def _set_cutout_snap(self, on: bool):
+        self.canvas.set_cutout_snap(on)
+        self.settings.setValue("tools/cutout_snap", bool(on))
+
+    def _refresh_cutout_bar(self):
+        if not hasattr(self, "cutout_bar"):
+            return
+        canvas = self.canvas
+        bar = self.cutout_bar
+        bar.set_state(canvas.cutout_shape, canvas.cutout_snap,
+                      canvas.has_cutout_area(), len(canvas.cutout_target_pieces()))
+        bar.setVisible(canvas.cutout_tool)
+        self._place_cutout_bar()
+
+    def _cutout_action(self, name: str):
+        canvas = self.canvas
+        if name == "delete":
+            canvas.cutout_delete()
+        elif name == "cut":
+            canvas.cutout_cut()
+        elif name == "copy":
+            canvas.cutout_copy()
+        elif name == "new_node":
+            canvas.cutout_to_new_node(cut=True)
+        elif name == "copy_new_node":
+            canvas.cutout_to_new_node(cut=False)
+        elif name == "keep":
+            canvas.cutout_keep_only()
+        elif name == "clear":
+            canvas.clear_cutout_area()
+        elif name == "done":
+            canvas.set_cutout_tool(False)
+        canvas.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _show_cutout_menu(self, global_pos):
+        menu = QMenu(self)
+        for name, label in (("delete", "Delete the area\tDel"),
+                            ("cut", "Cut\tCtrl+X"),
+                            ("copy", "Copy\tCtrl+C"),
+                            (None, None),
+                            ("new_node", "Cut out to a new node"),
+                            ("copy_new_node", "Copy to a new node"),
+                            ("keep", "Keep only the area"),
+                            (None, None),
+                            ("clear", "Clear the outline\tEsc"),
+                            ("done", "Done")):
+            if name is None:
+                menu.addSeparator()
+                continue
+            self._menu_action(menu, label, lambda n=name: self._cutout_action(n))
+        menu.exec(global_pos)
+        menu.deleteLater()
+
+    def _start_clone_tool(self):
+        self.canvas.set_clone_tool(True)
+
+    def _repick_clone_source(self):
+        selected = self.canvas.selected_pieces()
+        if len(selected) == 1 and selected[0].clone_home:
+            self.canvas.begin_clone_repick(selected[0])
+
+    # -- level backdrop ---------------------------------------------------------
+    def _use_backdrop_texture(self, path: str, all_levels: bool = False):
+        levels = list(self.project.levels) if all_levels else [self.canvas.level]
+        levels = [level for level in levels if level is not None]
+        if not levels or not path:
+            return 0
+        self._push_history("Backdrop texture")
+        for level in levels:
+            level.backdrop = "texture"
+            level.backdrop_texture = path
+        self.canvas.update()
+        self._mark_dirty()
+        if hasattr(self.props, "refresh_backdrop"):
+            self.props.refresh_backdrop()
+        asset = self.library.library.get(path)
+        name = asset.name if asset else os.path.basename(path)
+        where = "every level" if all_levels else f"“{levels[0].name}”"
+        self.status.showMessage(
+            f"Backdrop of {where} is now the floor texture “{name}”. Change its tile "
+            "size in the Node tab → Backdrop (with nothing selected).", 7000)
+        return len(levels)
+
+    def _upload_backdrop_texture(self, all_levels: bool = False) -> str:
+        """Backdrop → Upload an image…: pick a floor texture from a file on this
+        computer. It is copied into the library's Backdrops folder (so the map
+        can find it again, and bundles carry it) and becomes the backdrop.
+        Returns the texture's library path, or "" when no picture was used."""
+        from PyQt6.QtGui import QImageReader
+        from core.asset_manager import SUPPORTED_EXTS
+        from core.project import BACKDROP_FOLDER
+        title = "Upload a floor texture"
+        path, _ = QFileDialog.getOpenFileName(
+            self, title, self._last_dir("files/last_import_dir"),
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tiff)")
+        if not path:
+            return ""
+        self._remember_dir(path, "files/last_import_dir")
+        name = os.path.basename(path)
+        if (not path.lower().endswith(SUPPORTED_EXTS)
+                or not QImageReader(path).size().isValid()):
+            QMessageBox.warning(
+                self, title, f"“{name}” isn't a picture SceneBoard can use as a "
+                "floor texture. Choose a PNG, JPG, WEBP, BMP or TIFF image.")
+            return ""
+        library = self.library.library
+        revision = library._scan_revision
+        try:
+            self._ensure_store()
+            store = self.project.asset_store
+            if not self._same_path(library.root, store):
+                library.scan(store)
+            rel = library.import_into_folder(path, BACKDROP_FOLDER)
+        except OSError as error:
+            QMessageBox.warning(self, title,
+                                f"“{name}” couldn't be copied into the library.\n\n{error}")
+            return ""
+        if library._scan_revision != revision:
+            self.library.library_changed()      # list the new picture right away
+        if not rel:
+            QMessageBox.warning(self, title, f"“{name}” couldn't be added to the library.")
+            return ""
+        levels = list(self.project.levels) if all_levels else [self.canvas.level]
+        if all(level is not None and level.backdrop == "texture"
+               and level.backdrop_texture == rel for level in levels):
+            self.status.showMessage(f"“{name}” is already the floor texture.", 5000)
+            return rel
+        self._use_backdrop_texture(rel, all_levels)
+        where = ("every level" if all_levels else
+                 f"“{self.canvas.level.name}”" if self.canvas.level else "this level")
+        kept = (f"a copy is in the library's {BACKDROP_FOLDER} folder"
+                if rel.split("/")[0] == BACKDROP_FOLDER else "it is already in the library")
+        self.status.showMessage(
+            f"Floor texture of {where}: “{rel.split('/')[-1]}” ({kept}).", 8000)
+        return rel
+
+    # -- mirror copies and grid copies -----------------------------------------
+    def _mirror_selection(self, axis: str, pos: float):
+        if not self.canvas.selected_pieces():
+            self.status.showMessage("Select the nodes to mirror first.", 5000)
+            return []
+        return self.canvas.mirror_selection(axis, pos)
+
+    def _mirror_selection_center(self, axis: str):
+        pos = self.project.canvas_w / 2.0 if axis == "v" else self.project.canvas_h / 2.0
+        return self._mirror_selection(axis, pos)
+
+    def _mirror_selection_nearest(self, axis: str):
+        if not self.canvas.selected_pieces():
+            self.status.showMessage("Select the nodes to mirror first.", 5000)
+            return []
+        level = self.canvas.level
+        if not level or not any(guide.axis == axis for guide in level.guides):
+            kind, rails = (("vertical", "left or right") if axis == "v"
+                           else ("horizontal", "top or bottom"))
+            self.status.showMessage(
+                f"This level has no {kind} guides yet — drag one out of the {rails} "
+                "rail first.", 7000)
+            return []
+        line = self.canvas.nearest_mirror_line(axis)
+        return self._mirror_selection(line[0], line[1])
+
+    def _show_mirror_menu_at_cursor(self):
+        from ui.context_menu import fill_mirror_menu
+        menu = QMenu(self)
+        fill_mirror_menu(self, menu)
+        menu.exec(QCursor.pos())
+
+    def _set_show_centerlines(self, on: bool):
+        self.project.show_centerlines = bool(on)
+        self.props.chk_centerlines.blockSignals(True)
+        self.props.chk_centerlines.setChecked(bool(on))
+        self.props.chk_centerlines.blockSignals(False)
+        self.canvas.update()
+        self._mark_dirty()
+
+    def _duplicate_as_grid_dialog(self):
+        bounds = self.canvas.selection_bounds()
+        if bounds is None:
+            self.status.showMessage("Select the nodes to repeat first.", 5000)
+            return
+        from ui.tool_dialogs import GridCopyDialog
+        try:
+            defaults = json.loads(str(self.settings.value("tools/grid_copy", "{}")))
+        except (TypeError, ValueError):
+            defaults = {}
+        dialog = GridCopyDialog(bounds, self.project.cell_size,
+                                (self.project.canvas_w, self.project.canvas_h),
+                                defaults if isinstance(defaults, dict) else {}, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        self.settings.setValue("tools/grid_copy", json.dumps(values))
+        cell = self.project.cell_size
+        self.canvas.duplicate_as_grid(values["rows"], values["cols"],
+                                      values["gap_x"] * cell, values["gap_y"] * cell)
+
     def _start_stamp_tool(self):
         if not self.canvas.set_stamp_tool(True):
             QMessageBox.information(self, "Stamp tool",
@@ -1769,6 +2855,7 @@ class MainWindow(QMainWindow):
         self.canvas.set_level(idx)
         self.layers.set_project(self.project, self.project.levels[idx])
         self.zones.refresh_level()
+        self.props.refresh_backdrop()
 
     def _rotate_sel(self, d):
         if self.canvas.selected_pieces():
@@ -1863,6 +2950,9 @@ class MainWindow(QMainWindow):
             self._after_history(fit_canvas=label == "Resize canvas")
 
     def _after_history(self, fit_canvas=False):
+        self._sync_guide_actions()
+        self._place_minimap()
+        self.canvas._guide_hover = None
         self.canvas.selection.clear()
         self.canvas.selectionChanged.emit([])
         idx = min(self.canvas.level_index, len(self.project.levels) - 1)
@@ -1895,9 +2985,36 @@ class MainWindow(QMainWindow):
         self._dirty = bool(dirty)
         self._update_window_title()
 
-    def _confirm_discard(self):
-        r = QMessageBox.question(self, "Unsaved changes", "Discard unsaved changes?")
-        return r == QMessageBox.StandardButton.Yes
+    def _confirm_discard(self) -> bool:
+        """Before closing / New / Open with unsaved changes, offer
+        Save / Don't Save / Cancel. Returns True when it is fine to go on."""
+        if not self._dirty:
+            return True
+        choice = self._ask_unsaved_changes()
+        if choice == "save":
+            return bool(self._save())       # a cancelled Save As keeps the map open
+        return choice == "discard"
+
+    def _ask_unsaved_changes(self) -> str:
+        name = (os.path.basename(self._current_file) if self._current_file
+                else (self.project.name or "Untitled map"))
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Unsaved changes")
+        box.setText(f"Save the changes to “{name}”?")
+        box.setInformativeText("If you don't save, changes since the last save are lost.")
+        save = box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(save)
+        box.setEscapeButton(cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is save:
+            return "save"
+        if clicked is discard:
+            return "discard"
+        return "cancel"
 
     # ------------------------------------------------------------------
     def _on_cursor(self, wx, wy):
@@ -1918,12 +3035,14 @@ class MainWindow(QMainWindow):
             self.overlay.setGeometry(self.rect())
 
     def keyPressEvent(self, e):
+        if self.canvas.handle_cutout_key(e) or self.canvas.handle_clone_key(e):
+            return
         if e.key() == Qt.Key.Key_Escape:
             if self.canvas.end_free_transform(False):
                 return
             if (self.canvas.cancel_color_pick() or self.canvas.cancel_zone_tool()
-                    or self.canvas.cancel_patch_tool()):
-                return
+                    or self.canvas.cancel_patch_tool() or self.canvas.cancel_extra_tool()):
+                return          # Esc first puts down an active tool (stamp, ruler, …)
             # ESC toggles the in-window system menu (close if open, else show)
             self.overlay.toggle_menu()
             return
@@ -1933,6 +3052,10 @@ class MainWindow(QMainWindow):
                                  QAbstractSpinBox))
         if not typing and self.canvas.selected_zone and e.key() == Qt.Key.Key_Delete:
             self.canvas.delete_selected_zone()
+            return
+        if not typing and self._stamp_key(e):
+            return
+        if not typing and self._edit_key(e):
             return
         if (not typing and self.canvas.selected_pieces()
                 and not isinstance(fw, QDoubleSpinBox)):

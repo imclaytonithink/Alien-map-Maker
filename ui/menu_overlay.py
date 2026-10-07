@@ -285,8 +285,9 @@ class MenuOverlay(QWidget):
             it = QListWidgetItem(os.path.basename(p))
             it.setData(Qt.ItemDataRole.UserRole, p)
             it.setToolTip(p)
-            thumb = os.path.splitext(p)[0] + ".png"
-            if os.path.exists(thumb):
+            finder = getattr(self.main, "_thumbnail_for", None)
+            thumb = finder(p) if finder else os.path.splitext(p)[0] + ".png"
+            if thumb and os.path.exists(thumb):
                 it.setIcon(QIcon(QPixmap(thumb).scaled(
                     40, 40, Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation)))
@@ -333,9 +334,10 @@ class MenuOverlay(QWidget):
                 return
             try:
                 os.remove(path)
-                thumb = os.path.splitext(path)[0] + ".png"
-                if os.path.exists(thumb):
-                    os.remove(thumb)
+                # previews live in app data now; a "<map>.png" beside the map is
+                # only removed when it is thumbnail-sized (never an export)
+                if hasattr(self.main, "_delete_map_thumbnails"):
+                    self.main._delete_map_thumbnails(path)
             except OSError as e:
                 QMessageBox.critical(self, "Delete failed", str(e))
                 return
@@ -343,8 +345,11 @@ class MenuOverlay(QWidget):
 
     def _forget_recent(self, path: str, delete_file: bool):
         self.main.recent = [p for p in self.main.recent if p != path]
-        from ui.main_window import save_recent
-        save_recent(self.main.recent)
+        if hasattr(self.main, "_save_recent"):
+            self.main._save_recent()
+        else:
+            from ui.main_window import save_recent
+            save_recent(self.main.recent)
         self._refresh_recent()
 
     # ------------------------------------------------------------------

@@ -4,13 +4,14 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QScrollArea,
+    QComboBox, QDoubleSpinBox, QGroupBox, QHBoxLayout,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QScrollArea,
     QSlider, QVBoxLayout, QWidget, QSizePolicy,
 )
 
 from core.project import Project, ZoneRegion
 from ui.color_picker import choose_color
+from ui.responsive import FitFormLayout, WrapButton, WrapCheckBox
 
 
 class ZonesPanel(QWidget):
@@ -41,8 +42,8 @@ class ZonesPanel(QWidget):
         root.setSpacing(6)
 
         defaults = QGroupBox("Project border defaults")
-        form = QFormLayout(defaults)
-        self.btn_color = QPushButton("Choose border color…")
+        form = FitFormLayout(defaults)
+        self.btn_color = WrapButton("Choose border color…")
         self.btn_color.clicked.connect(self._pick_project_color)
         form.addRow("Color", self.btn_color)
 
@@ -64,16 +65,16 @@ class ZonesPanel(QWidget):
         self.cmb_shape.currentIndexChanged.connect(self._apply_defaults)
         form.addRow("Node outline", self.cmb_shape)
 
-        self.chk_canvas_nodes = QCheckBox("Show node outlines on canvas")
+        self.chk_canvas_nodes = WrapCheckBox("Show node outlines on canvas")
         self.chk_canvas_nodes.toggled.connect(self._apply_defaults)
         form.addRow(self.chk_canvas_nodes)
-        self.chk_canvas_zones = QCheckBox("Show gameplay zones on canvas")
+        self.chk_canvas_zones = WrapCheckBox("Show gameplay zones on canvas")
         self.chk_canvas_zones.toggled.connect(self._apply_defaults)
         form.addRow(self.chk_canvas_zones)
-        self.chk_export_nodes = QCheckBox("Include node outlines in exports")
+        self.chk_export_nodes = WrapCheckBox("Include node outlines in exports")
         self.chk_export_nodes.toggled.connect(self._apply_defaults)
         form.addRow(self.chk_export_nodes)
-        self.chk_export_zones = QCheckBox("Include gameplay zones in exports")
+        self.chk_export_zones = WrapCheckBox("Include gameplay zones in exports")
         self.chk_export_zones.toggled.connect(self._apply_defaults)
         form.addRow(self.chk_export_zones)
         root.addWidget(defaults)
@@ -88,17 +89,17 @@ class ZonesPanel(QWidget):
         zones_layout.addWidget(self.list_zones)
 
         tool_row = QHBoxLayout()
-        self.btn_rect = QPushButton("Draw rectangle")
+        self.btn_rect = WrapButton("Draw rectangle")
         self.btn_rect.clicked.connect(lambda: self.canvas.set_zone_tool("rectangle"))
-        self.btn_poly = QPushButton("Draw polygon")
+        self.btn_poly = WrapButton("Draw polygon")
         self.btn_poly.clicked.connect(lambda: self.canvas.set_zone_tool("polygon"))
         tool_row.addWidget(self.btn_rect)
         tool_row.addWidget(self.btn_poly)
         zones_layout.addLayout(tool_row)
         action_row = QHBoxLayout()
-        self.btn_finish = QPushButton("Finish polygon")
+        self.btn_finish = WrapButton("Finish polygon")
         self.btn_finish.clicked.connect(self.canvas.finish_zone_polygon)
-        self.btn_delete = QPushButton("Delete zone")
+        self.btn_delete = WrapButton("Delete zone")
         self.btn_delete.clicked.connect(self.canvas.delete_selected_zone)
         action_row.addWidget(self.btn_finish)
         action_row.addWidget(self.btn_delete)
@@ -112,7 +113,7 @@ class ZonesPanel(QWidget):
         root.addWidget(zones_group)
 
         self.zone_box = QGroupBox("Selected gameplay zone")
-        zf = QFormLayout(self.zone_box)
+        zf = FitFormLayout(self.zone_box)
         self.edit_name = QLineEdit()
         self.edit_name.editingFinished.connect(self._rename_zone)
         zf.addRow("Name", self.edit_name)
@@ -120,19 +121,21 @@ class ZonesPanel(QWidget):
         self.edit_label.setPlaceholderText("Uses the zone name when blank")
         self.edit_label.editingFinished.connect(self._zone_label_changed)
         zf.addRow("Canvas / export label", self.edit_label)
-        self.chk_show_label = QCheckBox("Show label")
+        self.chk_show_label = WrapCheckBox("Show label")
         self.chk_show_label.toggled.connect(self._zone_label_options_changed)
         zf.addRow(self.chk_show_label)
-        self.chk_show_id = QCheckBox("Show short zone ID")
+        self.chk_show_id = WrapCheckBox("Show short zone ID")
         self.chk_show_id.toggled.connect(self._zone_label_options_changed)
         zf.addRow(self.chk_show_id)
         self.cmb_zone_mode = QComboBox()
-        self.cmb_zone_mode.addItem("Inherit project border", "inherit")
-        self.cmb_zone_mode.addItem("Override color / opacity", "override")
-        self.cmb_zone_mode.addItem("No border", "off")
+        self.cmb_zone_mode.addItem("Inherit project", "inherit")
+        self.cmb_zone_mode.addItem("Override", "override")
+        self.cmb_zone_mode.addItem("Off", "off")
+        self.cmb_zone_mode.setToolTip(
+            "Inherit project: use the project border defaults above. Override: this zone's own color and opacity (below). Off: no border.")
         self.cmb_zone_mode.currentIndexChanged.connect(self._zone_mode_changed)
         zf.addRow("Border", self.cmb_zone_mode)
-        self.btn_zone_color = QPushButton("Use project border color")
+        self.btn_zone_color = WrapButton("Use project border color")
         self.btn_zone_color.clicked.connect(self._pick_zone_color)
         zf.addRow("Override color", self.btn_zone_color)
         self.sl_zone_opacity = QSlider(Qt.Orientation.Horizontal)
