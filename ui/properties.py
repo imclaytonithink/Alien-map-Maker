@@ -1209,9 +1209,14 @@ class PropertiesPanel(QWidget):
                 8000)
 
     def _replace_image(self):
+        window = self.window()
+        start = (window._last_dir("files/last_import_dir")
+                 if hasattr(window, "_last_dir") else "")
         path, _ = QFileDialog.getOpenFileName(
-            self, "Replace selected node image", "",
+            self, "Replace selected node image", start,
             "Images (*.png *.jpg *.jpeg *.webp *.bmp)")
+        if path and hasattr(window, "_remember_dir"):
+            window._remember_dir(path, "files/last_import_dir")
         if path and not self.canvas.replace_selected_image(path):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Replace image",

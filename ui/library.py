@@ -1156,9 +1156,24 @@ class LibraryPanel(QWidget):
         menu.exec(self.group_tree.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------
+    def _import_start_dir(self) -> str:
+        """Import dialogs open where the last import came from (not the folder
+        the program happened to start in)."""
+        window = self.window()
+        if hasattr(window, "_last_dir"):
+            return window._last_dir("files/last_import_dir")
+        return os.getcwd()
+
+    def _remember_import_dir(self, path: str):
+        window = self.window()
+        if path and hasattr(window, "_remember_dir"):
+            window._remember_dir(path, "files/last_import_dir")
+
     def _import_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Import asset folder",
-                                            os.getcwd())
+                                            self._import_start_dir())
+        if d:
+            self._remember_import_dir(os.path.dirname(os.path.abspath(d)))
         if d and self.project:
             self._ensure_store()
             self.library.root = self.project.asset_store
@@ -1167,8 +1182,9 @@ class LibraryPanel(QWidget):
 
     def _import_file(self):
         fn, _ = QFileDialog.getOpenFileName(self, "Import image",
-                                           os.getcwd(),
+                                           self._import_start_dir(),
                                            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tiff)")
+        self._remember_import_dir(fn)
         if fn and self.project:
             self._ensure_store()
             self.library.root = self.project.asset_store
@@ -1179,8 +1195,10 @@ class LibraryPanel(QWidget):
         if not self.project or (self._zip_worker and self._zip_worker.isRunning()):
             return
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Import asset ZIP archives", os.getcwd(), "ZIP archives (*.zip)")
+            self, "Import asset ZIP archives", self._import_start_dir(),
+            "ZIP archives (*.zip)")
         if paths:
+            self._remember_import_dir(paths[0])
             self.import_zip_paths(
                 paths, status_text=f"Importing {len(paths)} ZIP archive(s)… "
                                    "original files are unchanged.")

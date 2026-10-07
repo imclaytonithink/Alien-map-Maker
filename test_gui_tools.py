@@ -525,6 +525,10 @@ all_dialog.rb_all.setChecked(True)
 all_dialog.output_path = all_dir
 all_dialog._export()
 assert sorted(os.listdir(all_dir))[0].startswith("Deck_01_"), os.listdir(all_dir)
+assert win._same_path(win.library._import_start_dir(), win._last_dir()), \
+    "imports start in the last folder used, not where the app started"
+win.library._remember_import_dir(os.path.join(export_dir, "pack.zip"))
+assert win._same_path(win.library._import_start_dir(), export_dir)
 print("export names ok")
 
 win._clear_all_stamps()

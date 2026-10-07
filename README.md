@@ -308,8 +308,9 @@ bulk. Your choices (★) are saved with the asset store and always win.
   folder, so the EXE remembers recent maps between launches and nothing is
   written next to your maps (older versions saved a `<map>.png` preview there,
   which could overwrite an export with the same name).
-- Open, save and export dialogs start in the folder you used last; exports are
-  named after the map (and level).
+- Open, save, import and export dialogs start in the folder you used last
+  (not the folder the program started from); exports are named after the map
+  (and level).
 - **Auto-save** is on by default (every 5 minutes; choose Off / 1 / 5 / 10
   minutes from File or the ESC menu). Named projects are saved in place, and
   before each auto-save the version on disk goes into one of **4 rolling
