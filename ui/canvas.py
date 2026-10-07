@@ -6,7 +6,7 @@ import math
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, pyqtSignal
 from PyQt6.QtGui import (
     QImageReader, QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont,
     QPolygonF,
@@ -20,6 +20,13 @@ from ui.theme import theme_colors
 
 HANDLE_DIST = 26
 HANDLE_R = 7
+RESIZE_HIT = 7
+MIN_VISUAL_SIZE = 4.0
+# resize handle name -> (x, y) direction in the node's local frame
+RESIZE_HANDLES = {
+    "nw": (-1, -1), "n": (0, -1), "ne": (1, -1), "e": (1, 0),
+    "se": (1, 1), "s": (0, 1), "sw": (-1, 1), "w": (-1, 0),
+}
 GUIDE_DIST = 12  # screen px threshold for smart guides
 
 
@@ -29,8 +36,12 @@ class CanvasView(QWidget):
     dirty = pyqtSignal()
     viewChanged = pyqtSignal()  # zoom, pan, or viewport size changed
     cursorMoved = pyqtSignal(float, float)
-    historyPush = pyqtSignal(str)
+    historyPush = pyqtSignal(str, bool)   # label, coalesce
     colorPickStateChanged = pyqtSignal(bool)
+    contextMenuRequested = pyqtSignal(QPoint, object)   # global pos, hit Piece|None
+    layerSoloChanged = pyqtSignal(object)
+    historyDiscardLast = pyqtSignal()
+    freeTransformChanged = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,6 +76,10 @@ class CanvasView(QWidget):
         self._marquee: Optional[QRectF] = None
         self._cursor_world = (-1.0, -1.0)
         self._guides: list[tuple[str, float]] = []  # ("v", x) or ("h", y)
+        self.free_transform = False
+        self._ft_backup: dict | None = None
+        self._ft_pushed = False
+        self.solo_layer_id: str | None = None   # view-only isolate; never saved/exported
 
         self.ref_enabled = False
         self.ref_offset = -1
@@ -436,8 +451,51 @@ class CanvasView(QWidget):
         self.ref_opacity = opacity
         self.update()
 
-    def push_history(self, label: str):
-        self.historyPush.emit(label)
+    def push_history(self, label: str, coalesce: bool = False):
+        """Snapshot before an edit. ``coalesce`` merges rapid repeats of the
+        same label (slider drags, held keys) into one undo step."""
+        if self.free_transform and label in ("Resize", "Rotate", "Move"):
+            # a whole free-transform session is a single undo step
+            if self._ft_pushed:
+                return
+            self._ft_pushed = True
+            label, coalesce = "Free transform", False
+        self.historyPush.emit(label, coalesce)
+
+    # -- free transform mode (Ctrl+T) -----------------------------------
+    _FT_FIELDS = ("x", "y", "w", "h", "scale", "rotation", "text_auto_size")
+
+    def begin_free_transform(self) -> bool:
+        sel = self.selected_pieces()
+        if len(sel) != 1 or sel[0].locked or self.free_transform:
+            return False
+        p = sel[0]
+        self._ft_backup = {"id": p.id, **{k: getattr(p, k) for k in self._FT_FIELDS}}
+        self._ft_pushed = False
+        self.free_transform = True
+        self.freeTransformChanged.emit(True)
+        self.update()
+        return True
+
+    def end_free_transform(self, commit: bool = True) -> bool:
+        if not self.free_transform:
+            return False
+        self.free_transform = False
+        backup, self._ft_backup = self._ft_backup, None
+        pushed, self._ft_pushed = self._ft_pushed, False
+        if not commit and backup:
+            piece = next((q for q in (self.level.pieces if self.level else [])
+                          if q.id == backup["id"]), None)
+            if piece is not None:
+                for k in self._FT_FIELDS:
+                    setattr(piece, k, backup[k])
+            if pushed:
+                self.historyDiscardLast.emit()
+        self.freeTransformChanged.emit(False)
+        self.selectionChanged.emit(self.selected_pieces())
+        self.dirty.emit()
+        self.update()
+        return True
 
     def begin_color_pick(self, callback) -> bool:
         """Arm a one-shot eyedropper. The callback receives QColor or None."""
@@ -706,6 +764,8 @@ class CanvasView(QWidget):
         return [p for p in self.level.pieces if p.id in self.selection]
 
     def select(self, pieces: list[Piece]):
+        if self.free_transform and {p.id for p in pieces} != self.selection:
+            self.end_free_transform(True)
         if self.selected_zone_id is not None:
             self.selected_zone_id = None
             self.zoneSelectionChanged.emit(None)
@@ -858,6 +918,126 @@ class CanvasView(QWidget):
         half_h = (p.vis_h / 2.0) * self.zoom
         return QPointF(scx + ux * (half_h + HANDLE_DIST), scy + uy * (half_h + HANDLE_DIST))
 
+    def _visible_world_bounds(self):
+        x0, y0 = self.screen_to_world(0, 0)
+        x1, y1 = self.screen_to_world(self.width(), self.height())
+        return (x0, y0, x1, y1)
+
+    # -- resize handles -------------------------------------------------
+    def _resize_handle_points(self, p: Piece) -> dict[str, QPointF]:
+        cx, cy = p.center
+        scx, scy = self.world_to_screen(cx, cy)
+        ang = math.radians(p.rotation)
+        ca, sa = math.cos(ang), math.sin(ang)
+        hw = p.vis_w / 2.0 * self.zoom
+        hh = p.vis_h / 2.0 * self.zoom
+        pts = {}
+        for name, (hx, hy) in RESIZE_HANDLES.items():
+            lx, ly = hx * hw, hy * hh
+            pts[name] = QPointF(scx + lx * ca - ly * sa, scy + lx * sa + ly * ca)
+        return pts
+
+    def _resize_handle_at(self, sx, sy) -> str | None:
+        if len(self.selection) != 1:
+            return None
+        p = next(iter(self.selected_pieces()), None)
+        if p is None or p.locked:
+            return None
+        click = QPointF(sx, sy)
+        best, best_d = None, RESIZE_HIT + 1.0
+        for name, pt in self._resize_handle_points(p).items():
+            d = max(abs(pt.x() - click.x()), abs(pt.y() - click.y()))
+            if d <= RESIZE_HIT and d < best_d:
+                best, best_d = name, d
+        return best
+
+    def _draw_free_transform_frame(self, painter, p: Piece):
+        pts = self._resize_handle_points(p)
+        painter.save()
+        pen = QPen(QColor(self.theme_accent), 1)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.drawPolygon(QPolygonF([pts["nw"], pts["ne"], pts["se"], pts["sw"]]))
+        painter.setPen(QColor(self.theme_accent))
+        painter.drawText(8, self.height() - 10,
+                         "Free transform — drag handles to stretch, Shift locks corners, "
+                         "Alt from center · Enter apply · Esc cancel")
+        painter.restore()
+
+    def _draw_resize_handles(self, painter, p: Piece):
+        if p.locked:
+            return
+        painter.save()
+        painter.setPen(QPen(QColor(self.theme_accent), 1.5))
+        painter.setBrush(QBrush(QColor("#ffffff")))
+        for pt in self._resize_handle_points(p).values():
+            painter.drawRect(QRectF(pt.x() - 4, pt.y() - 4, 8, 8))
+        painter.restore()
+
+    @staticmethod
+    def _resize_cursor(name: str, rotation: float) -> Qt.CursorShape:
+        hx, hy = RESIZE_HANDLES[name]
+        ang = (math.degrees(math.atan2(hy, hx)) + rotation) % 180
+        # 0: horizontal, 45: down-right diagonal, 90: vertical, 135: down-left
+        step = int(round(ang / 45.0)) % 4
+        return (Qt.CursorShape.SizeHorCursor, Qt.CursorShape.SizeFDiagCursor,
+                Qt.CursorShape.SizeVerCursor, Qt.CursorShape.SizeBDiagCursor)[step]
+
+    def _begin_resize(self, name: str):
+        p = next(iter(self.selected_pieces()))
+        self.push_history("Resize")
+        self._drag = {"mode": "resize", "handle": name, "piece": p,
+                      "x": p.x, "y": p.y, "w": p.w, "h": p.h, "scale": p.scale,
+                      "center": p.center, "rot": p.rotation}
+
+    def _resize_primary(self, sx, sy, e):
+        """Drag a handle. Edges stretch one axis; corners scale uniformly
+        (Shift = free; reversed in free-transform mode). Alt resizes from the center."""
+        d = self._drag
+        p: Piece = d["piece"]
+        hx, hy = RESIZE_HANDLES[d["handle"]]
+        mods = e.modifiers()
+        from_center = bool(mods & Qt.KeyboardModifier.AltModifier)
+        # Corners keep proportions by default; Shift releases them. In free
+        # transform mode that flips: corners are free and Shift locks them.
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        keep_ratio = hx != 0 and hy != 0 and (shift == self.free_transform)
+        wx, wy = self.screen_to_world(sx, sy)
+        c0x, c0y = d["center"]
+        rad = math.radians(d["rot"])
+        ca, sa = math.cos(rad), math.sin(rad)
+        dx, dy = wx - c0x, wy - c0y
+        lx, ly = dx * ca + dy * sa, -dx * sa + dy * ca   # into the node's frame
+        w0, h0 = d["w"] * d["scale"], d["h"] * d["scale"]
+        min_w, min_h = MIN_VISUAL_SIZE, MIN_VISUAL_SIZE
+
+        def extent(local, direction, size0, minimum):
+            if direction == 0:
+                return size0, 0.0
+            anchor = 0.0 if from_center else -direction * size0 / 2.0
+            size = max(minimum, (local - anchor) * direction * (2.0 if from_center else 1.0))
+            return size, anchor
+
+        new_w, ax = extent(lx, hx, w0, min_w)
+        new_h, ay = extent(ly, hy, h0, min_h)
+        new_scale, w_unit, h_unit = d["scale"], None, None
+        if keep_ratio:
+            f = max(new_w / w0, new_h / h0, MIN_VISUAL_SIZE / max(min(w0, h0), 1e-6))
+            new_w, new_h = w0 * f, h0 * f
+            new_scale = d["scale"] * f
+            w_unit, h_unit = d["w"], d["h"]
+        else:
+            w_unit, h_unit = new_w / new_scale, new_h / new_scale
+        # new center in the node's frame, then back to world
+        ncx = 0.0 if (from_center or hx == 0) else ax + hx * new_w / 2.0
+        ncy = 0.0 if (from_center or hy == 0) else ay + hy * new_h / 2.0
+        cx = c0x + ncx * ca - ncy * sa
+        cy = c0y + ncx * sa + ncy * ca
+        p.w, p.h, p.scale = w_unit, h_unit, new_scale
+        p.x, p.y = cx - new_w / 2.0, cy - new_h / 2.0
+        if p.is_text and not keep_ratio:
+            p.text_auto_size = False
+
     def _piece_rect_screen(self, p: Piece) -> QRectF:
         w = p.w * self.zoom * p.scale
         h = p.h * self.zoom * p.scale
@@ -879,7 +1059,9 @@ class CanvasView(QWidget):
         if self.ref_enabled:
             self._draw_reference(painter)
 
-        for p in self.level.paint_order():
+        for p in self.level.paint_order(self._visible_world_bounds()):
+            if self.solo_layer_id and p.layer != self.solo_layer_id:
+                continue
             self._draw_piece(painter, p, 1.0)
 
         if self.project.show_zones:
@@ -896,7 +1078,11 @@ class CanvasView(QWidget):
         for p in self.selected_pieces():
             self._draw_selection(painter, p)
         if len(self.selection) == 1:
-            self._draw_rotate_handle(painter, next(iter(self.selected_pieces())))
+            only = next(iter(self.selected_pieces()))
+            self._draw_resize_handles(painter, only)
+            if self.free_transform:
+                self._draw_free_transform_frame(painter, only)
+            self._draw_rotate_handle(painter, only)
 
         if self._marquee:
             m = self._marquee
@@ -1451,10 +1637,17 @@ class CanvasView(QWidget):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
+            if self.end_free_transform(False):
+                e.accept()
+                return
             if (self.cancel_color_pick() or self.cancel_zone_tool()
                     or self.cancel_patch_tool() or self.cancel_extra_tool()):
                 e.accept()
                 return
+        if (e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self.end_free_transform(True)):
+            e.accept()
+            return
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.zone_tool == "polygon":
             self.finish_zone_polygon()
             e.accept()
@@ -1521,7 +1714,8 @@ class CanvasView(QWidget):
                 return
 
         if e.button() in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
-            self._drag = {"mode": "pan", "last": (sx, sy)}
+            self._drag = {"mode": "pan", "last": (sx, sy), "origin": (sx, sy),
+                          "moved": False, "button": e.button()}
             self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
             return
         if self._group_rotate:
@@ -1549,6 +1743,11 @@ class CanvasView(QWidget):
             }
             return
 
+        if e.button() == Qt.MouseButton.LeftButton:
+            handle = self._resize_handle_at(sx, sy)
+            if handle:
+                self._begin_resize(handle)
+                return
         if self.selection and len(self.selection) == 1:
             hp = self._rotate_handle_screen(next(iter(self.selected_pieces())))
             if (QPointF(sx, sy) - hp).manhattanLength() <= HANDLE_R + 5:
@@ -1654,6 +1853,12 @@ class CanvasView(QWidget):
             if self.selection and len(self.selection) == 1:
                 hp = self._rotate_handle_screen(next(iter(self.selected_pieces())))
                 self._hover_handle = (QPointF(sx, sy) - hp).manhattanLength() <= HANDLE_R + 5
+                handle = None if self._any_tool_active() else self._resize_handle_at(sx, sy)
+                if handle:
+                    self.setCursor(QCursor(self._resize_cursor(
+                        handle, next(iter(self.selected_pieces())).rotation)))
+                elif not self._any_tool_active():
+                    self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
             self.cursorMoved.emit(wx, wy)
             if self.zone_tool == "polygon" and self._zone_polygon_points:
                 self.update()
@@ -1664,6 +1869,9 @@ class CanvasView(QWidget):
             self.pan_x += sx - lx
             self.pan_y += sy - ly
             self._drag["last"] = (sx, sy)
+            ox, oy = self._drag["origin"]
+            if abs(sx - ox) + abs(sy - oy) > 4:
+                self._drag["moved"] = True
             self.update()
             self.viewChanged.emit()
         elif mode == "move":
@@ -1671,6 +1879,9 @@ class CanvasView(QWidget):
             self.update()
         elif mode == "rotate":
             self._rotate_primary(sx, sy, e)
+            self.update()
+        elif mode == "resize":
+            self._resize_primary(sx, sy, e)
             self.update()
         elif mode == "marquee":
             x0, y0 = self._drag["start"]
@@ -1837,6 +2048,18 @@ class CanvasView(QWidget):
             self.update()
             e.accept()
             return
+        if (self._drag and self._drag["mode"] == "pan"
+                and self._drag.get("button") == Qt.MouseButton.RightButton
+                and not self._drag.get("moved")):
+            self._drag = None
+            self._open_context_menu(e)
+            return
+        if self._drag and self._drag["mode"] == "resize":
+            self._drag = None
+            self.selectionChanged.emit(self.selected_pieces())   # refresh inspector
+            self.dirty.emit()
+            self.update()
+            return
         if self._drag and self._drag["mode"] in ("move", "rotate", "group_rotate"):
             if self._drag["mode"] == "group_rotate":
                 self._group_rotate = False
@@ -1853,6 +2076,27 @@ class CanvasView(QWidget):
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        self.update()
+
+    def _any_tool_active(self) -> bool:
+        return bool(self.zone_tool or self.patch_tool or self.stamp_tool
+                    or self.crop_tool or self.ruler_tool or self.scale_tool
+                    or self.connector_tool or self.lasso_tool
+                    or self.copy_style_mode or self._color_pick_callback)
+
+    def _open_context_menu(self, e):
+        self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        hit = self._piece_at_screen(e.position().x(), e.position().y())
+        if hit is not None and hit.id not in self.selection:
+            self.select([hit])
+        elif hit is None:
+            self.clear_selection()
+        self.update()
+        self.contextMenuRequested.emit(e.globalPosition().toPoint(), hit)
+
+    def set_solo_layer(self, layer_id: str | None):
+        self.solo_layer_id = layer_id
+        self.layerSoloChanged.emit(layer_id)
         self.update()
 
     def mouseDoubleClickEvent(self, e):
@@ -2093,7 +2337,7 @@ class CanvasView(QWidget):
         sel = self.selected_pieces()
         if not sel:
             return
-        self.push_history("Nudge")
+        self.push_history("Nudge", coalesce=True)
         cell = max(1, self.project.cell_size)
         whole_cell = (abs(dx) % cell == 0 and abs(dy) % cell == 0)
         for p in sel:

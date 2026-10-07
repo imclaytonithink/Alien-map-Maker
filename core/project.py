@@ -52,6 +52,7 @@ class Layer:
     visible: bool = True
     locked: bool = False
     opacity: float = 1.0
+    color: str = ""               # optional UI color label (hex) or ""
 
 
 @dataclass
@@ -318,10 +319,22 @@ class Level:
     def next_z(self) -> int:
         return (max((p.z for p in self.pieces), default=0)) + 1
 
-    def paint_order(self) -> list[Piece]:
+    def paint_order(self, bounds: Optional[tuple[float, float, float, float]] = None
+                    ) -> list[Piece]:
+        """Visible pieces in draw order. ``bounds`` (x0, y0, x1, y1 in world
+        px) culls pieces that cannot touch that rectangle."""
         idx = {l.id: i for i, l in enumerate(self.layers)}
-        out = [p for p in self.pieces
-               if (l := self.layer_by_id(p.layer)) is None or l.visible]
+        hidden = {l.id for l in self.layers if not l.visible}
+        out = [p for p in self.pieces if p.layer not in hidden]
+        if bounds is not None:
+            x0, y0, x1, y1 = bounds
+            kept = []
+            for p in out:
+                cx, cy = p.center
+                r = math.hypot(p.w, p.h) * p.scale / 2.0 + 12.0
+                if cx + r >= x0 and cx - r <= x1 and cy + r >= y0 and cy - r <= y1:
+                    kept.append(p)
+            out = kept
         out.sort(key=lambda p: (idx.get(p.layer, 999), p.z))
         return out
 

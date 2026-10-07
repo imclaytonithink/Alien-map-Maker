@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QInputDialog, QMessageBox, QLabel, QStatusBar, QToolBar,
     QTabWidget, QListWidget, QListWidgetItem, QGroupBox, QSlider, QCheckBox,
     QApplication, QDoubleSpinBox, QLineEdit, QTextEdit, QComboBox,
-    QAbstractSpinBox, QDialog,
+    QAbstractSpinBox, QDialog, QSplitter,
 )
 
 from core.project import Project, Level, Piece, new_project, uuid
@@ -305,6 +305,7 @@ class LevelBar(QWidget):
 
 class MainWindow(QMainWindow):
     AUTOSAVE_CHOICES = (0, 1, 5, 10)
+    DEFAULT_PANEL_SIZES = [280, 800, 300]
 
     def __init__(self):
         super().__init__()
@@ -360,13 +361,17 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
+        self._panel_memory: dict[int, int] = {}
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(True)
+        self.splitter.setHandleWidth(5)
+        root.addWidget(self.splitter)
 
         self.library = LibraryPanel()
-        self.library.setMinimumWidth(260)
-        self.library.setMaximumWidth(380)
+        self.library.setMinimumWidth(180)
         self.library.assetActivated.connect(self._add_at_center)
         self.library.collectionsChanged.connect(self._mark_dirty)
-        root.addWidget(self.library, 0)
+        self.splitter.addWidget(self.library)
 
         center_col = QVBoxLayout()
         center_col.setContentsMargins(0, 0, 0, 0)
@@ -379,6 +384,8 @@ class MainWindow(QMainWindow):
         self.canvas.dirty.connect(self._mark_dirty)
         self.canvas.cursorMoved.connect(self._on_cursor)
         self.canvas.historyPush.connect(self._push_history)
+        self.canvas.contextMenuRequested.connect(self._show_canvas_menu)
+        self.canvas.historyDiscardLast.connect(self._discard_last_history)
         center_col.addWidget(self.canvas, 1)
 
         bottom = QHBoxLayout()
@@ -403,9 +410,10 @@ class MainWindow(QMainWindow):
         cb = QVBoxLayout(center_widget)
         cb.addLayout(center_col, 1)
         cb.addLayout(bottom)
-        root.addWidget(center_widget, 1)
+        self.splitter.addWidget(center_widget)
 
         right = QTabWidget()
+        self.inspector = right
         self.props = PropertiesPanel(self.canvas)
         self.layers = LayersPanel(self.canvas)
         self.zones = ZonesPanel(self.canvas)
@@ -416,9 +424,15 @@ class MainWindow(QMainWindow):
         right.addTab(self.layers, "Layers")
         right.addTab(self.zones, "Zones")
         right.addTab(self.hist, "History")
-        right.setMinimumWidth(260)
-        right.setMaximumWidth(340)
-        root.addWidget(right, 0)
+        right.setMinimumWidth(220)
+        self.splitter.addWidget(right)
+
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes(self.DEFAULT_PANEL_SIZES)
+        self._restore_layout()
+        self.splitter.splitterMoved.connect(lambda *_: self._save_layout())
 
         self._build_menu()
         self._build_toolbar()
@@ -428,6 +442,63 @@ class MainWindow(QMainWindow):
         self.boot = thememod.BootOverlay(self, self.theme_accent)
         # in-window system menu (ESC) — created last so it stacks on top
         self.overlay = MenuOverlay(self)
+
+    # -- panel layout -------------------------------------------------------
+    def _save_layout(self):
+        sizes = self.splitter.sizes()
+        self.settings.setValue("layout/panel_sizes", json.dumps(sizes))
+
+    def _restore_layout(self):
+        try:
+            sizes = [int(x) for x in json.loads(
+                str(self.settings.value("layout/panel_sizes", "")))]
+        except (TypeError, ValueError):
+            return
+        if len(sizes) == 3 and sum(sizes) > 0:
+            self.splitter.setSizes(sizes)
+
+    def _reset_layout(self):
+        self.splitter.setSizes(self.DEFAULT_PANEL_SIZES)
+        self._save_layout()
+
+    def _toggle_panel(self, index):
+        sizes = self.splitter.sizes()
+        if sizes[index] > 0:
+            self._panel_memory[index] = sizes[index]
+            sizes[1] += sizes[index]
+            sizes[index] = 0
+        else:
+            want = self._panel_memory.get(
+                index, self.DEFAULT_PANEL_SIZES[index])
+            sizes[1] = max(200, sizes[1] - want)
+            sizes[index] = want
+        self.splitter.setSizes(sizes)
+        self._save_layout()
+
+    def _toggle_focus_canvas(self):
+        sizes = self.splitter.sizes()
+        if sizes[0] or sizes[2]:
+            for i in (0, 2):
+                if sizes[i]:
+                    self._panel_memory[i] = sizes[i]
+            self.splitter.setSizes([0, sum(sizes), 0])
+        else:
+            self.splitter.setSizes([
+                self._panel_memory.get(0, self.DEFAULT_PANEL_SIZES[0]),
+                max(200, sum(sizes) - self._panel_memory.get(0, self.DEFAULT_PANEL_SIZES[0])
+                    - self._panel_memory.get(2, self.DEFAULT_PANEL_SIZES[2])),
+                self._panel_memory.get(2, self.DEFAULT_PANEL_SIZES[2])])
+        self._save_layout()
+
+    # -- command discovery --------------------------------------------------
+    def _open_palette(self):
+        from ui.command_palette import CommandPalette
+        CommandPalette(self, self.menuBar()).exec()
+
+    def _show_canvas_menu(self, global_pos, hit_piece):
+        from ui.context_menu import build_canvas_menu
+        menu = build_canvas_menu(self, hit_piece)
+        menu.exec(global_pos)
 
     def _act(self, label, slot, shortcut=None):
         """Menu action with an optional shortcut."""
@@ -478,6 +549,7 @@ class MainWindow(QMainWindow):
         e.addAction("Select similar", self._select_similar)
         e.addAction("Copy style…", self._start_copy_style)
         e.addAction("Replace selected image…", self._replace_selected_image)
+        e.addAction(self._act("Free transform", self._toggle_free_transform, "Ctrl+T"))
         e.addAction("Rotate 90°", lambda: self._rotate_sel(90))
         e.addAction("Group rotate…", self._toggle_group_rotate)
 
@@ -487,6 +559,17 @@ class MainWindow(QMainWindow):
         v.addAction("Zoom 200%", lambda: self.canvas.set_zoom(2.0))
         v.addAction("Fit", self.canvas.fit_to_view)
         v.addAction("Canvas size…", self._edit_canvas_size)
+        v.addSeparator()
+        self.act_toggle_library = self._act(
+            "Library panel", lambda: self._toggle_panel(0), "F2")
+        self.act_toggle_inspector = self._act(
+            "Inspector panel", lambda: self._toggle_panel(2), "F3")
+        self.act_focus_canvas = self._act(
+            "Focus canvas (hide both panels)", self._toggle_focus_canvas, "Ctrl+\\")
+        for a in (self.act_toggle_library, self.act_toggle_inspector,
+                  self.act_focus_canvas):
+            v.addAction(a)
+        v.addAction("Reset panel layout", self._reset_layout)
         v.addSeparator()
         v.addAction("Customize toolbar…", self._customize_toolbar)
         v.addAction("Reset toolbar", self._reset_toolbar)
@@ -545,6 +628,8 @@ class MainWindow(QMainWindow):
                     lambda: self.canvas.set_patch_tool(True))
 
         hm = mb.addMenu("&Help")
+        hm.addAction(self._act("Command palette…", self._open_palette, "Ctrl+Shift+P"))
+        hm.addSeparator()
         hm.addAction("About", self._about)
 
     def _build_toolbar(self):
@@ -1405,10 +1490,20 @@ class MainWindow(QMainWindow):
         self.canvas.set_group_rotate_mode(not self.canvas._group_rotate)
 
     # ------------------------------------------------------------------
-    def _push_history(self, label):
-        self.history.push(self.project, label)
+    def _push_history(self, label, coalesce=False):
+        self.history.push(self.project, label, coalesce)
         self._resync_history()
         self._mark_dirty()
+
+    def _discard_last_history(self):
+        self.history.drop_last()
+        self._resync_history()
+
+    def _toggle_free_transform(self):
+        if self.canvas.free_transform:
+            self.canvas.end_free_transform(True)
+        else:
+            self.canvas.begin_free_transform()
 
     def undo(self):
         label = self.history.undo(self.project)
@@ -1478,6 +1573,8 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
+            if self.canvas.end_free_transform(False):
+                return
             if (self.canvas.cancel_color_pick() or self.canvas.cancel_zone_tool()
                     or self.canvas.cancel_patch_tool()):
                 return
@@ -1506,6 +1603,9 @@ class MainWindow(QMainWindow):
                 self.canvas.delete_selected(); return
             if e.key() == Qt.Key.Key_R:
                 self._rotate_sel(90); return
+        if (e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not typing
+                and self.canvas.end_free_transform(True)):
+            return
         if e.key() == Qt.Key.Key_Z and e.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.undo(); return
         if e.key() == Qt.Key.Key_Y and e.modifiers() & Qt.KeyboardModifier.ControlModifier:
