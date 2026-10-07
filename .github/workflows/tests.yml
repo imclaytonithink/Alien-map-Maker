@@ -35,6 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # GitHub release holding the asset ZIPs; keep in sync with build.bat.
+      ASSET_RELEASE_TAG: Released
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -46,17 +49,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/sceneboard-packs"
-          if gh release view asset-intake-temp-20261006 \
+          if gh release view "$ASSET_RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" --json assets \
               --jq '.assets[].name' 2>/dev/null \
               | grep -q 'RPG-Mobius-Geomorphs-.*-High-Res-Teal\.zip'; then
-            gh release download asset-intake-temp-20261006 \
+            gh release download "$ASSET_RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --pattern 'RPG-Mobius-Geomorphs-*-High-Res-Teal.zip' \
               --dir "$RUNNER_TEMP/sceneboard-packs"
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::Release asset-intake-temp-20261006 is no longer published; skipping the real-pack integration check."
+            echo "::warning::Release $ASSET_RELEASE_TAG has no published asset packs; skipping the real-pack integration check. build.bat downloads from the same release, so Windows builds will fail too."
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Import real packs and generate a sample map

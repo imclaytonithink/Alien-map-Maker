@@ -1,0 +1,61 @@
+name: Windows EXE assets
+
+# Builds dist\SceneBoard.exe with the real build.bat on a clean Windows runner,
+# then verifies that every high-resolution asset pack from the GitHub release
+# is embedded in the finished EXE and installs intact on its first launch.
+# Use "Run workflow" on the Actions tab to re-check the release at any time.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "arena/**"]
+    paths:
+      - build.bat
+      - filter_asset_packs.py
+      - verify_exe_assets.py
+      - main.py
+      - requirements.txt
+      - core/asset_manager.py
+      - core/asset_roles.py
+      - ui/branding.py
+      - ui/library.py
+      - ui/main_window.py
+      - .github/workflows/windows-exe.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-exe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-verify:
+    name: Build EXE and verify bundled assets
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build dist\SceneBoard.exe with build.bat
+        shell: cmd
+        # build.bat ends with "pause"; NUL input lets it continue unattended.
+        run: |
+          call build.bat < NUL
+          if errorlevel 1 exit /b 1
+          if not exist dist\SceneBoard.exe (
+            echo build.bat finished without producing dist\SceneBoard.exe
+            exit /b 1
+          )
+      - name: Verify the release assets in the finished EXE
+        shell: cmd
+        run: >-
+          venv\Scripts\python.exe verify_exe_assets.py
+          --exe dist\SceneBoard.exe
+          --source-dir "%TEMP%\SceneBoard-highres-packs"
+          --filtered-dir "%TEMP%\SceneBoard-supported-asset-packs"
+          --expect RPG-Mobius-Geomorphs-Geomorphs-High-Res-Teal.zip
+          --expect RPG-Mobius-Geomorphs-Custom-Tiles-High-Res-Teal.zip
+          --expect RPG-Mobius-Geomorphs-Symbols-High-Res-Teal.zip
+          --launch --require-fresh

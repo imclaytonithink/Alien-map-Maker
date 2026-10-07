@@ -33,12 +33,21 @@ settings.
 ## Building the .exe (Windows)
 1. Install Python 3.10+ from python.org (tick "Add Python to PATH").
 2. Run `build.bat` (double-click). It downloads the three high-resolution asset
-   ZIPs from the project's GitHub release, strips unsupported files while
+   ZIPs from the project's GitHub release (tag `Released`; the release must
+   stay published for the download to work), strips unsupported files while
    preserving their folders, and bundles only supported raster assets plus the
    starter art. Your `.exe` appears at `dist/SceneBoard.exe`.
 3. The first launch installs the bundled high-resolution packs into the user's
    persistent app-data asset store. This one-time setup can take a few minutes;
    later launches reuse the installed copies.
+4. Optional: confirm the finished EXE really carries every asset with
+   `venv\Scripts\python verify_exe_assets.py --exe dist\SceneBoard.exe
+   --source-dir "%TEMP%\SceneBoard-highres-packs" --filtered-dir
+   "%TEMP%\SceneBoard-supported-asset-packs"`. It checks that every image in
+   the release ZIPs survived filtering and that each pack is embedded
+   byte-for-byte; add `--launch` to also start the EXE and verify the
+   first-launch install. The **Windows EXE assets** GitHub Actions workflow runs
+   this on a clean Windows runner — use *Run workflow* to re-check at any time.
 
 The source ZIPs total about 239 MB before filtering; unsupported documents and
 other non-image files are not bundled. The extracted image library needs

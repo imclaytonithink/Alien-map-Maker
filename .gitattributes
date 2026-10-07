@@ -1,0 +1,4 @@
+# cmd.exe can mis-handle labels (goto / call :label) in LF-only batch files,
+# so always check build scripts out with Windows line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf

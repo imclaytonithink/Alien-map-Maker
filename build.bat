@@ -24,7 +24,10 @@ REM Cache the public release archives outside the repository. The same release
 REM is used by .github/workflows/tests.yml for real-pack integration checks.
 set "PACK_DIR=%TEMP%\SceneBoard-highres-packs"
 set "FILTERED_PACK_DIR=%TEMP%\SceneBoard-supported-asset-packs"
-set "PACK_BASE=https://github.com/imclaytonithink/Alien-map-Maker/releases/download/asset-intake-temp-20261006"
+REM Tag of the GitHub release that holds the asset ZIPs. Keep it in sync with
+REM ASSET_RELEASE_TAG in .github/workflows/tests.yml.
+set "PACK_TAG=Released"
+set "PACK_BASE=https://github.com/imclaytonithink/Alien-map-Maker/releases/download/%PACK_TAG%"
 if not exist "%PACK_DIR%" mkdir "%PACK_DIR%"
 if errorlevel 1 goto build_error
 
@@ -70,7 +73,9 @@ exit /b 0
 :pack_error
 echo.
 echo ERROR: Could not download or validate a high-resolution asset pack.
-echo Check your internet connection and try building again.
+echo Expected the release assets at: %PACK_BASE%/
+echo Check your internet connection and that release "%PACK_TAG%" still exists
+echo and is published, then try building again.
 goto finish_error
 
 :build_error
