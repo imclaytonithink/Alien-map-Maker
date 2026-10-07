@@ -62,7 +62,13 @@ jobs:
                           with archive.open(info) as stream:
                               head = stream.read(64)
                           entry["h"] = base64.b64encode(head).decode("ascii")
+                      elif (not info.is_dir() and suffix in {".txt", ".htm"}
+                              and info.file_size <= 200_000):
+                          with archive.open(info) as stream:
+                              entry["t"] = stream.read(200_000).decode(
+                                  "utf-8", "replace")
                       entries.append(entry)
+
               inventory["archives"].append({
                   "archive": archive_path.name,
                   "entries": entries,
