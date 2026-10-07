@@ -70,6 +70,11 @@ class PropertiesPanel(QWidget):
         self.spin_x.valueChanged.connect(lambda v: self._set("x", v))
         self.spin_y.valueChanged.connect(lambda v: self._set("y", v))
         sf.addRow("X", self.spin_x); sf.addRow("Y", self.spin_y)
+        self.spin_w = QDoubleSpinBox(); self.spin_w.setRange(1, 100000)
+        self.spin_h = QDoubleSpinBox(); self.spin_h.setRange(1, 100000)
+        self.spin_w.valueChanged.connect(lambda v: self._set_size("w", v))
+        self.spin_h.valueChanged.connect(lambda v: self._set_size("h", v))
+        sf.addRow("Width", self.spin_w); sf.addRow("Height", self.spin_h)
         rot_row = QHBoxLayout()
         self.spin_rot = QDoubleSpinBox(); self.spin_rot.setRange(-360, 360); self.spin_rot.setSuffix("°")
         self.spin_rot.valueChanged.connect(lambda v: self._set("rotation", v))
@@ -511,13 +516,15 @@ class PropertiesPanel(QWidget):
                     "not editable text.")
             self.lbl_name.setText(p.name)
             position_controls = (self.spin_x, self.spin_y, self.spin_rot,
-                                 self.spin_scale, self.sl_op)
+                                 self.spin_scale, self.sl_op,
+                                 self.spin_w, self.spin_h)
             for w in position_controls:
                 w.blockSignals(True); w.setEnabled(True)
             for w in (self.chk_snap, self.chk_lock, self.cmb_layer):
                 w.blockSignals(True)
             self.chk_snap.setEnabled(True); self.chk_lock.setEnabled(True)
             self.spin_x.setValue(p.x); self.spin_y.setValue(p.y)
+            self.spin_w.setValue(p.vis_w); self.spin_h.setValue(p.vis_h)
             self.spin_rot.setValue(p.rotation); self.spin_scale.setValue(p.scale)
             self.sl_op.setValue(int(p.opacity * 100))
             self.chk_snap.setChecked(p.snap); self.chk_lock.setChecked(p.locked)
@@ -539,7 +546,8 @@ class PropertiesPanel(QWidget):
         elif n == 0:
             self.lbl_name.setText("(none)")
             self.lbl_node_type.setText("")
-            for w in (self.spin_x, self.spin_y, self.spin_rot, self.spin_scale, self.sl_op):
+            for w in (self.spin_x, self.spin_y, self.spin_rot, self.spin_scale, self.sl_op,
+                      self.spin_w, self.spin_h):
                 w.blockSignals(True); w.setEnabled(False)
             self.chk_snap.setEnabled(False); self.chk_lock.setEnabled(False)
         else:
@@ -632,7 +640,7 @@ class PropertiesPanel(QWidget):
             piece.border_mode = "override"
             if self.project:
                 piece.border_color = self.project.border_color
-        self.canvas.push_history("Node border opacity")
+        self.canvas.push_history("Node border opacity", coalesce=True)
         piece.border_opacity = value / 100.0
         self._load_node_border(piece)
         self.canvas.update(); self.canvas.dirty.emit()
@@ -651,7 +659,7 @@ class PropertiesPanel(QWidget):
     def _set(self, attr, value):
         if not self.pieces:
             return
-        self.canvas.push_history(f"Edit {attr}")
+        self.canvas.push_history(f"Edit {attr}", coalesce=True)
         for p in self.pieces:
             setattr(p, attr, value)
             if attr in ("x", "y") and p.snap and self.project:
@@ -659,6 +667,17 @@ class PropertiesPanel(QWidget):
                 getattr(self, f"spin_{attr}").blockSignals(True)
                 getattr(self, f"spin_{attr}").setValue(getattr(p, attr))
                 getattr(self, f"spin_{attr}").blockSignals(False)
+        self.canvas.update(); self.canvas.dirty.emit()
+
+    def _set_size(self, axis, visual_value):
+        """Set the on-canvas width/height (post-scale), keeping the top-left."""
+        if len(self.pieces) != 1:
+            return
+        p = self.pieces[0]
+        self.canvas.push_history(f"Edit size {axis}", coalesce=True)
+        setattr(p, axis, visual_value / max(p.scale, 1e-6))
+        if p.is_text:
+            p.text_auto_size = False
         self.canvas.update(); self.canvas.dirty.emit()
 
     def _rotate(self, delta):
@@ -783,11 +802,14 @@ class PropertiesPanel(QWidget):
         self.canvas.update()
         self.canvas.dirty.emit()
 
+    _CONTINUOUS_TEXT_EDITS = frozenset({
+        "Text size", "Text box size", "Text padding", "Text background opacity"})
+
     def _set_text_property(self, label, attr, value, refit=False):
         piece = self._text_piece()
         if not piece or getattr(piece, attr) == value:
             return
-        self.canvas.push_history(label)
+        self.canvas.push_history(label, coalesce=label in self._CONTINUOUS_TEXT_EDITS)
         setattr(piece, attr, value)
         if refit:
             self._fit_text_box(piece)
@@ -955,7 +977,7 @@ class PropertiesPanel(QWidget):
         piece = self._scale_piece()
         if not piece or abs(piece.scale_distance - value) < 1e-9:
             return
-        self.canvas.push_history("Scale bar distance")
+        self.canvas.push_history("Scale bar distance", coalesce=True)
         piece.scale_distance = value
         self.canvas.update(); self.canvas.dirty.emit()
 
@@ -1036,7 +1058,7 @@ class PropertiesPanel(QWidget):
         piece = self._connector_piece()
         if not piece or abs(piece.connector_width - value) < 1e-9:
             return
-        self.canvas.push_history("Connection marker width")
+        self.canvas.push_history("Connection marker width", coalesce=True)
         piece.connector_width = value
         self.canvas.update(); self.canvas.dirty.emit()
 
@@ -1090,7 +1112,7 @@ class PropertiesPanel(QWidget):
         patch = self._patch_piece()
         if not patch or patch.patch_opacity == value / 100.0:
             return
-        self.canvas.push_history("Raster patch opacity")
+        self.canvas.push_history("Raster patch opacity", coalesce=True)
         patch.patch_opacity = value / 100.0
         self.canvas.update()
         self.canvas.dirty.emit()
@@ -1135,7 +1157,7 @@ class PropertiesPanel(QWidget):
     def _project_tint_strength(self, value):
         if not self.project:
             return
-        self.canvas.push_history("Project tint strength")
+        self.canvas.push_history("Project tint strength", coalesce=True)
         self.project.tint_strength = value / 100.0
         self.canvas.update(); self.canvas.dirty.emit()
         self.load_selection(self.pieces)
@@ -1213,7 +1235,7 @@ class PropertiesPanel(QWidget):
                         if not piece.is_text and not piece.is_patch]
         if not image_pieces:
             return
-        self.canvas.push_history("Node tint strength")
+        self.canvas.push_history("Node tint strength", coalesce=True)
         for piece in image_pieces:
             if piece.tint_mode != "override":
                 piece.tint_mode = "override"

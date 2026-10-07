@@ -219,6 +219,16 @@ clearly reports skipped GUI checks.
 - **Undo/Redo** (Ctrl+Z / Ctrl+Y) with named history; **Ctrl+S** save,
   **Ctrl+O** open, **Ctrl+N** new.
 
+### Layout, layers and history
+- Drag the splitters to resize the Library / canvas / Inspector; the layout is
+  remembered. **View → Reset panel layout** restores the default.
+- **Layers panel:** double-click a name to rename, drag rows to reorder,
+  right-click for color labels, solo, duplicate and delete, and use the filter
+  box on long lists. **S** solos a layer for editing only (never saved or exported).
+- Continuous edits (sliders, spin boxes, held arrow keys) collapse into one
+  undo step; snapshots are stored compressed with embedded images shared.
+- The canvas only paints pieces inside the visible area.
+
 ### Keyboard reference
 | Key | Action |
 |---|---|
@@ -228,6 +238,10 @@ clearly reports skipped GUI checks.
 | R | Rotate selection 90° |
 | Ctrl+Z / Ctrl+Y | Undo / Redo |
 | Ctrl+S / Ctrl+O / Ctrl+N | Save / Open / New |
+| Ctrl+Shift+P | Command palette (search every menu command) |
+| F2 / F3 / Ctrl+\\ | Toggle Library / Inspector / both panels |
+| Right-click (no drag) | Context menu; right-drag still pans |
+| Drag a handle | Resize: edges stretch one axis, corners both; **Shift** on a corner keeps proportions, **Alt** resizes from the center |
 
 ---
 
