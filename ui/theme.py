@@ -139,7 +139,21 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
     QPushButton#PanelIconButton,
     QPushButton#PropertyIconButton {{
         padding: 0px;
-        min-width: 0px;
+        min-width: 32px;
+        min-height: 30px;
+        font-size: 15px;
+        font-weight: bold;
+    }}
+    QPushButton#LayerIconButton:checked {{
+        background: {c['selection']};
+        border: 1px solid {c['border_hot']};
+        color: {c['accent']};
+    }}
+    QSplitter::handle {{
+        background: {c['border']};
+    }}
+    QSplitter::handle:hover, QSplitter::handle:pressed {{
+        background: {c['accent']};
     }}
     QPushButton#LayerNameButton {{
         background: transparent;
@@ -190,7 +204,7 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
         border-bottom: none;
         border-top-left-radius: {radius};
         border-top-right-radius: {radius};
-        padding: 6px 14px;
+        padding: 6px 9px;
         margin-right: 2px;
         color: {c['muted']};
     }}

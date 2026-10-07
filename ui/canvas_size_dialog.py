@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 
 
 class CanvasSizeDialog(QDialog):
-    def __init__(self, columns=30, rows=30, cell_size=70, *,
+    def __init__(self, columns=60, rows=60, cell_size=70, *,
                  title="Canvas size", accept_label="Apply", parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -52,6 +52,12 @@ class CanvasSizeDialog(QDialog):
             "The canvas pixel dimensions are the square counts multiplied by "
             "the square size.")
         root.addWidget(self.lbl_dimensions)
+        self.lbl_tip = QLabel(
+            "Tip: a 100x100 ft deck-plan tile is 20x20 squares at 5 ft per "
+            "square, so 60x60 squares fits a 3x3 assembly. Library tiles named "
+            "in feet are scaled to your square size when you place them.")
+        self.lbl_tip.setWordWrap(True)
+        root.addWidget(self.lbl_tip)
         self.spin_columns.valueChanged.connect(self._update_dimensions)
         self.spin_rows.valueChanged.connect(self._update_dimensions)
         self.spin_cell_size.valueChanged.connect(self._update_dimensions)

@@ -1,18 +1,62 @@
 """Lightweight image previews for large asset libraries."""
 from __future__ import annotations
 
+import hashlib
 import os
 from functools import lru_cache
 
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QSize, QStandardPaths, Qt
 from PyQt6.QtGui import QImage, QImageReader, QPixmap
+
+# Decoding a multi-thousand-pixel PNG takes seconds, so small previews are
+# generated once and kept on disk (as 256 px PNGs) for every later session.
+DISK_THUMB_MAX = 256
+_THUMB_DIR: str | None = None
+
+
+def _thumb_dir() -> str:
+    global _THUMB_DIR
+    if _THUMB_DIR is None:
+        base = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.CacheLocation)
+        _THUMB_DIR = os.path.join(base or os.path.join(
+            os.path.expanduser("~"), ".map-studio-cache"), "thumbs")
+    return _THUMB_DIR
+
+
+def _disk_cached_base(path: str, modified_ns: int) -> QImage:
+    """256 px preview of ``path``, from the disk cache when present."""
+    try:
+        size = os.stat(path).st_size
+    except OSError:
+        size = 0
+    key = hashlib.sha1(
+        f"{os.path.abspath(path)}|{modified_ns}|{size}".encode("utf-8", "ignore")
+    ).hexdigest()
+    cache_file = os.path.join(_thumb_dir(), key[:2], key + ".png")
+    if os.path.isfile(cache_file):
+        image = QImage(cache_file)
+        if not image.isNull():
+            return image
+    image = _read_scaled_image(path, DISK_THUMB_MAX)
+    if not image.isNull():
+        try:
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            image.save(cache_file, "PNG")
+        except OSError:
+            pass
+    return image
 
 
 @lru_cache(maxsize=256)
 def _cached_small_image(path: str, max_dimension: int,
                         modified_ns: int) -> QImage:
-    del modified_ns  # participates in the cache key so changed files refresh
-    return _read_scaled_image(path, max_dimension)
+    base = _disk_cached_base(path, modified_ns)
+    if base.isNull() or max(base.width(), base.height()) <= max_dimension:
+        return base
+    return base.scaled(max_dimension, max_dimension,
+                       Qt.AspectRatioMode.KeepAspectRatio,
+                       Qt.TransformationMode.SmoothTransformation)
 
 
 def _read_scaled_image(path: str, max_dimension: int) -> QImage:
@@ -56,8 +100,8 @@ def _read_scaled(path: str, max_dimension: int) -> QPixmap:
 @lru_cache(maxsize=256)
 def _cached_small_preview(path: str, max_dimension: int,
                           modified_ns: int) -> QPixmap:
-    del modified_ns  # participates in the cache key so changed files refresh
-    return _read_scaled(path, max_dimension)
+    image = _cached_small_image(path, max_dimension, modified_ns)
+    return QPixmap.fromImage(image) if not image.isNull() else QPixmap()
 
 
 def load_scaled_pixmap(path: str, max_dimension: int = 110) -> QPixmap:

@@ -352,7 +352,7 @@ class PropertiesPanel(QWidget):
         for label, tooltip, action in align_actions:
             button = QPushButton(label)
             button.setObjectName("PropertyIconButton")
-            button.setFixedSize(28, 26)
+            button.setFixedSize(34, 32)
             button.setToolTip(tooltip)
             button.setAccessibleName(tooltip)
             button.clicked.connect(
@@ -369,6 +369,12 @@ class PropertiesPanel(QWidget):
         dist.addWidget(dh)
         dist.addWidget(dv)
         mf.addRow("Distribute", dist)
+        self.chk_allow_overlap = QCheckBox("Allow overlap")
+        self.chk_allow_overlap.setToolTip(
+            "Off (default): align and distribute never leave nodes overlapping — "
+            "colliding nodes are stacked side by side instead.")
+        self.chk_allow_overlap.toggled.connect(self._allow_overlap_toggled)
+        mf.addRow(self.chk_allow_overlap)
         grp = QHBoxLayout()
         bg = QPushButton("Group"); bg.clicked.connect(self.canvas.group)
         bu = QPushButton("Ungroup"); bu.clicked.connect(self.canvas.ungroup)
@@ -738,6 +744,13 @@ class PropertiesPanel(QWidget):
                 getattr(self, f"spin_{attr}").setValue(getattr(p, attr))
                 getattr(self, f"spin_{attr}").blockSignals(False)
         self.canvas.update(); self.canvas.dirty.emit()
+
+    def _allow_overlap_toggled(self, on):
+        main = self.window()
+        if hasattr(main, "_set_allow_overlap"):
+            main._set_allow_overlap(on)
+        else:
+            self.canvas.allow_overlap = bool(on)
 
     def _set_size(self, axis, visual_value):
         """Set the on-canvas width/height (post-scale), keeping the top-left."""

@@ -5,6 +5,8 @@ rotated, and scaled by zoom*scale). Local coordinates are world pixels.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import math
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
@@ -133,16 +135,6 @@ def draw_piece(painter: QPainter, piece, pm: QPixmap | None,
             painter.setPen(color)
             painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
         return
-    if pm is not None and not pm.isNull():
-        crop = getattr(piece, "crop_rect", [0.0, 0.0, 1.0, 1.0])
-        source = QRectF(crop[0] * pm.width(), crop[1] * pm.height(),
-                        (crop[2] - crop[0]) * pm.width(),
-                        (crop[3] - crop[1]) * pm.height())
-        painter.drawPixmap(QRectF(-w / 2, -h / 2, w, h), pm, source)
-    else:
-        painter.setBrush(QColor("#555"))
-        painter.setPen(QPen(QColor("#999")))
-        painter.drawRect(QRectF(-w / 2, -h / 2, w, h))
     tint_color = piece.tint_color
     tint_strength = piece.tint_strength
     if project is not None:
@@ -155,14 +147,49 @@ def draw_piece(painter: QPainter, piece, pm: QPixmap | None,
         else:
             tint_color = getattr(project, "tint_color", "")
             tint_strength = getattr(project, "tint_strength", 0.0)
-    if tint_color and tint_strength > 0:
-        painter.save()
-        # SourceAtop blends the color over existing image pixels while keeping
-        # the destination alpha channel intact (transparent PNG pixels stay clear).
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
-        painter.setOpacity(painter.opacity() * max(0.0, min(1.0, tint_strength)))
-        painter.fillRect(QRectF(-w / 2, -h / 2, w, h), QColor(tint_color))
-        painter.restore()
+    if pm is not None and not pm.isNull():
+        if tint_color and tint_strength > 0:
+            pm = tinted_pixmap(pm, tint_color, tint_strength)
+        crop = getattr(piece, "crop_rect", [0.0, 0.0, 1.0, 1.0])
+        source = QRectF(crop[0] * pm.width(), crop[1] * pm.height(),
+                        (crop[2] - crop[0]) * pm.width(),
+                        (crop[3] - crop[1]) * pm.height())
+        painter.drawPixmap(QRectF(-w / 2, -h / 2, w, h), pm, source)
+    else:
+        painter.setBrush(QColor("#555"))
+        painter.setPen(QPen(QColor("#999")))
+        painter.drawRect(QRectF(-w / 2, -h / 2, w, h))
+
+
+_TINT_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
+_TINT_CACHE_MAX = 256
+
+
+def tinted_pixmap(pm: QPixmap, color: str, strength: float) -> QPixmap:
+    """Blend ``color`` over the image's own pixels only.
+
+    The tint is composited inside the pixmap with SourceAtop, so fully
+    transparent areas stay transparent. (Doing it on the destination painter
+    instead tints the canvas behind the image, i.e. the invisible margin.)
+    """
+    strength = max(0.0, min(1.0, float(strength)))
+    key = (pm.cacheKey(), str(color).lower(), round(strength, 3))
+    cached = _TINT_CACHE.get(key)
+    if cached is not None:
+        _TINT_CACHE.move_to_end(key)
+        return cached
+    out = QPixmap(pm.size())
+    out.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(out)
+    painter.drawPixmap(0, 0, pm)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
+    painter.setOpacity(strength)
+    painter.fillRect(out.rect(), QColor(color))
+    painter.end()
+    _TINT_CACHE[key] = out
+    while len(_TINT_CACHE) > _TINT_CACHE_MAX:
+        _TINT_CACHE.popitem(last=False)
+    return out
 
 
 def draw_node_border(painter: QPainter, piece, pm: QPixmap | None,

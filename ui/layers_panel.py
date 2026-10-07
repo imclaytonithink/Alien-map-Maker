@@ -50,7 +50,7 @@ class LayerRow(QWidget):
         self._is_active = is_active
         self.theme_accent = theme_accent
         self.theme_muted = theme_muted
-        self.setMinimumHeight(34)
+        self.setMinimumHeight(44)
         self.setStyleSheet("background: transparent;")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(2, 1, 2, 1)
@@ -63,23 +63,23 @@ class LayerRow(QWidget):
 
         self.btn_active = QPushButton()
         self.btn_active.setObjectName("LayerIconButton")
-        self.btn_active.setFixedSize(27, 26)
+        self.btn_active.setFixedSize(36, 34)
         self.btn_active.clicked.connect(lambda: self.active.emit(layer.id))
         self._set_active_state(is_active)
 
         self.btn_visible = QPushButton()
         self.btn_visible.setObjectName("LayerIconButton")
-        self.btn_visible.setFixedSize(27, 26)
+        self.btn_visible.setFixedSize(36, 34)
         self.btn_visible.clicked.connect(self._toggle_vis)
         self._update_visibility_button()
 
         self.btn_lock = QPushButton()
         self.btn_lock.setObjectName("LayerIconButton")
-        self.btn_lock.setFixedSize(27, 26)
+        self.btn_lock.setFixedSize(36, 34)
         self.btn_lock.clicked.connect(self._toggle_lock)
         self.btn_solo = QPushButton("S")
         self.btn_solo.setObjectName("LayerIconButton")
-        self.btn_solo.setFixedSize(27, 26)
+        self.btn_solo.setFixedSize(36, 34)
         self.btn_solo.setCheckable(True)
         self.btn_solo.setChecked(soloed)
         self.btn_solo.setToolTip("Solo: show only this layer while editing (not exported)")
@@ -243,7 +243,7 @@ class LayersPanel(QWidget):
         for label, tooltip, callback in actions:
             button = QPushButton(label)
             button.setObjectName("PanelIconButton")
-            button.setFixedSize(30, 28)
+            button.setFixedSize(38, 34)
             button.setToolTip(tooltip)
             button.setAccessibleName(tooltip)
             button.clicked.connect(callback)
@@ -285,7 +285,7 @@ class LayersPanel(QWidget):
             self.list.setItemWidget(item, row)
             item.setSizeHint(QSize(
                 max(0, self.list.viewport().width()),
-                max(34, row.sizeHint().height())))
+                max(44, row.sizeHint().height())))
         self.list.blockSignals(False)
         self._apply_filter(self.filter.text())
 
@@ -390,7 +390,7 @@ class LayersPanel(QWidget):
         for index in range(self.list.count()):
             item = self.list.item(index)
             row = self.list.itemWidget(item)
-            height = max(34, row.sizeHint().height()) if row else 34
+            height = max(44, row.sizeHint().height()) if row else 34
             item.setSizeHint(QSize(width, height))
 
     def _changed(self):

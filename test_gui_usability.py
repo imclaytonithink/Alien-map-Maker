@@ -63,7 +63,7 @@ print("splitter ok")
 
 # ---- direct resize handles
 canvas.zoom, canvas.pan_x, canvas.pan_y = 1.0, 0.0, 0.0
-piece = Piece(name="box", x=200, y=200, w=100, h=60)
+piece = Piece(name="box", x=200, y=200, w=100, h=60, snap=False)
 level.add(piece)
 canvas.select([piece])
 pts = canvas._resize_handle_points(piece)
@@ -123,7 +123,7 @@ drag(pts["e"].x(), pts["e"].y(), pts["e"].x() + 30, pts["e"].y(),
 assert abs(piece.center[0] - cx0) < 1e-6 and abs(piece.center[1] - cy0) < 1e-6
 
 # rotated node: opposite corner stays put
-piece2 = Piece(name="rot", x=500, y=300, w=100, h=100, rotation=30)
+piece2 = Piece(name="rot", x=500, y=300, w=100, h=100, rotation=30, snap=False)
 level.add(piece2)
 canvas.select([piece2])
 pts = canvas._resize_handle_points(piece2)

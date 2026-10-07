@@ -72,6 +72,7 @@ class GeneratorDialog(QDialog):
         # options ------------------------------------------------------
         opt = QGroupBox("Generation")
         f = QFormLayout(opt)
+        self._form = f
         self.cmb_asset_mode = QComboBox()
         self.cmb_asset_mode.addItem("Tile-by-tile", "tiles")
         self.cmb_asset_mode.addItem("Geomorph assembly", "geomorph")
@@ -132,15 +133,13 @@ class GeneratorDialog(QDialog):
 
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItems(["New level", "Fill selected area"])
-        if not self.canvas.selected_pieces():
-            self.cmb_mode.setCurrentIndex(0)
-            self.cmb_mode.setEnabled(False)
-            self.cmb_mode.setToolTip("Select nodes on the canvas first "
-                                     "to fill a specific area.")
-        else:
-            self.cmb_mode.setToolTip("New level = add a fresh level and "
-                                     "generate into it.\nFill selected area "
-                                     "= generate inside the selection's bounds.")
+        # Always usable: a greyed-out dropdown looks broken. If "Fill selected
+        # area" is chosen without a selection, Generate explains what to do.
+        has_selection = bool(self.canvas.selected_pieces())
+        self.cmb_mode.setToolTip(
+            "New level = add a fresh level and generate into it.\n"
+            "Fill selected area = generate inside the selection's bounds"
+            + ("" if has_selection else " (select nodes on the canvas first)."))
         f.addRow("Output", self.cmb_mode)
         root.addWidget(opt)
 
@@ -197,12 +196,14 @@ class GeneratorDialog(QDialog):
         self._refresh_preview()
 
     def _apply_mode_options(self):
+        """Show only the options that apply to the chosen generator, rather
+        than greying controls out (disabled dropdowns read as broken)."""
         geomorph_mode = self.cmb_asset_mode.currentData() == "geomorph"
-        self.cmb_setting.setEnabled(not geomorph_mode)
-        self.lbl_setting_tip.setEnabled(not geomorph_mode)
-        self.cmb_layout.setEnabled(not geomorph_mode)
-        self.lbl_layout_tip.setEnabled(not geomorph_mode)
-        self.cmb_geomorph_grid.setEnabled(geomorph_mode)
+        form = self._form
+        for widget in (self.cmb_setting, self.lbl_setting_tip,
+                       self.cmb_layout, self.lbl_layout_tip):
+            form.setRowVisible(widget, not geomorph_mode)
+        form.setRowVisible(self.cmb_geomorph_grid, geomorph_mode)
         self.lbl_clutter_caption.setText(
             "Overlay / symbol density" if geomorph_mode else "Floor clutter")
 
@@ -360,6 +361,12 @@ class GeneratorDialog(QDialog):
             self.spin_seed.setValue(previous_seed)
 
     def _generate(self, replace_previous=False):
+        if self.cmb_mode.currentIndex() == 1 and not self.canvas.selected_pieces():
+            self._set_status_tone("error")
+            self.lbl_status.setText(
+                "Select the nodes you want to fill on the canvas first, or "
+                "set Output to \"New level\".")
+            return False
         geomorph_mode = self.cmb_asset_mode.currentData() == "geomorph"
         if geomorph_mode:
             if not self.geomorph_cats.get("core"):

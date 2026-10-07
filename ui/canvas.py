@@ -6,7 +6,7 @@ import math
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QImageReader, QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont,
     QPolygonF,
@@ -41,6 +41,7 @@ class CanvasView(QWidget):
     contextMenuRequested = pyqtSignal(QPoint, object)   # global pos, hit Piece|None
     layerSoloChanged = pyqtSignal(object)
     historyDiscardLast = pyqtSignal()
+    statusMessage = pyqtSignal(str)
     freeTransformChanged = pyqtSignal(bool)
 
     def __init__(self, parent=None):
@@ -59,7 +60,15 @@ class CanvasView(QWidget):
         self.zoom = 1.0
         self.pan_x = 0.0
         self.pan_y = 0.0
-        self._cache: dict = exporter.PixmapCache()
+        # Entry cap is high on purpose: a busy map shows hundreds of distinct
+        # images, and thrashing a tiny cache re-decodes huge PNGs every paint.
+        self._cache: dict = exporter.PixmapCache(
+            max_bytes=768 * 1024 * 1024, max_entries=4096)
+        self._variants: dict = {}     # source key -> {(w, h): True} sizes decoded
+        self._load_queue: dict = {}
+        self._load_timer = QTimer(self)
+        self._load_timer.setSingleShot(True)
+        self._load_timer.timeout.connect(self._process_loads)
 
         self.selection: set[str] = set()
         self.selected_zone_id: str | None = None
@@ -76,6 +85,7 @@ class CanvasView(QWidget):
         self._marquee: Optional[QRectF] = None
         self._cursor_world = (-1.0, -1.0)
         self._guides: list[tuple[str, float]] = []  # ("v", x) or ("h", y)
+        self.allow_overlap = False   # align/distribute may overlap nodes only when on
         self.free_transform = False
         self._ft_backup: dict | None = None
         self._ft_pushed = False
@@ -135,7 +145,7 @@ class CanvasView(QWidget):
         for name, lbl, tooltip in quick_actions:
             b = QPushButton(lbl)
             b.setObjectName("CanvasQuickButton")
-            b.setFixedSize(28, 26)
+            b.setFixedSize(34, 32)
             b.setToolTip(tooltip)
             b.setAccessibleName(tooltip)
             b.clicked.connect(lambda _, n=name: self._quick(n))
@@ -183,7 +193,7 @@ class CanvasView(QWidget):
     def set_project(self, project: Project, library=None):
         self.project = project
         self.library = library
-        self._cache.clear()
+        self._clear_pixmaps()
         self.selection.clear()
         self.selected_zone_id = None
         self._reset_tool_state()
@@ -709,15 +719,72 @@ class CanvasView(QWidget):
         piece.x = center_x - piece.w * piece.scale / 2.0
         piece.y = center_y - piece.h * piece.scale / 2.0
         self._cache.pop("emb:" + piece.id, None)
-        self._cache.clear()
+        self._clear_pixmaps()
         self.selectionChanged.emit(self.selected_pieces())
         self.dirty.emit()
         self.update()
         return True
 
     # ------------------------------------------------------------------
+    def _clear_pixmaps(self):
+        self._cache.clear()
+        self._variants.clear()
+        self._load_queue.clear()
+
+    @staticmethod
+    def _bucket(n: float) -> int:
+        """Round a pixel size up to a sqrt(2) step so zooming reuses images."""
+        n = max(16.0, float(n))
+        steps = math.ceil(math.log(n / 16.0, math.sqrt(2.0)) - 1e-9)
+        return int(round(16 * math.sqrt(2.0) ** steps))
+
     def pixmap(self, piece: Piece, target_size=None) -> QPixmap:
-        return exporter.piece_pixmap(piece, self.project, self._cache, target_size)
+        """Display pixmap for a piece. Sizes are bucketed; while the exact
+        bucket is still loading, the closest already-decoded size is shown so
+        zooming never blocks on decoding a large PNG."""
+        if target_size is None:
+            return exporter.piece_pixmap(piece, self.project, self._cache, None)
+        size = (self._bucket(target_size[0]), self._bucket(target_size[1]))
+        source_key = ("emb:" + piece.id) if piece.embedded else piece.asset_path
+        key = (source_key, size)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        variants = self._variants.setdefault(source_key, {})
+        fallback = None
+        want = size[0] * size[1]
+        for other in list(variants):
+            candidate = self._cache.get((source_key, other)) if other != size else None
+            if candidate is None or candidate.isNull():
+                if other != size:
+                    variants.pop(other, None)
+                continue
+            area = other[0] * other[1]
+            score = (area < want, abs(area - want))   # prefer >= target, then nearest
+            if fallback is None or score < fallback[0]:
+                fallback = (score, candidate)
+        if fallback is not None:
+            self._load_queue[key] = (piece, size)
+            if not self._load_timer.isActive():
+                self._load_timer.start(15)
+            return fallback[1]
+        pm = exporter.piece_pixmap(piece, self.project, self._cache, size)
+        variants[size] = True
+        return pm
+
+    def _process_loads(self):
+        import time
+        deadline = time.monotonic() + 0.03
+        while self._load_queue and time.monotonic() < deadline:
+            key, (piece, size) = next(iter(self._load_queue.items()))
+            del self._load_queue[key]
+            if self.project is None:
+                continue
+            exporter.piece_pixmap(piece, self.project, self._cache, size)
+            self._variants.setdefault(key[0], {})[size] = True
+        if self._load_queue:
+            self._load_timer.start(15)
+        self.update()
 
     # ------------------------------------------------------------------
     def world_to_screen(self, wx, wy):
@@ -833,21 +900,45 @@ class CanvasView(QWidget):
         self.dirty.emit()
 
     # ------------------------------------------------------------------
+    def asset_world_size(self, store_rel_path: str, asset=None) -> tuple[float, float]:
+        """Size an asset should have on this canvas, in world px.
+
+        Mobius-style names such as ``[100x100]`` give the size in feet, while
+        the PNG itself may be thousands of pixels wide. Those are scaled using
+        the project's feet-per-square and square size so a 100x100 ft tile is
+        20x20 squares. Plain pixel-sized art keeps its pixel size, and any
+        image still larger than the canvas is fitted to a third of it."""
+        px_w = px_h = 0
+        named = None
+        if asset is not None:
+            px_w, px_h = int(asset.width or 0), int(asset.height or 0)
+            named = getattr(asset, "size", None)
+        if not (px_w and px_h):
+            size = QImageReader(self.project.resolve_asset(store_rel_path)).size()
+            if size.isValid():
+                px_w, px_h = size.width(), size.height()
+            else:
+                pm = self.pixmap(Piece(asset_path=store_rel_path), (2048, 2048))
+                px_w = pm.width() if not pm.isNull() else 64
+                px_h = pm.height() if not pm.isNull() else 64
+        w, h = float(px_w), float(px_h)
+        cell = max(1, self.project.cell_size)
+        feet = max(1, int(getattr(self.project, "feet_per_square", 5) or 5))
+        if named and named[0] > 0 and named[1] > 0 and (
+                px_w >= named[0] * 4 or px_h >= named[1] * 4):
+            w = named[0] / feet * cell
+            h = named[1] / feet * cell
+        limit = 0.34 * min(self.project.canvas_w, self.project.canvas_h)
+        if max(w, h) > limit and not (named and px_w >= named[0] * 4):
+            f = limit / max(w, h)
+            w, h = w * f, h * f
+        return max(1.0, w), max(1.0, h)
+
     def add_asset(self, store_rel_path: str, world_x, world_y) -> Optional[Piece]:
         if not self.level:
             return None
         asset = self.library.get(store_rel_path) if self.library else None
-        if asset and asset.width and asset.height:
-            w, h = asset.width, asset.height
-        else:
-            reader = QImageReader(self.project.resolve_asset(store_rel_path))
-            size = reader.size()
-            if size.isValid():
-                w, h = size.width(), size.height()
-            else:
-                pm = self.pixmap(Piece(asset_path=store_rel_path), (2048, 2048))
-                w = pm.width() if not pm.isNull() else 64
-                h = pm.height() if not pm.isNull() else 64
+        w, h = self.asset_world_size(store_rel_path, asset)
         is_overlay = bool(asset and asset.is_overlay)
         name = asset.name if asset else store_rel_path.split("/")[-1]
         p = Piece(asset_path=store_rel_path, name=name, w=w, h=h,
@@ -1003,6 +1094,7 @@ class CanvasView(QWidget):
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         keep_ratio = hx != 0 and hy != 0 and (shift == self.free_transform)
         wx, wy = self.screen_to_world(sx, sy)
+        wx, wy = self._snap_resize_point(p, d, wx, wy)
         c0x, c0y = d["center"]
         rad = math.radians(d["rot"])
         ca, sa = math.cos(rad), math.sin(rad)
@@ -1038,6 +1130,50 @@ class CanvasView(QWidget):
         if p.is_text and not keep_ratio:
             p.text_auto_size = False
 
+    def _snap_resize_point(self, p: Piece, drag: dict, wx: float, wy: float):
+        """Snap the dragged edge/corner to grid lines and neighbor edges.
+        Only for upright (multiples of 90°) nodes, where handle axes line up
+        with the world axes."""
+        self._guides = []
+        quarter = round(drag["rot"] / 90.0)
+        if abs(drag["rot"] - quarter * 90.0) > 0.01:
+            return wx, wy
+        hx, hy = RESIZE_HANDLES[drag["handle"]]
+        if quarter % 2:                      # 90°/270°: handle axes swap
+            hx, hy = hy, hx
+        thr = GUIDE_DIST / max(self.zoom, 1e-6)
+        cell = max(1, self.project.cell_size) if p.snap else None
+        xs, ys = [], []
+        for o in self.level.pieces:
+            if o.id == p.id:
+                continue
+            bx0, by0, bx1, by1 = self._aabb(o)
+            xs += [bx0, (bx0 + bx1) / 2.0, bx1]
+            ys += [by0, (by0 + by1) / 2.0, by1]
+
+        def pick(value, edges):
+            best, guide = value, None
+            best_d = thr + 1e-9
+            if cell:
+                line = round(value / cell) * cell
+                if abs(line - value) <= thr:
+                    best, best_d = line, abs(line - value)
+            for e in edges:
+                dist = abs(e - value)
+                if dist <= thr and dist <= best_d + 1e-9:
+                    best, best_d, guide = e, dist, e
+            return best, guide
+
+        if hx:
+            wx, gx = pick(wx, xs)
+            if gx is not None:
+                self._guides.append(("v", gx))
+        if hy:
+            wy, gy = pick(wy, ys)
+            if gy is not None:
+                self._guides.append(("h", gy))
+        return wx, wy
+
     def _piece_rect_screen(self, p: Piece) -> QRectF:
         w = p.w * self.zoom * p.scale
         h = p.h * self.zoom * p.scale
@@ -1047,14 +1183,19 @@ class CanvasView(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor(
-            getattr(self, "theme_colors", theme_colors("dark"))["bg"]))
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        theme_bg = QColor(getattr(self, "theme_colors", theme_colors("dark"))["bg"])
+        painter.fillRect(self.rect(), theme_bg)
         if not self.project or not self.level:
             return
 
+        self._draw_pasteboard(painter, theme_bg)
         self._draw_bg(painter)
         if self.project.show_grid:
+            painter.save()
+            painter.setClipRect(self._canvas_rect_screen())
             self._draw_grid(painter, self.project.grid_color, self.project.grid_opacity)
+            painter.restore()
         self._draw_cell_highlight(painter)
         if self.ref_enabled:
             self._draw_reference(painter)
@@ -1063,6 +1204,7 @@ class CanvasView(QWidget):
             if self.solo_layer_id and p.layer != self.solo_layer_id:
                 continue
             self._draw_piece(painter, p, 1.0)
+        self._draw_canvas_veil_and_frame(painter, theme_bg)
 
         if self.project.show_zones:
             draw_zone_borders(
@@ -1077,8 +1219,9 @@ class CanvasView(QWidget):
         # selection outlines
         for p in self.selected_pieces():
             self._draw_selection(painter, p)
-        if len(self.selection) == 1:
-            only = next(iter(self.selected_pieces()))
+        visible_selection = self.selected_pieces()
+        if len(visible_selection) == 1:
+            only = visible_selection[0]
             self._draw_resize_handles(painter, only)
             if self.free_transform:
                 self._draw_free_transform_frame(painter, only)
@@ -1110,6 +1253,45 @@ class CanvasView(QWidget):
             self._draw_group_arrows(painter)
 
         painter.end()
+
+    def _canvas_rect_screen(self) -> QRectF:
+        x0, y0 = self.world_to_screen(0, 0)
+        return QRectF(x0, y0, self.project.canvas_w * self.zoom,
+                      self.project.canvas_h * self.zoom)
+
+    def _draw_pasteboard(self, painter, theme_bg: QColor):
+        """Hatched area around the canvas so its edge is unmistakable."""
+        painter.save()
+        rect = self._canvas_rect_screen()
+        shadow = QColor(0, 0, 0, 110)
+        for grow, alpha in ((10, 25), (6, 40), (3, 60)):
+            shadow.setAlpha(alpha)
+            painter.fillRect(rect.adjusted(-grow + 4, -grow + 4, grow + 4, grow + 4), shadow)
+        painter.restore()
+
+    def _draw_canvas_veil_and_frame(self, painter, theme_bg: QColor):
+        """Dim anything hanging off the canvas (it is clipped in exports) and
+        outline the real canvas edge."""
+        rect = self._canvas_rect_screen()
+        view = QRectF(self.rect())
+        veil = QColor(theme_bg)
+        veil.setAlpha(170)
+        hatch = QColor(self.theme_accent)
+        hatch.setAlpha(60)
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        for part in (QRectF(view.left(), view.top(), view.width(), max(0.0, rect.top() - view.top())),
+                     QRectF(view.left(), rect.bottom(), view.width(), max(0.0, view.bottom() - rect.bottom())),
+                     QRectF(view.left(), rect.top(), max(0.0, rect.left() - view.left()), rect.height()),
+                     QRectF(rect.right(), rect.top(), max(0.0, view.right() - rect.right()), rect.height())):
+            if part.width() > 0 and part.height() > 0:
+                painter.fillRect(part, veil)
+                painter.fillRect(part, QBrush(hatch, Qt.BrushStyle.BDiagPattern))
+        pen = QPen(QColor(self.theme_accent), 2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(rect)
+        painter.restore()
 
     def _draw_bg(self, painter):
         x0, y0 = self.world_to_screen(0, 0)
@@ -1913,24 +2095,20 @@ class CanvasView(QWidget):
         raw_x = wx - offs[primary.id][0]
         raw_y = wy - offs[primary.id][1]
 
-        # gather other pieces' visual edges (x and y)
+        # gather other pieces' visual edges (x and y), rotation-aware
         thr = GUIDE_DIST / max(self.zoom, 1e-6)
-        vw, vh = primary.vis_w, primary.vis_h
-        x_offs = (0.0, vw / 2.0, vw)
-        y_offs = (0.0, vh / 2.0, vh)
+        x_offs, y_offs = self._edge_offsets(primary)
         x_edges, y_edges = [], []
         for o in self.level.pieces:
             if o.id == primary.id or o.id in self.selection:
                 continue
-            x_edges += [o.x, o.x + o.vis_w / 2.0, o.x + o.vis_w]
-            y_edges += [o.y, o.y + o.vis_h / 2.0, o.y + o.vis_h]
+            bx0, by0, bx1, by1 = self._aabb(o)
+            x_edges += [bx0, (bx0 + bx1) / 2.0, bx1]
+            y_edges += [by0, (by0 + by1) / 2.0, by1]
 
-        tgt_x, guide_x = self._nearest_target(
-            raw_x, x_offs, x_edges, thr,
-            snap_value(raw_x, cell) if primary.snap else None)
-        tgt_y, guide_y = self._nearest_target(
-            raw_y, y_offs, y_edges, thr,
-            snap_value(raw_y, cell) if primary.snap else None)
+        grid = cell if primary.snap else None
+        tgt_x, guide_x = self._nearest_target(raw_x, x_offs, x_edges, thr, grid)
+        tgt_y, guide_y = self._nearest_target(raw_y, y_offs, y_edges, thr, grid)
 
         # rigid delta from the primary, applied to the whole selection
         dx = tgt_x - primary.x
@@ -1946,32 +2124,52 @@ class CanvasView(QWidget):
             self._guides.append(("h", guide_y))
 
     @staticmethod
-    def _nearest_target(raw, offsets, edges, threshold, grid_target):
+    def _aabb(p: Piece) -> tuple[float, float, float, float]:
+        """Axis-aligned bounds of a piece on screen-aligned world axes."""
+        cx, cy = p.center
+        ang = math.radians(p.rotation)
+        ca, sa = abs(math.cos(ang)), abs(math.sin(ang))
+        hw, hh = p.vis_w / 2.0, p.vis_h / 2.0
+        ex, ey = ca * hw + sa * hh, sa * hw + ca * hh
+        return cx - ex, cy - ey, cx + ex, cy + ey
+
+    @classmethod
+    def _edge_offsets(cls, p: Piece):
+        """Left/center/right and top/center/bottom edge offsets from p.x / p.y."""
+        x0, y0, x1, y1 = cls._aabb(p)
+        return ((x0 - p.x, (x0 + x1) / 2.0 - p.x, x1 - p.x),
+                (y0 - p.y, (y0 + y1) / 2.0 - p.y, y1 - p.y))
+
+    @staticmethod
+    def _nearest_target(raw, offsets, edges, threshold, grid_step):
         """Pick the closest snap target for a dragged edge-set.
 
-        offsets: this piece's edge positions relative to its x (or y).
-        edges:   absolute edge positions of neighboring pieces.
+        offsets:   this piece's edge positions relative to its x (or y).
+        edges:     absolute edge positions of neighboring pieces.
+        grid_step: grid size (None when the piece does not snap to the grid).
+        Any edge of the piece may land on a grid line or on any neighbor edge
+        within ``threshold``; the nearest wins and neighbors win ties. When
+        nothing is in range a gridded piece still rounds its origin to the grid.
         Returns (target_for_piece_origin, guide_line_or_None).
-        Grid wins when it is nearer than any guide; guides win ties.
         """
-        best_d = None
-        best_t = raw
-        best_g = None
-        if grid_target is not None:
-            best_d = abs(grid_target - raw)
-            best_t = grid_target
-        # every edge of this piece may align OR touch every edge of a neighbor
+        best_d, best_t, best_g = None, raw, None
+        if grid_step:
+            for off in offsets:
+                line = round((raw + off) / grid_step) * grid_step
+                t = line - off
+                d = abs(t - raw)
+                if d <= threshold and (best_d is None or d < best_d - 1e-9):
+                    best_d, best_t = d, t
         for off in offsets:
             for e in edges:
                 t = e - off                 # origin that puts this edge on e
                 d = abs(t - raw)
                 if d > threshold:
                     continue
-                # guides beat grid only when strictly closer, ties go to grid
-                if best_d is None or d < best_d - 1e-9:
-                    best_d = d
-                    best_t = t
-                    best_g = e
+                if best_d is None or d <= best_d + 1e-9:
+                    best_d, best_t, best_g = d, t, e
+        if best_d is None and grid_step:
+            best_t = round(raw / grid_step) * grid_step
         return best_t, best_g
 
     def _rotate_primary(self, sx, sy, e):
@@ -2056,6 +2254,7 @@ class CanvasView(QWidget):
             return
         if self._drag and self._drag["mode"] == "resize":
             self._drag = None
+            self._guides = []
             self.selectionChanged.emit(self.selected_pieces())   # refresh inspector
             self.dirty.emit()
             self.update()
@@ -2154,12 +2353,7 @@ class CanvasView(QWidget):
         if md.hasFormat("application/x-mapbuilder-asset"):
             path = bytes(md.data("application/x-mapbuilder-asset")).decode("utf-8", "ignore")
             asset = self.library.get(path) if self.library else None
-            if asset and asset.width and asset.height:
-                self._drop_target = (asset.width, asset.height)
-            else:
-                pm = self.pixmap(Piece(asset_path=path))
-                if not pm.isNull():
-                    self._drop_target = (pm.width(), pm.height())
+            self._drop_target = self.asset_world_size(path, asset)
         elif md.hasUrls():
             self._drop_target = (64, 64)   # unknown size until drop; rough box
         self.update()
@@ -2252,56 +2446,102 @@ class CanvasView(QWidget):
         self.selectionChanged.emit(self.selected_pieces())
         self.dirty.emit()
 
-    # align / distribute
+    # align / distribute ---------------------------------------------------
+    @staticmethod
+    def _shift(p: Piece, dx: float = 0.0, dy: float = 0.0):
+        p.x += dx
+        p.y += dy
+
+    @staticmethod
+    def _boxes_overlap(a, b, eps=0.5) -> bool:
+        return (a[0] < b[2] - eps and b[0] < a[2] - eps
+                and a[1] < b[3] - eps and b[1] < a[3] - eps)
+
+    def _separate_along(self, pieces: list[Piece], axis: str, order: dict):
+        """Push pieces apart along ``axis`` ("x" or "y") until none overlap,
+        keeping their previous order so the first stays where it is."""
+        placed: list[Piece] = []
+        for p in sorted(pieces, key=lambda q: order[q.id]):
+            for _ in range(len(pieces) + 1):
+                box = self._aabb(p)
+                hit = next((q for q in placed
+                            if self._boxes_overlap(box, self._aabb(q))), None)
+                if hit is None:
+                    break
+                other = self._aabb(hit)
+                if axis == "y":
+                    self._shift(p, dy=other[3] - box[1])
+                else:
+                    self._shift(p, dx=other[2] - box[0])
+            placed.append(p)
+
     def align(self, kind):
+        """Align edges/centers. Nodes never end up overlapping unless
+        ``allow_overlap`` is on: those that would collide are stacked along
+        the other axis instead."""
         sel = self.selected_pieces()
         if len(sel) < 2:
+            self.statusMessage.emit("Select at least 2 nodes to align.")
             return
         self.push_history(f"Align {kind}")
+        boxes = {p.id: self._aabb(p) for p in sel}
         if kind == "left":
-            m = min(p.x for p in sel)
+            m = min(b[0] for b in boxes.values())
             for p in sel:
-                p.x = m
+                self._shift(p, dx=m - boxes[p.id][0])
         elif kind == "right":
-            m = max(p.x + p.vis_w for p in sel)
+            m = max(b[2] for b in boxes.values())
             for p in sel:
-                p.x = m - p.vis_w
+                self._shift(p, dx=m - boxes[p.id][2])
         elif kind == "top":
-            m = min(p.y for p in sel)
+            m = min(b[1] for b in boxes.values())
             for p in sel:
-                p.y = m
+                self._shift(p, dy=m - boxes[p.id][1])
         elif kind == "bottom":
-            m = max(p.y + p.vis_h for p in sel)
+            m = max(b[3] for b in boxes.values())
             for p in sel:
-                p.y = m - p.vis_h
+                self._shift(p, dy=m - boxes[p.id][3])
         elif kind == "hcenter":
-            c = sum(p.center[0] for p in sel) / len(sel)
+            c = sum((b[0] + b[2]) / 2 for b in boxes.values()) / len(sel)
             for p in sel:
-                p.x = c - p.vis_w / 2
+                self._shift(p, dx=c - (boxes[p.id][0] + boxes[p.id][2]) / 2)
         elif kind == "vcenter":
-            c = sum(p.center[1] for p in sel) / len(sel)
+            c = sum((b[1] + b[3]) / 2 for b in boxes.values()) / len(sel)
             for p in sel:
-                p.y = c - p.vis_h / 2
+                self._shift(p, dy=c - (boxes[p.id][1] + boxes[p.id][3]) / 2)
+        if not self.allow_overlap:
+            horizontal_line = kind in ("top", "bottom", "vcenter")
+            axis = "x" if horizontal_line else "y"
+            order = {p.id: (boxes[p.id][0] if horizontal_line else boxes[p.id][1])
+                     for p in sel}
+            self._separate_along(sel, axis, order)
         self.dirty.emit()
         self.update()
 
     def distribute(self, kind):
+        """Equalize the gaps between nodes from the first to the last. When
+        they cannot fit without overlapping they are laid edge to edge."""
         sel = self.selected_pieces()
         if len(sel) < 3:
+            self.statusMessage.emit("Select at least 3 nodes to distribute.")
             return
         self.push_history(f"Distribute {kind}")
-        if kind == "h":
-            sel.sort(key=lambda p: p.center[0])
-            total = sel[-1].center[0] - sel[0].center[0]
-            step = total / (len(sel) - 1)
-            for i, p in enumerate(sel):
-                p.x = sel[0].center[0] + i * step - p.vis_w / 2
-        else:
-            sel.sort(key=lambda p: p.center[1])
-            total = sel[-1].center[1] - sel[0].center[1]
-            step = total / (len(sel) - 1)
-            for i, p in enumerate(sel):
-                p.y = sel[0].center[1] + i * step - p.vis_h / 2
+        horizontal = kind == "h"
+        lo, hi = (0, 2) if horizontal else (1, 3)
+        boxes = {p.id: self._aabb(p) for p in sel}
+        ordered = sorted(sel, key=lambda p: boxes[p.id][lo] + boxes[p.id][hi])
+        first, last = boxes[ordered[0].id], boxes[ordered[-1].id]
+        span = last[hi] - first[lo]
+        sizes = sum(boxes[p.id][hi] - boxes[p.id][lo] for p in ordered)
+        gap = (span - sizes) / (len(ordered) - 1)
+        if gap < 0 and not self.allow_overlap:
+            gap = 0.0
+        cursor = first[lo]
+        for p in ordered:
+            box = boxes[p.id]
+            delta = cursor - box[lo]
+            self._shift(p, dx=delta) if horizontal else self._shift(p, dy=delta)
+            cursor += (box[hi] - box[lo]) + gap
         self.dirty.emit()
         self.update()
 
