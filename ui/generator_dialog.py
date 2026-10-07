@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImageReader
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QComboBox, QSlider, QSpinBox,
-    QPushButton, QLabel, QHBoxLayout, QGroupBox, QScrollArea, QWidget,
-    QMessageBox,
+    QPushButton, QLabel, QHBoxLayout, QGridLayout, QGroupBox, QScrollArea,
+    QWidget,
 )
 
 from core import generator as gen
@@ -150,9 +149,15 @@ class GeneratorDialog(QDialog):
         pv = QVBoxLayout(prev)
         self.prev_area = QScrollArea()
         self.prev_area.setWidgetResizable(True)
+        self.prev_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.prev_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.prev_inner = QWidget()
+        self.prev_inner.setMinimumWidth(0)
         self.prev_layout = QVBoxLayout(self.prev_inner)
         self.prev_layout.setContentsMargins(4, 4, 4, 4)
+        self.prev_layout.setSpacing(8)
         self.prev_area.setWidget(self.prev_inner)
         pv.addWidget(self.prev_area)
         root.addWidget(prev, 1)
@@ -164,15 +169,24 @@ class GeneratorDialog(QDialog):
 
         # buttons --------------------------------------------------------
         btns = QHBoxLayout()
-        b_regen = QPushButton("↻ Regenerate (new seed)")
-        b_regen.setToolTip("Bump the seed and generate again — replaces the "
-                           "map from the previous Generate press.")
-        b_regen.clicked.connect(self._regenerate)
-        b_gen = QPushButton("Generate")
-        b_gen.clicked.connect(self._generate)
+        self.btn_regenerate = QPushButton("↻ Regenerate (new seed)")
+        self.btn_regenerate.setToolTip(
+            "Increase the seed and replace previous generated output(s) "
+            "for this output mode. If there is no previous output, this makes "
+            "a new map.")
+        self.btn_regenerate.clicked.connect(self._regenerate)
+        self.btn_generate = QPushButton("Generate")
+        self.btn_generate.setToolTip(
+            "Generate with the seed shown above and keep any earlier generated "
+            "outputs. Use Regenerate to roll a new seed and replace the prior result.")
+        self.btn_generate.clicked.connect(
+            lambda _checked=False: self._generate(replace_previous=False))
+        self.btn_close = QPushButton("Close")
+        self.btn_close.clicked.connect(self.reject)
+        btns.addWidget(self.btn_close)
         btns.addStretch(1)
-        btns.addWidget(b_regen)
-        btns.addWidget(b_gen)
+        btns.addWidget(self.btn_regenerate)
+        btns.addWidget(self.btn_generate)
         root.addLayout(btns)
 
         self._refresh_preview()
@@ -233,22 +247,37 @@ class GeneratorDialog(QDialog):
                 child_layout.deleteLater()
 
         def add_preview_row(title, assets, limit=8):
-            row = QHBoxLayout()
-            row.addWidget(QLabel(f"<b>{title}</b> ({len(assets)})"))
-            row.addStretch(1)
+            row_widget = QWidget()
+            row_layout = QVBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
+            caption = QLabel(f"<b>{title}</b> ({len(assets)})")
+            caption.setWordWrap(True)
+            row_layout.addWidget(caption)
+
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(6)
+            grid.setVerticalSpacing(6)
             shown = 0
             for asset in assets[:limit]:
                 pm = load_scaled_pixmap(
                     self.library.abs_path(asset["path"]), 64)
-                if not pm.isNull():
-                    icon = QLabel()
-                    icon.setPixmap(pm)
-                    icon.setToolTip(asset["name"])
-                    row.addWidget(icon)
-                    shown += 1
+                if pm.isNull():
+                    continue
+                icon = QLabel()
+                icon.setFixedSize(68, 68)
+                icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                icon.setPixmap(pm)
+                icon.setToolTip(asset["name"])
+                grid.addWidget(icon, shown // 4, shown % 4)
+                shown += 1
             if not shown:
-                row.addWidget(QLabel("(none)"))
-            self.prev_layout.addLayout(row)
+                empty = QLabel("No compatible assets")
+                empty.setStyleSheet(f"color:{self.colors['muted']};")
+                grid.addWidget(empty, 0, 0)
+            row_layout.addLayout(grid)
+            self.prev_layout.addWidget(row_widget)
 
         geomorph_mode = self.cmb_asset_mode.currentData() == "geomorph"
         if geomorph_mode:
@@ -307,14 +336,14 @@ class GeneratorDialog(QDialog):
         self.prev_layout.addStretch(1)
 
     # ------------------------------------------------------------------
-    def _opts(self):
+    def _opts(self, replace_previous=False):
         return {
             "setting": self.cmb_setting.currentText(),
             "layout": self.cmb_layout.currentText(),
             "clutter": self.sl_clutter.value() / 100.0,
             "seed": self.spin_seed.value(),
             "mode": "area" if self.cmb_mode.currentIndex() == 1 else "new",
-            "replace_prev": True,
+            "replace_prev": bool(replace_previous),
             "categories": self.cats,
             "generator_mode": self.cmb_asset_mode.currentData(),
             "geomorph_grid": self.cmb_geomorph_grid.currentData(),
@@ -325,43 +354,69 @@ class GeneratorDialog(QDialog):
         self.spin_seed.setValue((self.spin_seed.value() + 1) % 1000000)
 
     def _regenerate(self):
+        previous_seed = self.spin_seed.value()
         self._reroll()
-        self._generate()
+        if not self._generate(replace_previous=True):
+            self.spin_seed.setValue(previous_seed)
 
-    def _generate(self):
+    def _generate(self, replace_previous=False):
         geomorph_mode = self.cmb_asset_mode.currentData() == "geomorph"
         if geomorph_mode:
             if not self.geomorph_cats.get("core"):
-                QMessageBox.warning(
-                    self, "No geomorphs",
+                self._set_status_tone("error")
+                self.lbl_status.setText(
                     "No 100x100 Core geomorphs were detected. Import the "
                     "Geomorphs or Custom Tiles ZIP first.")
-                return
+                return False
         else:
             floorish = self.cats.get("floor") or self.cats.get("corridor")
             if not floorish:
-                QMessageBox.warning(
-                    self, "No tiles",
-                    "No floor/room tiles were detected.\n\n"
-                    "Import some floor/room PNGs first (names containing "
-                    "'room', 'floor', 'tile', 'deck' or 'corridor').")
-                return
-        opts = self._opts()
-        result = self.generate_cb(opts)
-        if result:
-            c = result.get("counts", {})
-            if geomorph_mode:
-                msg = (f"OK  {c.get('geomorphs', 0)} geomorphs · "
-                       f"{c.get('overlays', 0)} overlays · "
-                       f"{c.get('symbols', 0)} symbols · seed "
-                       f"{result.get('seed')} · {result.get('layout', '')}")
-            else:
-                msg = (f"OK  {c.get('pieces', 0)} nodes · {c.get('rooms', 0)} rooms"
-                       f" · seed {result.get('seed')} · "
-                       f"{result.get('setting', '')} / {result.get('layout', '')}")
-            if result.get("warnings"):
-                msg += "\n" + "  ".join("! " + w for w in result["warnings"])
-                self._set_status_tone("warning")
-            else:
-                self._set_status_tone("success")
-            self.lbl_status.setText(msg)
+                self._set_status_tone("error")
+                self.lbl_status.setText(
+                    "No floor/room tiles were detected. Import small floor or "
+                    "room PNGs first (names containing room, floor, tile, deck, "
+                    "or corridor).")
+                return False
+
+        try:
+            result = self.generate_cb(self._opts(replace_previous))
+        except Exception as exc:
+            self._set_status_tone("error")
+            self.lbl_status.setText(f"Generation failed: {exc}")
+            return False
+
+        if not isinstance(result, dict):
+            self._set_status_tone("error")
+            self.lbl_status.setText(
+                "Generation did not return a map. Check the selected assets "
+                "and try again.")
+            return False
+        pieces = result.get("pieces") or []
+        if not pieces:
+            warnings = result.get("warnings") or []
+            detail = "\n" + "  ".join("! " + str(w) for w in warnings) \
+                if warnings else ""
+            self._set_status_tone("warning")
+            self.lbl_status.setText(
+                "No map was generated; any previous output was kept." + detail)
+            return False
+
+        c = result.get("counts", {})
+        if geomorph_mode:
+            msg = (f"{c.get('geomorphs', 0)} geomorphs · "
+                   f"{c.get('overlays', 0)} overlays · "
+                   f"{c.get('symbols', 0)} symbols · seed "
+                   f"{result.get('seed')} · {result.get('layout', '')}")
+        else:
+            msg = (f"{c.get('pieces', len(pieces))} nodes · "
+                   f"{c.get('rooms', 0)} rooms · seed {result.get('seed')} · "
+                   f"{result.get('setting', '')} / {result.get('layout', '')}")
+        warnings = result.get("warnings") or []
+        if warnings:
+            msg += "\n" + "  ".join("! " + str(w) for w in warnings)
+            self._set_status_tone("warning")
+        else:
+            self._set_status_tone("success")
+        prefix = "Regenerated" if replace_previous else "Generated"
+        self.lbl_status.setText(f"{prefix}: {msg}")
+        return True

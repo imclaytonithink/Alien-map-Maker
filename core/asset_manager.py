@@ -208,13 +208,18 @@ class AssetLibrary:
         self.root = root
         self.assets: list[Asset] = []
         self._by_path: dict[str, Asset] = {}
+        self._scan_complete = False
+        self._scan_revision = 0
 
     # ---- scanning ----
     def scan(self, root: str) -> None:
+        self._scan_revision += 1
+        self._scan_complete = False
         self.root = root
         self.assets = []
         self._by_path = {}
         if not root or not os.path.isdir(root):
+            self._scan_complete = True
             return
         for dirpath, dirs, files in os.walk(root):
             # A failed/interrupted import must never surface partial staging
@@ -224,6 +229,17 @@ class AssetLibrary:
             for fn in sorted(files):
                 if fn.lower().endswith(SUPPORTED_EXTS):
                     self._add(os.path.join(dirpath, fn), rel)
+        self._scan_complete = True
+
+    def adopt_scan(self, snapshot: "AssetLibrary") -> None:
+        """Adopt a scan produced by a worker without rescanning on the GUI thread."""
+        if not snapshot._scan_complete:
+            raise ValueError("Cannot adopt an incomplete asset-library scan")
+        self.root = snapshot.root
+        self.assets = snapshot.assets
+        self._by_path = snapshot._by_path
+        self._scan_complete = True
+        self._scan_revision += 1
 
     def _add(self, full: str, rel_folder: str):
         name = os.path.basename(full)
@@ -484,13 +500,20 @@ class AssetLibrary:
 
     # ---- groups (auto by folder) ----
     def groups(self, order: list[str] | None = None) -> list[str]:
+        # Keep first-seen folder order without a list-membership scan for every
+        # asset. Large packs can contain thousands of images spread across
+        # many paths, making the former implementation quadratic.
         seen = []
-        for a in self.assets:
-            if a.folder not in seen:
-                seen.append(a.folder)
+        seen_set = set()
+        for asset in self.assets:
+            if asset.folder not in seen_set:
+                seen_set.add(asset.folder)
+                seen.append(asset.folder)
         if order:
-            # honor explicit order, then append any new
-            seen = [g for g in order if g in seen] + [g for g in seen if g not in order]
+            # Honor explicit order, then append any new groups.
+            ordered = [group for group in order if group in seen_set]
+            ordered_set = set(ordered)
+            seen = ordered + [group for group in seen if group not in ordered_set]
         return seen
 
     def assets_in_group(self, group: str) -> list[Asset]:

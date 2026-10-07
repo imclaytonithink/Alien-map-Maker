@@ -19,14 +19,16 @@ pip install -r requirements.txt
 python main.py
 ```
 On first launch the **project menu** opens over the editor (blurred backdrop):
-pick *New map*, open a *Recent* map, or start from a *Template*. The tracked
-starter art in `sample_assets/` is bundled with the Windows executable and
-seeded into the library on first launch. Choose a persistent app-wide
-appearance: **Dark**, **Light**, or **Alien / MU-TH-UR**.
-The Alien appearance includes optional scanlines and boot text, and Green /
-Amber / Red accents. Press **ESC** any time to bring the menu back up — it has
-Save, Open, PNG/PDF/Tabletop Simulator/project-pack export, recent-map management,
-templates, appearance, and auto-save settings.
+pick *New map* or open a *Recent* map. Creating a map lets you choose its width,
+height, and grid-square pixel size; these can also be changed later in the
+canvas properties or from **View → Canvas size**. The tracked starter art in
+`sample_assets/` is bundled with the Windows executable and seeded into the
+library on first launch. Choose a persistent app-wide appearance: **Dark**,
+**Light**, or **Alien / MU-TH-UR**. The Alien appearance includes optional
+scanlines and boot text, and Green / Amber / Red accents. Press **ESC** any time
+to bring the menu back up — it has Save, Open, PNG/PDF/Tabletop
+Simulator/project-pack export, recent-map management, appearance, and auto-save
+settings.
 
 ## Building the .exe (Windows)
 1. Install Python 3.10+ from python.org (tick "Add Python to PATH").

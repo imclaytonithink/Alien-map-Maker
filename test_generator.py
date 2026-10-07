@@ -62,4 +62,41 @@ lvl2_before = len(lvl.pieces)
 win._run_generator(area_opts)
 print("pieces after area fill:", len(lvl.pieces), "(was", lvl2_before, ")")
 
+# Generate keeps earlier outputs; Regenerate replaces all tracked maps only
+# after a successful build. A failed generation must not delete the last map.
+tracked_opts = dict(ui_opts, replace_prev=False)
+levels_before_tracked = len(win.project.levels)
+win._run_generator(tracked_opts)
+win._run_generator(tracked_opts)
+record = win._gen_output["new"]
+assert len(record["levels"]) == 2
+assert len(win.project.levels) == levels_before_tracked + 2
+previous_ids = set(record["ids"])
+
+original_generate = gen.generate
+def fail_generation(_opts):
+    raise RuntimeError("simulated generator failure")
+gen.generate = fail_generation
+try:
+    try:
+        win._run_generator(dict(tracked_opts, replace_prev=True, seed=8))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("generator failure was not propagated")
+finally:
+    gen.generate = original_generate
+assert all(level in win.project.levels for level in record["levels"])
+remaining_ids = {
+    piece.id for level in win.project.levels for piece in level.pieces
+}
+assert previous_ids <= remaining_ids, \
+    "failed regeneration should preserve the previous output"
+
+win._run_generator(dict(tracked_opts, replace_prev=True, seed=8))
+assert len(win.project.levels) == levels_before_tracked + 1
+assert len(win._gen_output["new"]["levels"]) == 1
+assert not previous_ids.intersection(
+    piece.id for level in win.project.levels for piece in level.pieces)
+
 print("\nGENERATOR TESTS PASSED")

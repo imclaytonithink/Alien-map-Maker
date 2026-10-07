@@ -8,8 +8,8 @@ from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox,
-    QSlider, QCheckBox, QPushButton, QHBoxLayout, QLabel,
-    QComboBox, QLineEdit, QScrollArea, QTextEdit, QFileDialog,
+    QSlider, QCheckBox, QPushButton, QHBoxLayout, QGridLayout, QLabel,
+    QComboBox, QLineEdit, QScrollArea, QTextEdit, QFileDialog, QSizePolicy,
 )
 from core.project import Piece, Project, snap_value
 from core.render import compute_text_size
@@ -34,9 +34,16 @@ class PropertiesPanel(QWidget):
         outer.setContentsMargins(2, 2, 2, 2)
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
+        scroll.setMinimumWidth(0)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         content = QWidget()
+        content.setMinimumWidth(0)
+        content.setSizePolicy(QSizePolicy.Policy.Ignored,
+                              QSizePolicy.Policy.Preferred)
         root = QVBoxLayout(content)
         root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(6)
 
         # ---- project-wide tint inherited by image nodes ----
         self.project_tint_box = QGroupBox("Project-wide tint")
@@ -61,7 +68,12 @@ class PropertiesPanel(QWidget):
         # ---- single node ----
         self.single = QGroupBox("Selected node")
         sf = QFormLayout(self.single)
-        self.lbl_name = QLabel("(none)"); sf.addRow("Name", self.lbl_name)
+        self.lbl_name = QLabel("(none)")
+        self.lbl_name.setWordWrap(True)
+        self.lbl_name.setMinimumWidth(0)
+        self.lbl_name.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                    QSizePolicy.Policy.Preferred)
+        sf.addRow("Name", self.lbl_name)
         self.lbl_node_type = QLabel("")
         self.lbl_node_type.setWordWrap(True)
         sf.addRow("Type", self.lbl_node_type)
@@ -104,16 +116,20 @@ class PropertiesPanel(QWidget):
         root.addWidget(self.single)
 
         self.image_tools_box = QGroupBox("Image tools")
-        image_tools = QHBoxLayout(self.image_tools_box)
+        image_tools = QGridLayout(self.image_tools_box)
         self.btn_crop_image = QPushButton("Crop image…")
+        self.btn_crop_image.setToolTip("Crop this image non-destructively.")
         self.btn_crop_image.clicked.connect(self._start_crop)
         self.btn_replace_image = QPushButton("Replace image…")
+        self.btn_replace_image.setToolTip(
+            "Choose a different source image for this node.")
         self.btn_replace_image.clicked.connect(self._replace_image)
         self.btn_reset_crop = QPushButton("Reset crop")
+        self.btn_reset_crop.setToolTip("Restore the full source image.")
         self.btn_reset_crop.clicked.connect(self.canvas.reset_selected_crop)
-        image_tools.addWidget(self.btn_crop_image)
-        image_tools.addWidget(self.btn_replace_image)
-        image_tools.addWidget(self.btn_reset_crop)
+        image_tools.addWidget(self.btn_crop_image, 0, 0)
+        image_tools.addWidget(self.btn_replace_image, 0, 1)
+        image_tools.addWidget(self.btn_reset_crop, 1, 0, 1, 2)
         root.addWidget(self.image_tools_box)
 
         # ---- editable text node controls ----
@@ -318,15 +334,36 @@ class PropertiesPanel(QWidget):
         self.lbl_count = QLabel("0")
         mf.addRow("Count", self.lbl_count)
         align = QHBoxLayout()
-        for lbl, fn in [("< L", "left"), ("> R", "right"), ("^ T", "top"),
-                        ("v B", "bottom"), ("- H", "hcenter"), ("| V", "vcenter")]:
-            b = QPushButton(lbl); b.setMaximumWidth(40); b.clicked.connect(lambda _, f=fn: self.canvas.align(f))
-            align.addWidget(b)
+        align.setContentsMargins(0, 0, 0, 0)
+        align.setSpacing(3)
+        align_actions = [
+            ("L", "Align left edges", "left"),
+            ("R", "Align right edges", "right"),
+            ("T", "Align top edges", "top"),
+            ("B", "Align bottom edges", "bottom"),
+            ("H", "Align horizontal centers", "hcenter"),
+            ("V", "Align vertical centers", "vcenter"),
+        ]
+        for label, tooltip, action in align_actions:
+            button = QPushButton(label)
+            button.setObjectName("PropertyIconButton")
+            button.setFixedSize(28, 26)
+            button.setToolTip(tooltip)
+            button.setAccessibleName(tooltip)
+            button.clicked.connect(
+                lambda _checked=False, fn=action: self.canvas.align(fn))
+            align.addWidget(button)
         mf.addRow("Align", align)
         dist = QHBoxLayout()
-        dh = QPushButton("Distribute H"); dh.clicked.connect(lambda: self.canvas.distribute("h"))
-        dv = QPushButton("Distribute V"); dv.clicked.connect(lambda: self.canvas.distribute("v"))
-        dist.addWidget(dh); dist.addWidget(dv); mf.addRow("Distribute", dist)
+        dh = QPushButton("Horizontal")
+        dh.setToolTip("Space selected nodes evenly from left to right.")
+        dh.clicked.connect(lambda: self.canvas.distribute("h"))
+        dv = QPushButton("Vertical")
+        dv.setToolTip("Space selected nodes evenly from top to bottom.")
+        dv.clicked.connect(lambda: self.canvas.distribute("v"))
+        dist.addWidget(dh)
+        dist.addWidget(dv)
+        mf.addRow("Distribute", dist)
         grp = QHBoxLayout()
         bg = QPushButton("Group"); bg.clicked.connect(self.canvas.group)
         bu = QPushButton("Ungroup"); bu.clicked.connect(self.canvas.ungroup)
@@ -334,7 +371,7 @@ class PropertiesPanel(QWidget):
         root.addWidget(self.multi)
 
         # ---- grid ----
-        g = QGroupBox("Grid & canvas")
+        g = QGroupBox("Canvas size & grid")
         gf = QFormLayout(g)
         self.chk_grid = QCheckBox("Show grid"); self.chk_grid.toggled.connect(self._apply_grid)
         gf.addRow(self.chk_grid)
@@ -348,8 +385,11 @@ class PropertiesPanel(QWidget):
         self.spin_major.valueChanged.connect(self._apply_grid)
         gf.addRow("Major every", self.spin_major)
         self.spin_cell = QSpinBox(); self.spin_cell.setRange(1, 1000); self.spin_cell.setValue(70)
+        self.spin_cell.setToolTip(
+            "Pixel width and height of one grid square. Change this to alter "
+            "the map's pixel dimensions without changing its square count.")
         self.spin_cell.valueChanged.connect(self._apply_grid)
-        gf.addRow("Cell px", self.spin_cell)
+        gf.addRow("Square size (px)", self.spin_cell)
         self.cmb_feet = QComboBox(); self.cmb_feet.addItems(["5 ft", "10 ft"])
         self.cmb_feet.currentTextChanged.connect(self._apply_grid)
         gf.addRow("Square =", self.cmb_feet)
@@ -358,10 +398,15 @@ class PropertiesPanel(QWidget):
         row = QHBoxLayout()
         self.spin_cols = QSpinBox(); self.spin_cols.setRange(1, 200); self.spin_cols.setValue(30)
         self.spin_rows = QSpinBox(); self.spin_rows.setRange(1, 200); self.spin_rows.setValue(30)
+        self.spin_cols.setToolTip("Canvas width in grid squares.")
+        self.spin_rows.setToolTip("Canvas height in grid squares.")
         self.spin_cols.valueChanged.connect(self._apply_size)
         self.spin_rows.valueChanged.connect(self._apply_size)
-        row.addWidget(self.spin_cols); row.addWidget(QLabel("x")); row.addWidget(self.spin_rows)
-        gf.addRow("Size (sq)", row)
+        row.addWidget(self.spin_cols); row.addWidget(QLabel("×")); row.addWidget(self.spin_rows)
+        gf.addRow("Canvas size (squares)", row)
+        self.lbl_canvas_dimensions = QLabel("")
+        self.lbl_canvas_dimensions.setWordWrap(True)
+        gf.addRow("Canvas pixels", self.lbl_canvas_dimensions)
         root.addWidget(g)
 
         # ---- reference overlay ----
@@ -388,16 +433,39 @@ class PropertiesPanel(QWidget):
         self.sl_project_tint.setValue(int(round(project.tint_strength * 100)))
         self.sl_project_tint.blockSignals(False)
         self._update_project_tint_button()
+        grid_controls = (self.chk_grid, self.sl_gop, self.cmb_style, self.spin_major)
+        for control in grid_controls:
+            control.blockSignals(True)
         self.chk_grid.setChecked(project.show_grid)
         self.sl_gop.setValue(int(project.grid_opacity * 100))
         self.cmb_style.setCurrentText(project.grid_style)
         self.spin_major.setValue(project.grid_major)
-        self.spin_cell.setValue(project.cell_size)
-        self.cmb_feet.setCurrentText(f"{project.feet_per_square} ft")
-        self.spin_cols.setValue(project.map_cols)
-        self.spin_rows.setValue(project.map_rows)
+        for control in grid_controls:
+            control.blockSignals(False)
+        self.refresh_canvas_size()
         self._update_color_btn()
         self._refresh_layers()
+
+    def refresh_canvas_size(self):
+        """Refresh size controls after project load, resize, or history restore."""
+        if not self.project:
+            return
+        controls = (self.spin_cell, self.cmb_feet, self.spin_cols, self.spin_rows)
+        for control in controls:
+            control.blockSignals(True)
+        self.spin_cell.setValue(self.project.cell_size)
+        self.cmb_feet.setCurrentText(f"{self.project.feet_per_square} ft")
+        self.spin_cols.setValue(self.project.map_cols)
+        self.spin_rows.setValue(self.project.map_rows)
+        for control in controls:
+            control.blockSignals(False)
+        self._update_canvas_dimensions()
+
+    def _update_canvas_dimensions(self):
+        if not self.project:
+            return
+        self.lbl_canvas_dimensions.setText(
+            f"{self.project.canvas_w:,} × {self.project.canvas_h:,} px")
 
     def _update_project_tint_button(self):
         if not self.project:
@@ -510,6 +578,7 @@ class PropertiesPanel(QWidget):
                     "Image node — lettering inside the source image is rasterized, "
                     "not editable text.")
             self.lbl_name.setText(p.name)
+            self.lbl_name.setToolTip(p.name)
             position_controls = (self.spin_x, self.spin_y, self.spin_rot,
                                  self.spin_scale, self.sl_op)
             for w in position_controls:
@@ -538,6 +607,7 @@ class PropertiesPanel(QWidget):
                 w.blockSignals(False)
         elif n == 0:
             self.lbl_name.setText("(none)")
+            self.lbl_name.setToolTip("")
             self.lbl_node_type.setText("")
             for w in (self.spin_x, self.spin_y, self.spin_rot, self.spin_scale, self.sl_op):
                 w.blockSignals(True); w.setEnabled(False)
@@ -1231,12 +1301,18 @@ class PropertiesPanel(QWidget):
             return
         self.project.show_grid = self.chk_grid.isChecked()
         self.project.grid_opacity = self.sl_gop.value() / 100.0
+        old_canvas_size = (self.project.canvas_w, self.project.canvas_h)
         self.project.grid_style = self.cmb_style.currentText()
         self.project.grid_major = self.spin_major.value()
         self.project.cell_size = self.spin_cell.value()
         self.project.feet_per_square = int(self.cmb_feet.currentText().split()[0])
         self.project._sync_canvas()
-        self.canvas.update(); self.canvas.dirty.emit()
+        self._update_canvas_dimensions()
+        if old_canvas_size != (self.project.canvas_w, self.project.canvas_h):
+            self.canvas.fit_to_view()
+        else:
+            self.canvas.update()
+        self.canvas.dirty.emit()
 
     def _apply_size(self):
         if not self.project:
@@ -1244,6 +1320,7 @@ class PropertiesPanel(QWidget):
         self.project.map_cols = self.spin_cols.value()
         self.project.map_rows = self.spin_rows.value()
         self.project._sync_canvas()
+        self._update_canvas_dimensions()
         self.canvas.fit_to_view(); self.canvas.dirty.emit()
 
     def _pick_color(self):
