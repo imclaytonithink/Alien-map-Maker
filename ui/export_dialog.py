@@ -57,11 +57,14 @@ class ExportDialog(QDialog):
         self.cmb_preset.currentTextChanged.connect(self._preset_changed)
         form.addRow("Image / page size", self.cmb_preset)
 
-        self.chk_trans = QCheckBox("Transparent background")
-        self.chk_trans.setToolTip(
-            "Leave empty map areas transparent instead of using the level background. "
-            "For PDF, transparent areas may appear white in some viewers.")
+        self.chk_trans = QCheckBox("Leave out the backdrop (transparent)")
+        self.chk_trans.setToolTip(self.TRANSPARENT_TIP)
         form.addRow(self.chk_trans)
+        self.lbl_backdrop = QLabel(self._backdrop_note())
+        self.lbl_backdrop.setWordWrap(True)
+        self.lbl_backdrop.setToolTip("Change it in the Node tab → Backdrop (with nothing "
+                                     "selected), or right-click the empty map → Backdrop….")
+        form.addRow(self.lbl_backdrop)
 
         self.chk_grid = QCheckBox("Include grid")
         self.chk_grid.setChecked(self.project.export_grid)
@@ -139,6 +142,23 @@ class ExportDialog(QDialog):
         btns.addWidget(b_ok)
         layout.addLayout(btns)
 
+    TRANSPARENT_TIP = (
+        "Leave the level's backdrop (color or floor texture) out so empty map areas "
+        "stay transparent. For PDF, transparent areas may appear white in some viewers.")
+
+    def _backdrop_note(self) -> str:
+        level = self.canvas.level if self.canvas is not None else None
+        if level is None:
+            return ""
+        mode = getattr(level, "backdrop", "color")
+        if mode == "none":
+            return ("This level's backdrop is set to None, so its PNG keeps "
+                    "transparency even without the box above.")
+        if mode == "texture" and level.backdrop_texture:
+            name = level.backdrop_texture.replace("\\", "/").split("/")[-1]
+            return f"Backdrop: floor texture “{name}” over {QColor(level.background).name()}."
+        return f"Backdrop: solid color {QColor(level.background).name()}."
+
     def _preset_changed(self, text):
         is_tts = text.startswith("Tabletop Sim")
         if is_tts and self.chk_trans.isChecked():
@@ -147,14 +167,12 @@ class ExportDialog(QDialog):
         if is_tts:
             self.chk_trans.setToolTip(
                 "Tabletop Simulator board export uses an opaque RGB PNG; "
-                "the map's level background is included.")
+                "the level's backdrop is included (its color when it is set to None).")
             self.chk_grid.setToolTip(
                 "Tabletop Simulator Custom Boards have an in-game grid. "
                 "Uncheck this to use that grid instead of baking grid lines into the PNG.")
         else:
-            self.chk_trans.setToolTip(
-                "Leave empty map areas transparent instead of using the level background. "
-                "For PDF, transparent areas may appear white in some viewers.")
+            self.chk_trans.setToolTip(self.TRANSPARENT_TIP)
             self.chk_grid.setToolTip("Show or hide the grid in the exported image.")
 
     def _grid_toggled(self, on):
@@ -251,6 +269,7 @@ class ExportDialog(QDialog):
 
         scale = exporter.preset_scale(self.project, self.cmb_preset.currentText())
         transparent = self.chk_trans.isChecked()
+        opaque = self.cmb_preset.currentText().startswith("Tabletop Sim")
         include_grid = self.chk_grid.isChecked()
         grid_opacity = self.sl_op.value() / 100.0
         grid_color = self.project.export_grid_color
@@ -281,13 +300,13 @@ class ExportDialog(QDialog):
                     transparent=transparent, grid_color=grid_color,
                     grid_opacity=grid_opacity,
                     include_node_borders=include_node_borders,
-                    include_zones=include_zones, **extras)
+                    include_zones=include_zones, opaque=opaque, **extras)
                 self.status.setText(f"Saved PDF:\n{path}")
             elif self.rb_all.isChecked():
                 files = exporter.export_all_levels(
                     self.project, path, include_grid, scale, self._defaults()[0], transparent,
                     grid_color, grid_opacity, include_node_borders,
-                    include_zones, **extras)
+                    include_zones, opaque=opaque, **extras)
                 self.status.setText(f"Exported {len(files)} PNG file(s) to:\n{path}")
             else:
                 level = self.canvas.level
@@ -297,7 +316,7 @@ class ExportDialog(QDialog):
                 exporter.export_level_to_file(
                     self.project, level, path, include_grid, scale, transparent,
                     grid_color, grid_opacity, include_node_borders,
-                    include_zones, **extras)
+                    include_zones, opaque=opaque, **extras)
                 self.status.setText(f"Saved PNG:\n{path}")
             main = self.parent()
             if main is not None and hasattr(main, "remember_export_dir"):

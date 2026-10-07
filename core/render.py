@@ -11,11 +11,86 @@ import math
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
-    QBitmap, QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen,
+    QBitmap, QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen,
     QPixmap, QPolygonF, QRegion,
 )
 
 _ALPHA_PATH_CACHE: dict[tuple[int, int, int], QPainterPath] = {}
+_MASK_CACHE: "OrderedDict[tuple, QPixmap]" = OrderedDict()
+_MASK_CACHE_MAX = 96
+_MASK_CACHE_BYTES = 384 * 1024 * 1024
+
+
+def has_cut_shapes(piece) -> bool:
+    return bool(getattr(piece, "cutouts", None) or getattr(piece, "clip_shapes", None))
+
+
+def _shapes_key(piece) -> int:
+    return hash((tuple(tuple(map(tuple, poly)) for poly in getattr(piece, "cutouts", []) or []),
+                 tuple(tuple(map(tuple, poly)) for poly in getattr(piece, "clip_shapes", []) or [])))
+
+
+def _remember_mask(key, pixmap: QPixmap):
+    _MASK_CACHE[key] = pixmap
+    _MASK_CACHE.move_to_end(key)
+    total = sum(item.width() * item.height() * 4 for item in _MASK_CACHE.values())
+    while _MASK_CACHE and (len(_MASK_CACHE) > _MASK_CACHE_MAX or total > _MASK_CACHE_BYTES):
+        _old_key, old = _MASK_CACHE.popitem(last=False)
+        total -= old.width() * old.height() * 4
+
+
+def masked_region(pm: QPixmap, piece) -> tuple[QPixmap, QRectF]:
+    """The node's cropped part of ``pm`` with its cut-out holes cleared and
+    everything outside its clip shapes cleared (anti-aliased edges), plus the
+    source rectangle to draw from the returned pixmap. Results are cached."""
+    width, height = pm.width(), pm.height()
+    crop = getattr(piece, "crop_rect", [0.0, 0.0, 1.0, 1.0])
+    src = QRectF(crop[0] * width, crop[1] * height,
+                 (crop[2] - crop[0]) * width, (crop[3] - crop[1]) * height)
+    x0 = max(0, int(math.floor(src.left())))
+    y0 = max(0, int(math.floor(src.top())))
+    x1 = min(width, max(x0 + 1, int(math.ceil(src.right()))))
+    y1 = min(height, max(y0 + 1, int(math.ceil(src.bottom()))))
+    region_w, region_h = max(1, x1 - x0), max(1, y1 - y0)
+    source = QRectF(src.left() - x0, src.top() - y0, src.width(), src.height())
+    key = (int(pm.cacheKey()), x0, y0, x1, y1, _shapes_key(piece))
+    cached = _MASK_CACHE.get(key)
+    if cached is not None:
+        _MASK_CACHE.move_to_end(key)
+        return cached, source
+
+    def polygon(poly) -> QPolygonF:
+        return QPolygonF([QPointF(u * width - x0, v * height - y0) for u, v in poly])
+
+    image = QImage(region_w, region_h, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.drawPixmap(0, 0, pm, x0, y0, region_w, region_h)
+    holes = getattr(piece, "cutouts", None) or []
+    if holes:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 255))
+        for poly in holes:
+            painter.drawPolygon(polygon(poly), Qt.FillRule.WindingFill)
+    painter.end()
+    for poly in getattr(piece, "clip_shapes", None) or []:
+        mask = QImage(region_w, region_h, QImage.Format.Format_ARGB32_Premultiplied)
+        mask.fill(Qt.GlobalColor.transparent)
+        mask_painter = QPainter(mask)
+        mask_painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        mask_painter.setPen(Qt.PenStyle.NoPen)
+        mask_painter.setBrush(QColor(0, 0, 0, 255))
+        mask_painter.drawPolygon(polygon(poly), Qt.FillRule.WindingFill)
+        mask_painter.end()
+        painter = QPainter(image)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+        painter.drawImage(0, 0, mask)
+        painter.end()
+    out = QPixmap.fromImage(image)
+    _remember_mask(key, out)
+    return out, source
 
 
 def draw_piece(painter: QPainter, piece, pm: QPixmap | None,
@@ -150,6 +225,10 @@ def draw_piece(painter: QPainter, piece, pm: QPixmap | None,
     if pm is not None and not pm.isNull():
         if tint_color and tint_strength > 0:
             pm = tinted_pixmap(pm, tint_color, tint_strength)
+        if has_cut_shapes(piece):
+            region, source = masked_region(pm, piece)
+            painter.drawPixmap(QRectF(-w / 2, -h / 2, w, h), region, source)
+            return
         crop = getattr(piece, "crop_rect", [0.0, 0.0, 1.0, 1.0])
         source = QRectF(crop[0] * pm.width(), crop[1] * pm.height(),
                         (crop[2] - crop[0]) * pm.width(),
@@ -224,12 +303,18 @@ def draw_node_border(painter: QPainter, piece, pm: QPixmap | None,
     painter.setBrush(Qt.BrushStyle.NoBrush)
 
     if shape == "alpha" and pm is not None and not pm.isNull():
+        if has_cut_shapes(piece):
+            # the silhouette follows the cut-out holes and clip shapes too
+            pm, source = masked_region(pm, piece)
+            src_x, src_y = source.x(), source.y()
+            src_w, src_h = max(1.0, source.width()), max(1.0, source.height())
+        else:
+            crop = getattr(piece, "crop_rect", [0.0, 0.0, 1.0, 1.0])
+            src_x = crop[0] * pm.width()
+            src_y = crop[1] * pm.height()
+            src_w = max(1.0, (crop[2] - crop[0]) * pm.width())
+            src_h = max(1.0, (crop[3] - crop[1]) * pm.height())
         path = _alpha_outline_path(pm)
-        crop = getattr(piece, "crop_rect", [0.0, 0.0, 1.0, 1.0])
-        src_x = crop[0] * pm.width()
-        src_y = crop[1] * pm.height()
-        src_w = max(1.0, (crop[2] - crop[0]) * pm.width())
-        src_h = max(1.0, (crop[3] - crop[1]) * pm.height())
         clip = QPainterPath()
         clip.addRect(QRectF(src_x, src_y, src_w, src_h))
         path = path.intersected(clip)

@@ -24,8 +24,9 @@ from core.history import History
 from core import exporter, bundle
 from core.backups import BACKUP_SLOTS, backup_folder, list_backups, rotate_backup
 from core.relink import relink_plan
-from core.stamps import (SLOT_COUNT, StampError, asset_slot, node_slot, slot_label,
-                         slots_from_json, slots_to_json)
+from core.stamps import (SLOT_COUNT, StampError, asset_slot, is_edge_slot,
+                         looks_like_door, node_slot, slot_label, slots_from_json,
+                         slots_to_json, with_edge)
 from core.userfiles import (load_path_list, map_base_name, recent_file_path,
                             save_path_list, thumbnail_path)
 from ui.canvas import CanvasView
@@ -44,6 +45,7 @@ from ui.custom_toolbar import CustomizableToolBar, CustomizeToolbarDialog
 from ui.color_picker import choose_color
 from ui.app_icon import app_icon
 from ui.stamp_bar import StampBar
+from ui.cutout_bar import CutoutBar
 from core import generator as gen
 
 # Older builds kept the recent-maps list beside this file. That works from a
@@ -53,6 +55,27 @@ from core import generator as gen
 LEGACY_RECENT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recent.json")
 RECENT_FILE = LEGACY_RECENT_FILE
 BMAP_EXT = ".bmap"
+
+
+def destroy_before_qt_exits(window) -> None:
+    """Delete ``window`` (and every widget in it) when Python exits, before
+    Qt's own objects go away. Otherwise the window can outlive QApplication
+    and crash on the way out (seen with styled floating bars on the canvas)."""
+    import atexit
+    import weakref
+    ref = weakref.ref(window)
+
+    def destroy():
+        alive = ref()
+        if alive is None:
+            return
+        try:
+            from PyQt6 import sip
+            if not sip.isdeleted(alive):
+                sip.delete(alive)
+        except (ImportError, RuntimeError, TypeError):
+            pass
+    atexit.register(destroy)
 
 
 def load_recent(path: Optional[str] = None) -> list:
@@ -431,6 +454,7 @@ class MainWindow(QMainWindow):
         self._gen_output = None    # tracks last Generate output for Regenerate
         self.setWindowIcon(app_icon())
         self._build_ui()
+        destroy_before_qt_exits(self)
         self._show_launch()
         QTimer.singleShot(0, self._install_bundled_asset_packs)
 
@@ -454,6 +478,10 @@ class MainWindow(QMainWindow):
         self.library.collectionsChanged.connect(self._mark_dirty)
         self.library.pinStampRequested.connect(self._pin_asset_stamp)
         self.library.stamp_labels = lambda: [slot_label(slot) for slot in self.stamp_slots]
+        self.library.swapRequested.connect(self._swap_selected_to)
+        self.library.swapAllRequested.connect(self._swap_every_copy_to)
+        self.library.backdropRequested.connect(self._use_backdrop_texture)
+        self.library.canvas_swap_info = self._canvas_swap_info
         self.splitter.addWidget(self.library)
 
         center_col = QVBoxLayout()
@@ -492,6 +520,17 @@ class MainWindow(QMainWindow):
         self.stamp_bar.assetDropped.connect(self._pin_asset_stamp)
         self.canvas.stampToolChanged.connect(self.stamp_bar.set_active)
         self._stamps_enabled = True
+        # cut-out tool options and actions float at the top of the canvas
+        self.cutout_bar = CutoutBar(self.canvas)
+        self.cutout_bar.shapeChosen.connect(self._set_cutout_shape)
+        self.cutout_bar.snapToggled.connect(self._set_cutout_snap)
+        self.cutout_bar.actionRequested.connect(self._cutout_action)
+        self.canvas.cutout_shape = str(self.settings.value("tools/cutout_shape", "rect"))
+        if self.canvas.cutout_shape not in ("rect", "ellipse", "lasso", "polygon"):
+            self.canvas.cutout_shape = "rect"
+        self.canvas.cutout_snap = self.settings.value("tools/cutout_snap", True, type=bool)
+        self.canvas.cutoutChanged.connect(self._refresh_cutout_bar)
+        self.canvas.cutoutMenuRequested.connect(self._show_cutout_menu)
         self.canvas.installEventFilter(self)
         center_widget = QWidget()
         cb = QVBoxLayout(center_widget)
@@ -672,7 +711,18 @@ class MainWindow(QMainWindow):
         self.minimap.raise_()
         self._place_stamp_bar()
 
+    def _place_cutout_bar(self):
+        if not hasattr(self, "cutout_bar") or not self.cutout_bar.isVisible():
+            return
+        bar = self.cutout_bar
+        margin = 8 + self.canvas.rail_thickness()
+        bar.fit_width(self.canvas.width() - 2 * margin)
+        left = max(margin, (self.canvas.width() - bar.width()) // 2)
+        bar.move(left, margin)
+        bar.raise_()
+
     def _place_stamp_bar(self):
+        self._place_cutout_bar()
         if not hasattr(self, "stamp_bar"):
             return
         bar = self.stamp_bar
@@ -707,8 +757,20 @@ class MainWindow(QMainWindow):
 
     def _show_canvas_menu(self, global_pos, hit_piece):
         from ui.context_menu import build_canvas_menu
-        menu = build_canvas_menu(self, hit_piece)
+        local = self.canvas.mapFromGlobal(global_pos)
+        world = self.canvas.screen_to_world(local.x(), local.y())
+        menu = build_canvas_menu(self, hit_piece, world)
         menu.exec(global_pos)
+        menu.deleteLater()      # menus are rebuilt each time; don't pile them up
+
+    def _show_backdrop_settings(self):
+        """Show the level's Backdrop settings (Node tab, nothing selected)."""
+        self.canvas.clear_selection()
+        if not self._view_get("inspector"):
+            self._view_set("inspector", True)
+        self.inspector.setCurrentWidget(self.props)
+        self.props.refresh_backdrop()
+        self.props.show_backdrop()
 
     # -- placed guides --------------------------------------------------------
     def _show_guide_menu(self, global_pos, target):
@@ -830,9 +892,12 @@ class MainWindow(QMainWindow):
         e.addAction(self._act("Undo", self.undo, "Ctrl+Z"))
         e.addAction(self._act("Redo", self.redo, "Ctrl+Y"))
         e.addSeparator()
-        e.addAction("Copy", self.canvas.copy)
-        e.addAction("Paste", self.canvas.paste)
-        e.addAction("Duplicate", self.canvas.duplicate)
+        # Ctrl+X/C/V/D/A are handled in keyPressEvent so text boxes and the
+        # library keep their own copy/paste/select-all; the menu shows them.
+        e.addAction("Cut\tCtrl+X", self._cut)
+        e.addAction("Copy\tCtrl+C", self._copy)
+        e.addAction("Paste\tCtrl+V", self.canvas.paste)
+        e.addAction("Duplicate\tCtrl+D", self.canvas.duplicate)
         e.addAction(self._act("Duplicate as grid…", self._duplicate_as_grid_dialog,
                               "Ctrl+Shift+D"))
         mirror_menu = e.addMenu("Mirror copy")
@@ -844,7 +909,25 @@ class MainWindow(QMainWindow):
                               lambda: self._mirror_selection_nearest("v"))
         mirror_menu.addAction("Across the nearest horizontal guide",
                               lambda: self._mirror_selection_nearest("h"))
-        e.addAction("Delete", self.canvas.delete_selected)
+        e.addAction("Delete\tDel", self.canvas.delete_selected)
+        e.addSeparator()
+        select_menu = e.addMenu("Select")
+        select_menu.addAction("Select all\tCtrl+A", self._select_all)
+        select_menu.addAction("Invert selection\tCtrl+Shift+I", self._invert_selection)
+        select_menu.addAction("Deselect\tCtrl+Shift+A", self.canvas.clear_selection)
+        select_menu.addAction("Everything on the active layer", self._select_active_layer)
+        select_menu.addAction("Similar nodes", self._select_similar)
+        arrange_menu = e.addMenu("Arrange")
+        arrange_menu.addAction("Bring to front", self.canvas.bring_to_front)
+        arrange_menu.addAction("Bring forward", lambda: self.canvas._quick("up"))
+        arrange_menu.addAction("Send backward", lambda: self.canvas._quick("down"))
+        arrange_menu.addAction("Send to back", self.canvas.send_to_back)
+        self.send_level_menu = e.addMenu("Send to level")
+        self.send_level_menu.aboutToShow.connect(
+            lambda: self._fill_send_level_menu(self.send_level_menu))
+        self.swap_menu = e.addMenu("Swap image")
+        self.swap_menu.aboutToShow.connect(lambda: self._fill_swap_menu(self.swap_menu))
+        e.addSeparator()
         e.addAction("Select similar", self._select_similar)
         e.addAction("Copy style…", self._start_copy_style)
         e.addAction("Replace selected image…", self._replace_selected_image)
@@ -873,6 +956,7 @@ class MainWindow(QMainWindow):
 
         v = mb.addMenu("&View")
         v.addAction("Canvas size…", self._edit_canvas_size)
+        v.addAction("Backdrop (color, floor texture or none)…", self._show_backdrop_settings)
         v.addSeparator()
         # Window-style toggles: everything on screen can be switched off.
         self.view_actions = {}
@@ -977,6 +1061,11 @@ class MainWindow(QMainWindow):
         t.addAction("Lasso select", self._start_lasso_tool)
         t.addAction("Stamp selected node", self._start_stamp_tool)
         t.addAction("Crop selected image…", self._start_crop_tool)
+        cut_menu = t.addMenu("Cut out part of an image")
+        for shape, label in (("rect", "Rectangle"), ("ellipse", "Ellipse / circle"),
+                             ("lasso", "Lasso (freehand)"), ("polygon", "Polygon")):
+            cut_menu.addAction(label, lambda s=shape: self._start_cutout_tool(s))
+        t.addAction("Clone patch over a label", self._start_clone_tool)
         t.addSeparator()
         t.addAction("Draw rectangle gameplay zone",
                     lambda: self.canvas.set_zone_tool("rectangle"))
@@ -1011,6 +1100,11 @@ class MainWindow(QMainWindow):
              "Repeat the selection in rows and columns."),
             ("crop", "Crop", self._start_crop_tool,
              "Crop the selected image non-destructively."),
+            ("cutout", "Cut Out", self._start_cutout_tool,
+             "Select part of an image (rectangle, ellipse, lasso or polygon), then "
+             "delete it, cut or copy it, or make it a new node."),
+            ("clone", "Clone", self._start_clone_tool,
+             "Cover a baked-in label with a clean piece of the same picture."),
             ("ruler", "Ruler", self._start_ruler_tool,
              "Measure map distance; hold Shift to snap endpoints to the grid."),
             ("scale", "Scale", self._start_scale_tool,
@@ -1231,6 +1325,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "stamp_bar"):
             self.stamp_bar.set_theme(self.theme_mode, self.theme_accent)
             self._refresh_stamp_bar()          # text/marker glyphs follow the theme
+        if hasattr(self, "cutout_bar"):
+            self.cutout_bar.set_theme(self.theme_mode, self.theme_accent)
         self.scanlines.set_accent(accent)
         self.scanlines.setVisible(
             self.theme_mode == "alien" and self.alien_scanlines)
@@ -2135,16 +2231,18 @@ class MainWindow(QMainWindow):
         if not slot:
             return (f"Stamp key {key} — empty.\nRight-click a library asset or a node "
                     "and choose “Pin to stamp key”, or drag an asset onto this slot.")
+        door = ("\nDoor mode: each copy sits on the nearest grid line and turns "
+                "to match it." if is_edge_slot(slot) else "")
         return (f"{key}: {slot_label(slot)}\nPress {key} (or click here), then click "
-                "the map to place copies. Esc or right-click stops.\n"
-                "Right-click this slot to change or clear it.")
+                "the map to place copies. Esc or right-click stops."
+                f"{door}\nRight-click this slot to change or clear it.")
 
     def _refresh_stamp_bar(self):
         if not hasattr(self, "stamp_bar"):
             return
         icons = [self._stamp_icon(slot) for slot in self.stamp_slots]
         tips = [self._stamp_tip(index, slot) for index, slot in enumerate(self.stamp_slots)]
-        self.stamp_bar.set_slots(icons, tips)
+        self.stamp_bar.set_slots(icons, tips, [is_edge_slot(slot) for slot in self.stamp_slots])
         self.stamp_bar.setVisible(self._stamps_enabled and any(self.stamp_slots))
         self._place_stamp_bar()
 
@@ -2159,10 +2257,14 @@ class MainWindow(QMainWindow):
                 f"Pinned “{slot_label(slot)}” to stamp key {index + 1}. Press "
                 f"{index + 1}, then click the map to place it.", 7000)
 
+    def _is_door_asset(self, path: str) -> bool:
+        info = getattr(self.library, "_roles", {}).get(path) if path else None
+        return bool(info and info.role == "door") or looks_like_door(path)
+
     def _pin_asset_stamp(self, index: int, path: str):
         asset = self.library.library.get(path) if path else None
         try:
-            slot = asset_slot(path, asset.name if asset else "")
+            slot = asset_slot(path, asset.name if asset else "", self._is_door_asset(path))
         except StampError as exc:
             QMessageBox.information(self, "Stamp keys", str(exc))
             return
@@ -2174,12 +2276,27 @@ class MainWindow(QMainWindow):
             self.status.showMessage(
                 "Select exactly one node to pin it to a stamp key.", 5000)
             return
+        piece = selected[0]
+        door = bool(piece.asset_path) and self._is_door_asset(piece.asset_path)
         try:
-            slot = node_slot(selected[0].to_dict())
+            slot = node_slot(piece.to_dict(), door)
         except StampError as exc:
             QMessageBox.information(self, "Stamp keys", str(exc))
             return
         self._pin_stamp(index, slot)
+
+    def _set_stamp_door_mode(self, index: int, on: bool):
+        slot = self.stamp_slots[index] if 0 <= index < SLOT_COUNT else None
+        if not slot:
+            return
+        self.stamp_slots[index] = with_edge(slot, on)
+        self._save_stamp_slots()
+        self._refresh_stamp_bar()
+        if self.canvas.stamp_tool and self.canvas.stamp_slot == index:
+            self.canvas._stamp_edge = bool(on)
+            self.canvas.update()
+        self.status.showMessage(
+            f"Stamp key {index + 1}: door mode {'on' if on else 'off'}.", 4000)
 
     def _clear_stamp(self, index: int):
         if self.canvas.stamp_tool and self.canvas.stamp_slot == index:
@@ -2223,10 +2340,12 @@ class MainWindow(QMainWindow):
                 f"Stamp {key}: “{slot_label(slot)}” isn't in this map's asset library.",
                 7000)
             return
-        if canvas.set_stamp_template(template, slot=index, tighten=tighten):
+        door = is_edge_slot(slot)
+        if canvas.set_stamp_template(template, slot=index, tighten=tighten, edge=door):
+            where = " on grid lines (door mode)" if door else ""
             self.status.showMessage(
-                f"Stamp {key}: {slot_label(slot)} — click the map to place copies; "
-                "Esc or right-click to stop.", 8000)
+                f"Stamp {key}: {slot_label(slot)} — click the map to place copies"
+                f"{where}; Esc or right-click to stop.", 8000)
 
     def _stamp_slot_menu(self, index: int, global_pos):
         key = index + 1
@@ -2243,6 +2362,13 @@ class MainWindow(QMainWindow):
         asset = menu.addAction(f"Pin the highlighted library asset to key {key}")
         asset.setEnabled(bool(current))
         asset.triggered.connect(lambda: self._pin_asset_stamp(index, current))
+        door = menu.addAction("Door mode — sit on grid lines and turn to match")
+        door.setCheckable(True)
+        door.setChecked(is_edge_slot(slot))
+        door.setEnabled(bool(slot))
+        door.setToolTip("For doors, hatches, airlocks and vents: each copy is centered "
+                        "on the nearest grid line and runs along it.")
+        door.triggered.connect(lambda checked=False: self._set_stamp_door_mode(index, checked))
         clear = menu.addAction(f"Clear key {key}")
         clear.setEnabled(bool(slot))
         clear.triggered.connect(lambda: self._clear_stamp(index))
@@ -2265,6 +2391,272 @@ class MainWindow(QMainWindow):
             self._arm_stamp(key - first)
             return True
         return False
+
+    # -- clipboard & selection basics ----------------------------------------
+    def _cut(self):
+        if self.canvas.cutout_tool:
+            self.canvas.cutout_cut()
+            return
+        count = self.canvas.cut()
+        if count:
+            self.status.showMessage(f"Cut {count} node(s). Ctrl+V pastes them.", 4000)
+
+    def _copy(self):
+        if self.canvas.cutout_tool:
+            self.canvas.cutout_copy()
+            return
+        if self.canvas.selected_pieces():
+            self.canvas.copy()
+            self.status.showMessage(
+                f"Copied {len(self.canvas.selected_pieces())} node(s).", 3000)
+
+    def _select_all(self):
+        pieces = self.canvas.select_all()
+        self.status.showMessage(f"Selected {len(pieces)} node(s).", 3000)
+
+    def _invert_selection(self):
+        pieces = self.canvas.invert_selection()
+        self.status.showMessage(f"Selected {len(pieces)} node(s).", 3000)
+
+    def _select_active_layer(self):
+        level = self.canvas.level
+        if level is None:
+            return
+        pieces = self.canvas.select_layer(level.current_layer)
+        layer = level.layer_by_id(level.current_layer)
+        if pieces and layer is not None:
+            self.status.showMessage(
+                f"Selected {len(pieces)} node(s) on “{layer.name}”.", 3000)
+
+    def _edit_key(self, event) -> bool:
+        """Ctrl+A/C/X/V/D and [ ] (outside text boxes)."""
+        mods = event.modifiers()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+        key = event.key()
+        if alt:
+            return False
+        if ctrl and not shift:
+            actions = {Qt.Key.Key_A: self._select_all, Qt.Key.Key_C: self._copy,
+                       Qt.Key.Key_X: self._cut, Qt.Key.Key_V: self.canvas.paste,
+                       Qt.Key.Key_D: self.canvas.duplicate}
+            if key in actions:
+                actions[key]()
+                return True
+        if ctrl and shift:
+            if key == Qt.Key.Key_A:
+                self.canvas.clear_selection()
+                return True
+            if key == Qt.Key.Key_I:
+                self._invert_selection()
+                return True
+        if not ctrl and key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
+            self._cycle_variant(1 if key == Qt.Key.Key_BracketRight else -1)
+            return True
+        return False
+
+    # -- send to another level --------------------------------------------------
+    def _fill_send_level_menu(self, menu: QMenu):
+        menu.clear()
+        level_index = self.canvas.level_index
+        others = [(i, level) for i, level in enumerate(self.project.levels)
+                  if i != level_index]
+        has_selection = bool(self.canvas.selected_pieces())
+        add = self._menu_action
+        if not others:
+            add(menu, "This map has only one level", lambda: None, False)
+            return
+        if not has_selection:
+            add(menu, "Select the nodes to send first", lambda: None, False)
+        move = menu.addMenu("Move to")
+        copy_menu = menu.addMenu("Copy to")
+        for index, level in others:
+            add(move, level.name, lambda i=index: self._send_to_levels([i], False),
+                has_selection)
+            add(copy_menu, level.name, lambda i=index: self._send_to_levels([i], True),
+                has_selection)
+        if len(others) > 1:
+            copy_menu.addSeparator()
+            add(copy_menu, "Every other level",
+                lambda ids=[i for i, _lv in others]: self._send_to_levels(ids, True),
+                has_selection)
+
+    def _send_to_levels(self, indexes, copy_nodes: bool):
+        if not self.canvas.selected_pieces():
+            self.status.showMessage("Select the nodes to send first.", 4000)
+            return 0
+        return self.canvas.send_to_levels(indexes, copy_nodes)
+
+    # -- swapping pictures --------------------------------------------------
+    def _canvas_swap_info(self) -> tuple[int, str]:
+        """(selected image nodes, file name of the first one's picture)."""
+        images = [piece for piece in self.canvas.selected_pieces()
+                  if not (piece.is_text or piece.is_patch or piece.is_scale_bar
+                          or piece.is_connector) and (piece.asset_path or piece.embedded)]
+        first = images[0].asset_path if images and not images[0].embedded else ""
+        return len(images), first
+
+    def _swap_selected_to(self, path: str):
+        count, _first = self._canvas_swap_info()
+        if not count:
+            self.status.showMessage("Select the node(s) on the map to swap first.", 5000)
+            return 0
+        changed = self.canvas.swap_image(self.canvas.selected_pieces(), path)
+        asset = self.library.library.get(path)
+        name = asset.name if asset else os.path.basename(path)
+        self.status.showMessage(f"Swapped {changed} node(s) to “{name}”.", 5000)
+        return changed
+
+    def _swap_every_copy_to(self, path: str):
+        _count, old = self._canvas_swap_info()
+        if not old:
+            self.status.showMessage(
+                "Select a node on the map whose picture should be swapped everywhere.", 5000)
+            return 0
+        changed = self.canvas.swap_every_copy(old, path)
+        asset = self.library.library.get(path)
+        name = asset.name if asset else os.path.basename(path)
+        self.status.showMessage(
+            f"Swapped {changed} node(s) on every level to “{name}”.", 6000)
+        return changed
+
+    def _cycle_variant(self, step: int):
+        changed, label = self.canvas.cycle_variant(step)
+        if changed:
+            self.status.showMessage(f"Swapped to {label}.  [ and ] step through the "
+                                    "images in its library folder.", 5000)
+        elif self.canvas.selected_pieces():
+            self.status.showMessage("No other images in that library folder.", 4000)
+        return changed
+
+    @staticmethod
+    def _menu_action(menu: QMenu, label: str, slot, enabled: bool = True) -> QAction:
+        """A menu entry owned by ``menu`` (slot called without arguments)."""
+        action = QAction(label, menu)
+        action.setEnabled(bool(enabled))
+        action.triggered.connect(lambda _=False: slot())
+        menu.addAction(action)
+        return action
+
+    def _fill_swap_menu(self, menu: QMenu):
+        menu.clear()
+        count, first = self._canvas_swap_info()
+        current = self.library.list.current_path()
+        asset = self.library.library.get(current) if current else None
+        add = self._menu_action
+        add(menu, "Next image in its folder\t]", lambda: self._cycle_variant(1), count)
+        add(menu, "Previous image in its folder\t[", lambda: self._cycle_variant(-1), count)
+        menu.addSeparator()
+        label = f"“{asset.name}”" if asset else "the highlighted library image"
+        add(menu, f"Swap to {label}", lambda: self._swap_selected_to(current),
+            count and asset)
+        add(menu, f"Swap every copy on the map to {label}",
+            lambda: self._swap_every_copy_to(current),
+            first and asset and first != current)
+        menu.addSeparator()
+        add(menu, "Replace with a file from disk (embedded)…",
+            self._replace_selected_image, count == 1)
+
+    # -- cut-out tool ---------------------------------------------------------
+    def _start_cutout_tool(self, shape=None):
+        shape = shape if shape in ("rect", "ellipse", "lasso", "polygon") else None
+        self.canvas.set_cutout_tool(True, shape)
+        if shape:
+            self.settings.setValue("tools/cutout_shape", shape)
+        targets = len(self.canvas.cutout_target_pieces())
+        what = (f"{targets} selected image(s)" if targets
+                else "the image under the area you draw")
+        self.status.showMessage(
+            f"Cut out: draw an area over {what}. Ctrl+click adds or removes an image; "
+            "Esc puts the tool away.", 9000)
+
+    def _set_cutout_shape(self, shape: str):
+        self.canvas.set_cutout_shape(shape)
+        self.settings.setValue("tools/cutout_shape", shape)
+
+    def _set_cutout_snap(self, on: bool):
+        self.canvas.set_cutout_snap(on)
+        self.settings.setValue("tools/cutout_snap", bool(on))
+
+    def _refresh_cutout_bar(self):
+        if not hasattr(self, "cutout_bar"):
+            return
+        canvas = self.canvas
+        bar = self.cutout_bar
+        bar.set_state(canvas.cutout_shape, canvas.cutout_snap,
+                      canvas.has_cutout_area(), len(canvas.cutout_target_pieces()))
+        bar.setVisible(canvas.cutout_tool)
+        self._place_cutout_bar()
+
+    def _cutout_action(self, name: str):
+        canvas = self.canvas
+        if name == "delete":
+            canvas.cutout_delete()
+        elif name == "cut":
+            canvas.cutout_cut()
+        elif name == "copy":
+            canvas.cutout_copy()
+        elif name == "new_node":
+            canvas.cutout_to_new_node(cut=True)
+        elif name == "copy_new_node":
+            canvas.cutout_to_new_node(cut=False)
+        elif name == "keep":
+            canvas.cutout_keep_only()
+        elif name == "clear":
+            canvas.clear_cutout_area()
+        elif name == "done":
+            canvas.set_cutout_tool(False)
+        canvas.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _show_cutout_menu(self, global_pos):
+        menu = QMenu(self)
+        for name, label in (("delete", "Delete the area\tDel"),
+                            ("cut", "Cut\tCtrl+X"),
+                            ("copy", "Copy\tCtrl+C"),
+                            (None, None),
+                            ("new_node", "Cut out to a new node"),
+                            ("copy_new_node", "Copy to a new node"),
+                            ("keep", "Keep only the area"),
+                            (None, None),
+                            ("clear", "Clear the outline\tEsc"),
+                            ("done", "Done")):
+            if name is None:
+                menu.addSeparator()
+                continue
+            self._menu_action(menu, label, lambda n=name: self._cutout_action(n))
+        menu.exec(global_pos)
+        menu.deleteLater()
+
+    def _start_clone_tool(self):
+        self.canvas.set_clone_tool(True)
+
+    def _repick_clone_source(self):
+        selected = self.canvas.selected_pieces()
+        if len(selected) == 1 and selected[0].clone_home:
+            self.canvas.begin_clone_repick(selected[0])
+
+    # -- level backdrop ---------------------------------------------------------
+    def _use_backdrop_texture(self, path: str, all_levels: bool = False):
+        levels = list(self.project.levels) if all_levels else [self.canvas.level]
+        levels = [level for level in levels if level is not None]
+        if not levels or not path:
+            return 0
+        self._push_history("Backdrop texture")
+        for level in levels:
+            level.backdrop = "texture"
+            level.backdrop_texture = path
+        self.canvas.update()
+        self._mark_dirty()
+        if hasattr(self.props, "refresh_backdrop"):
+            self.props.refresh_backdrop()
+        asset = self.library.library.get(path)
+        name = asset.name if asset else os.path.basename(path)
+        where = "every level" if all_levels else f"“{levels[0].name}”"
+        self.status.showMessage(
+            f"Backdrop of {where} is now the floor texture “{name}”. Change its tile "
+            "size in the Node tab → Backdrop (with nothing selected).", 7000)
+        return len(levels)
 
     # -- mirror copies and grid copies -----------------------------------------
     def _mirror_selection(self, axis: str, pos: float):
@@ -2400,6 +2792,7 @@ class MainWindow(QMainWindow):
         self.canvas.set_level(idx)
         self.layers.set_project(self.project, self.project.levels[idx])
         self.zones.refresh_level()
+        self.props.refresh_backdrop()
 
     def _rotate_sel(self, d):
         if self.canvas.selected_pieces():
@@ -2579,6 +2972,8 @@ class MainWindow(QMainWindow):
             self.overlay.setGeometry(self.rect())
 
     def keyPressEvent(self, e):
+        if self.canvas.handle_cutout_key(e) or self.canvas.handle_clone_key(e):
+            return
         if e.key() == Qt.Key.Key_Escape:
             if self.canvas.end_free_transform(False):
                 return
@@ -2596,6 +2991,8 @@ class MainWindow(QMainWindow):
             self.canvas.delete_selected_zone()
             return
         if not typing and self._stamp_key(e):
+            return
+        if not typing and self._edit_key(e):
             return
         if (not typing and self.canvas.selected_pieces()
                 and not isinstance(fw, QDoubleSpinBox)):

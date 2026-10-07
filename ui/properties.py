@@ -2,6 +2,7 @@
 layers, grid settings, and reference-floor overlay."""
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from PyQt6.QtCore import QEvent, Qt
@@ -141,6 +142,21 @@ class PropertiesPanel(QWidget):
         self.btn_tighten.clicked.connect(self._open_tighten)
         image_tools.addWidget(self.btn_tighten, 1, 0)
         image_tools.addWidget(self.btn_reset_crop, 1, 1)
+        self.btn_cutout = QPushButton("Cut out part…")
+        self.btn_cutout.setToolTip(
+            "Select part of this image (rectangle, ellipse, lasso or polygon), then "
+            "delete it, cut or copy it, or make it a new node.")
+        self.btn_cutout.clicked.connect(self._start_cutout)
+        self.btn_restore_cutouts = QPushButton("Restore cut-outs")
+        self.btn_restore_cutouts.setToolTip("Bring back every area cut out of this image.")
+        self.btn_restore_cutouts.clicked.connect(self._restore_cutouts)
+        image_tools.addWidget(self.btn_cutout, 2, 0)
+        image_tools.addWidget(self.btn_restore_cutouts, 2, 1)
+        self.btn_clone_source = QPushButton("Pick a new clone source…")
+        self.btn_clone_source.setToolTip(
+            "Choose another spot of the picture for this clone patch to copy.")
+        self.btn_clone_source.clicked.connect(self._repick_clone)
+        image_tools.addWidget(self.btn_clone_source, 3, 0, 1, 2)
         root.addWidget(self.image_tools_box)
 
         # ---- editable text node controls ----
@@ -452,6 +468,56 @@ class PropertiesPanel(QWidget):
         gf.addRow("Canvas pixels", self.lbl_canvas_dimensions)
         root.addWidget(g)
 
+        # ---- backdrop (per level) ----
+        self.backdrop_box = QGroupBox("Backdrop (this level)")
+        bdf = QFormLayout(self.backdrop_box)
+        self.cmb_backdrop = QComboBox()
+        for label, mode in (("Solid color", "color"), ("Floor texture", "texture"),
+                            ("None (transparent)", "none")):
+            self.cmb_backdrop.addItem(label, mode)
+        self.cmb_backdrop.setToolTip(
+            "What shows under the artwork on this level — on the canvas and in "
+            "PNG/PDF exports. None leaves it transparent (the canvas shows a "
+            "checkerboard; PNG exports keep the transparency).")
+        self.cmb_backdrop.currentIndexChanged.connect(self._backdrop_mode_changed)
+        bdf.addRow("Backdrop", self.cmb_backdrop)
+        self.btn_backdrop_color = QPushButton("Color…")
+        self.btn_backdrop_color.setToolTip(
+            "The solid color, and the color under a floor texture.")
+        self.btn_backdrop_color.clicked.connect(self._pick_backdrop_color)
+        bdf.addRow("Color", self.btn_backdrop_color)
+        self.lbl_backdrop_texture = QLabel("No texture chosen")
+        self.lbl_backdrop_texture.setWordWrap(True)
+        bdf.addRow("Texture", self.lbl_backdrop_texture)
+        self.btn_backdrop_texture = QPushButton("Use the highlighted library image")
+        self.btn_backdrop_texture.setToolTip(
+            "Click a floor texture in the library, then this button. (Or right-click "
+            "an image in the library → Use as backdrop.)")
+        self.btn_backdrop_texture.clicked.connect(self._use_library_texture)
+        bdf.addRow(self.btn_backdrop_texture)
+        self.spin_backdrop_tile = QDoubleSpinBox()
+        self.spin_backdrop_tile.setRange(0.0, 200.0)
+        self.spin_backdrop_tile.setDecimals(2)
+        self.spin_backdrop_tile.setSingleStep(0.5)
+        self.spin_backdrop_tile.setSuffix(" squares")
+        self.spin_backdrop_tile.setSpecialValueText("Natural size")
+        self.spin_backdrop_tile.setToolTip(
+            "How many grid squares one copy of the texture covers (Natural size = "
+            "one image pixel per map pixel).")
+        self.spin_backdrop_tile.valueChanged.connect(self._backdrop_value_changed)
+        bdf.addRow("Tile size", self.spin_backdrop_tile)
+        self.sl_backdrop_opacity = QSlider(Qt.Orientation.Horizontal)
+        self.sl_backdrop_opacity.setRange(0, 100)
+        self.sl_backdrop_opacity.setToolTip(
+            "Lower it to fade the texture into the backdrop color (darker or "
+            "lighter floors).")
+        self.sl_backdrop_opacity.valueChanged.connect(self._backdrop_value_changed)
+        bdf.addRow("Texture strength", self.sl_backdrop_opacity)
+        self.btn_backdrop_all = QPushButton("Use this backdrop on every level")
+        self.btn_backdrop_all.clicked.connect(self._backdrop_to_all_levels)
+        bdf.addRow(self.btn_backdrop_all)
+        root.addWidget(self.backdrop_box)
+
         # ---- reference overlay ----
         r = QGroupBox("Reference floor overlay")
         rf = QFormLayout(r)
@@ -507,6 +573,7 @@ class PropertiesPanel(QWidget):
         for control in controls:
             control.blockSignals(False)
         self._update_canvas_dimensions()
+        self.refresh_backdrop()
 
     def _update_canvas_dimensions(self):
         if not self.project:
@@ -552,7 +619,14 @@ class PropertiesPanel(QWidget):
         self.single.setVisible(n == 1)
         self.image_tools_box.setVisible(raster_image)
         self.btn_reset_crop.setEnabled(bool(
-            raster_image and single_piece.crop_rect != [0.0, 0.0, 1.0, 1.0]))
+            raster_image and (single_piece.crop_rect != [0.0, 0.0, 1.0, 1.0]
+                              or single_piece.clip_shapes)))
+        holes = len(single_piece.cutouts) if raster_image else 0
+        self.btn_restore_cutouts.setEnabled(bool(holes))
+        self.btn_restore_cutouts.setToolTip(
+            f"Bring back the {holes} area(s) cut out of this image." if holes
+            else "Nothing has been cut out of this image.")
+        self.btn_clone_source.setVisible(bool(raster_image and single_piece.clone_home))
         self.text_box.setVisible(n == 1 and self.pieces[0].is_text)
         self.patch_box.setVisible(n == 1 and self.pieces[0].is_patch)
         self.scale_box.setVisible(n == 1 and self.pieces[0].is_scale_bar)
@@ -1207,6 +1281,143 @@ class PropertiesPanel(QWidget):
             window.status.showMessage(
                 "Crop tool active — drag the area to keep; the source image remains unchanged.",
                 8000)
+
+    # ---- cut-outs & clone patches ----
+    def _start_cutout(self):
+        window = self.window()
+        if hasattr(window, "_start_cutout_tool"):
+            window._start_cutout_tool()
+        else:
+            self.canvas.set_cutout_tool(True)
+
+    def _restore_cutouts(self):
+        self.canvas.restore_cutouts(self.pieces, last_only=False)
+
+    def _repick_clone(self):
+        if len(self.pieces) == 1 and self.pieces[0].clone_home:
+            self.canvas.begin_clone_repick(self.pieces[0])
+
+    # ---- level backdrop ----
+    def show_backdrop(self):
+        """Scroll the Backdrop section into view and give it a short flash."""
+        scroll = self.findChild(QScrollArea)
+        if scroll is not None:
+            scroll.ensureWidgetVisible(self.backdrop_box, 0, 40)
+        self.cmb_backdrop.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def refresh_backdrop(self):
+        level = self.canvas.level
+        self.backdrop_box.setEnabled(level is not None)
+        if level is None:
+            return
+        controls = (self.cmb_backdrop, self.spin_backdrop_tile, self.sl_backdrop_opacity)
+        for control in controls:
+            control.blockSignals(True)
+        index = self.cmb_backdrop.findData(getattr(level, "backdrop", "color"))
+        self.cmb_backdrop.setCurrentIndex(max(0, index))
+        self.spin_backdrop_tile.setValue(float(getattr(level, "backdrop_tile", 0.0)))
+        self.sl_backdrop_opacity.setValue(int(round(
+            float(getattr(level, "backdrop_opacity", 1.0)) * 100)))
+        for control in controls:
+            control.blockSignals(False)
+        color = QColor(level.background)
+        if color.isValid():
+            text_color = "#000000" if color.lightness() > 128 else "#ffffff"
+            self.btn_backdrop_color.setText(f"{color.name().upper()} — Change…")
+            self.btn_backdrop_color.setStyleSheet(
+                f"background:{color.name()}; color:{text_color};")
+        texture = getattr(level, "backdrop_texture", "")
+        name = texture.replace("\\", "/").split("/")[-1] if texture else ""
+        missing = bool(texture and self.project and not os.path.isfile(
+            self.project.resolve_asset(texture)))
+        self.lbl_backdrop_texture.setText(
+            (f"{name} (missing)" if missing else name) if name else "No texture chosen")
+        self.lbl_backdrop_texture.setToolTip(texture)
+        mode = level.backdrop
+        self.btn_backdrop_color.setEnabled(mode != "none")
+        # the library button always works: it switches the backdrop to that texture
+        for control in (self.lbl_backdrop_texture, self.spin_backdrop_tile,
+                        self.sl_backdrop_opacity):
+            control.setEnabled(mode == "texture")
+
+    def _backdrop_changed(self):
+        self.canvas.update()
+        self.canvas.dirty.emit()
+        self.refresh_backdrop()
+
+    def _backdrop_mode_changed(self, _index=None):
+        level = self.canvas.level
+        mode = self.cmb_backdrop.currentData()
+        if level is None or mode == level.backdrop:
+            return
+        if mode == "texture" and not level.backdrop_texture:
+            if not self._use_library_texture(quiet=True):
+                self.refresh_backdrop()
+                window = self.window()
+                if hasattr(window, "status"):
+                    window.status.showMessage(
+                        "Pick a floor texture: click one in the library, then “Use the "
+                        "highlighted library image” (or right-click it → Use as backdrop).",
+                        8000)
+            return
+        self.canvas.push_history("Backdrop")
+        level.backdrop = mode
+        self._backdrop_changed()
+
+    def _pick_backdrop_color(self):
+        level = self.canvas.level
+        if level is None:
+            return
+        color = choose_color(QColor(level.background), self, self.canvas,
+                             "Choose the backdrop color")
+        if not color.isValid():
+            return
+        self.canvas.push_history("Backdrop color")
+        level.background = color.name()
+        if level.backdrop == "none":
+            level.backdrop = "color"
+        self._backdrop_changed()
+
+    def _use_library_texture(self, _checked=False, quiet: bool = False) -> bool:
+        window = self.window()
+        library = getattr(window, "library", None)
+        path = library.list.current_path() if library is not None else ""
+        if not path:
+            if not quiet and hasattr(window, "status"):
+                window.status.showMessage(
+                    "Click a floor texture in the library first.", 6000)
+            return False
+        if hasattr(window, "_use_backdrop_texture"):
+            window._use_backdrop_texture(path, False)
+        return True
+
+    def _backdrop_value_changed(self, _value=None):
+        level = self.canvas.level
+        if level is None:
+            return
+        self.canvas.push_history("Backdrop texture", coalesce=True)
+        level.backdrop_tile = float(self.spin_backdrop_tile.value())
+        level.backdrop_opacity = self.sl_backdrop_opacity.value() / 100.0
+        self.canvas.update()
+        self.canvas.dirty.emit()
+
+    def _backdrop_to_all_levels(self):
+        level = self.canvas.level
+        if level is None or not self.project or len(self.project.levels) < 2:
+            return
+        self.canvas.push_history("Backdrop on every level")
+        for other in self.project.levels:
+            other.backdrop = level.backdrop
+            other.background = level.background
+            other.backdrop_texture = level.backdrop_texture
+            other.backdrop_tile = level.backdrop_tile
+            other.backdrop_opacity = level.backdrop_opacity
+        self._backdrop_changed()
+        window = self.window()
+        if hasattr(window, "status"):
+            window.status.showMessage(
+                f"Every level now uses this backdrop ({len(self.project.levels)} levels).",
+                5000)
 
     def _replace_image(self):
         window = self.window()

@@ -8,8 +8,9 @@ from collections import OrderedDict
 
 from PyQt6.QtCore import (QByteArray, QBuffer, QIODevice, QPointF, Qt, QRectF,
                           QSize, QSizeF)
-from PyQt6.QtGui import (QImage, QImageReader, QPainter, QPainterPath, QPixmap,
-                         QColor, QPen, QPdfWriter, QPageSize, QFont, QFontMetricsF)
+from PyQt6.QtGui import (QBrush, QImage, QImageReader, QPainter, QPainterPath,
+                         QPixmap, QColor, QPen, QPdfWriter, QPageSize, QFont,
+                         QFontMetricsF, QTransform)
 from PyQt6.QtWidgets import QApplication
 
 from core.imaging import decode_guard
@@ -146,6 +147,115 @@ def piece_pixmap(piece: Piece, project: Project, cache: dict,
     return pm
 
 
+MAX_DECODE_PIXELS = 36_000_000     # cap for one decoded source image
+
+
+def source_target_size(piece, factor: float) -> tuple[int, int]:
+    """How large to decode a node's whole source image so that the part it
+    shows (its crop) appears at ``factor`` (zoom or export scale) without
+    being blurry. A node cropped to a fifth of its picture needs the picture
+    decoded five times larger than the node itself."""
+    crop = getattr(piece, "crop_rect", None) or [0.0, 0.0, 1.0, 1.0]
+    crop_w = max(0.01, float(crop[2]) - float(crop[0]))
+    crop_h = max(0.01, float(crop[3]) - float(crop[1]))
+    width = max(1.0, float(piece.w) * float(piece.scale) * factor / crop_w)
+    height = max(1.0, float(piece.h) * float(piece.scale) * factor / crop_h)
+    if width * height > MAX_DECODE_PIXELS:
+        shrink = math.sqrt(MAX_DECODE_PIXELS / (width * height))
+        width, height = width * shrink, height * shrink
+    return max(1, round(width)), max(1, round(height))
+
+
+# ---- level backdrops (solid color, tiled floor texture, or transparent) ----
+def backdrop_is_transparent(level) -> bool:
+    return getattr(level, "backdrop", "color") == "none"
+
+
+_IMAGE_SIZES: "OrderedDict[tuple, tuple[int, int] | None]" = OrderedDict()
+
+
+def _image_size(path: str) -> tuple[int, int] | None:
+    """Pixel size of an image file (header only), cached per file version so the
+    canvas doesn't reread it on every repaint."""
+    try:
+        stamp = os.path.getmtime(path)
+    except OSError:
+        return None
+    key = (path, stamp)
+    if key in _IMAGE_SIZES:
+        return _IMAGE_SIZES[key]
+    size = QImageReader(path).size()
+    found = ((size.width(), size.height())
+             if size.isValid() and size.width() > 0 and size.height() > 0 else None)
+    _IMAGE_SIZES[key] = found
+    while len(_IMAGE_SIZES) > 64:
+        _IMAGE_SIZES.popitem(last=False)
+    return found
+
+
+def _bucket(n: float) -> int:
+    """Round a pixel size up to a sqrt(2) step so zooming reuses decodes."""
+    n = max(8.0, float(n))
+    steps = math.ceil(math.log(n / 8.0, math.sqrt(2.0)) - 1e-9)
+    return int(round(8 * math.sqrt(2.0) ** steps))
+
+
+def texture_world_size(project, level) -> tuple[float, float] | None:
+    """World size of one backdrop texture tile, or None without a texture."""
+    path = level.backdrop_texture_in_use() if hasattr(level, "backdrop_texture_in_use") else ""
+    if not path:
+        return None
+    size = _image_size(project.resolve_asset(path))
+    if size is None:
+        return None
+    squares = float(getattr(level, "backdrop_tile", 0.0) or 0.0)
+    width = squares * max(1, project.cell_size) if squares > 0 else float(size[0])
+    return width, width * size[1] / float(size[0])
+
+
+def backdrop_texture_brush(project, level, factor: float, cache,
+                           origin=(0.0, 0.0)) -> QBrush | None:
+    """A brush that tiles the level's backdrop texture at ``factor`` device px
+    per world px, anchored so tiles start at the map's top-left (``origin``,
+    in device px)."""
+    tile = texture_world_size(project, level)
+    if tile is None:
+        return None
+    tile_w, tile_h = max(1.0, tile[0] * factor), max(1.0, tile[1] * factor)
+    probe = Piece(asset_path=level.backdrop_texture, w=tile[0], h=tile[1])
+    pm = piece_pixmap(probe, project, cache, (_bucket(tile_w), _bucket(tile_h)))
+    if pm.isNull():
+        return None
+    brush = QBrush(pm)
+    transform = QTransform()
+    transform.translate(origin[0], origin[1])
+    transform.scale(tile_w / pm.width(), tile_h / pm.height())
+    brush.setTransform(transform)
+    return brush
+
+
+def draw_backdrop(painter, project, level, rect: QRectF, factor: float, cache,
+                  origin=(0.0, 0.0)) -> None:
+    """Fill ``rect`` (device px) with the level's backdrop: its color, plus
+    the tiled texture in texture mode. Transparent backdrops draw nothing."""
+    mode = getattr(level, "backdrop", "color")
+    if mode == "none":
+        return
+    color = QColor(level.background)
+    painter.fillRect(rect, color if color.isValid() else QColor("#10141c"))
+    if mode != "texture":
+        return
+    brush = backdrop_texture_brush(project, level, factor, cache, origin)
+    if brush is None:
+        return
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    painter.setOpacity(painter.opacity() * max(0.0, min(1.0, float(
+        getattr(level, "backdrop_opacity", 1.0)))))
+    painter.fillRect(rect, brush)
+    painter.restore()
+
+
 def _draw_grid(painter, project, scale, color, opacity):
     if not project.grid_major:
         project.grid_major = 5
@@ -183,29 +293,37 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
                  include_zones: bool | None = None,
                  include_centerlines: bool = False,
                  include_guides: bool = False,
-                 include_coordinates: bool = False) -> QImage:
+                 include_coordinates: bool = False,
+                 opaque: bool = False) -> QImage:
     """Render one level. Editor aids (canvas centerlines, placed guides and a
-    grid-coordinate border) are only drawn when explicitly requested."""
+    grid-coordinate border) are only drawn when explicitly requested.
+
+    ``transparent`` leaves the level's backdrop out. A level whose backdrop is
+    "none" renders transparent anyway, unless ``opaque`` asks for a solid
+    image (Tabletop Simulator boards), which then uses the level's color."""
     w = max(1, int(project.canvas_w * scale))
     h = max(1, int(project.canvas_h * scale))
-    image_format = (QImage.Format.Format_ARGB32 if transparent
+    see_through = (transparent or backdrop_is_transparent(level)) and not opaque
+    image_format = (QImage.Format.Format_ARGB32 if see_through
                     else QImage.Format.Format_RGB32)
     img = QImage(w, h, image_format)
-    if transparent:
+    cache: dict = PixmapCache()
+    if see_through:
         img.fill(QColor(0, 0, 0, 0))
     else:
-        img.fill(QColor(level.background))
+        background = QColor(level.background)
+        img.fill(background if background.isValid() else QColor("#10141c"))
     painter = QPainter(img)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    cache: dict = PixmapCache()
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    if not see_through and not transparent:
+        draw_backdrop(painter, project, level, QRectF(0, 0, w, h), scale, cache)
     for p in level.paint_order():
         lyr = level.layer_by_id(p.layer)
         if lyr is not None and not getattr(lyr, "export", True):
             continue        # "Don't export" layers stay on the canvas only
         lop = lyr.opacity if lyr else 1.0
-        target_size = (max(1, round(p.w * p.scale * scale)),
-                       max(1, round(p.h * p.scale * scale)))
-        pm = piece_pixmap(p, project, cache, target_size)
+        pm = piece_pixmap(p, project, cache, source_target_size(p, scale))
         # Piece.x/y is the visual top-left; center accounts for p.scale.
         cx = (p.x + p.w * p.scale / 2.0) * scale
         cy = (p.y + p.h * p.scale / 2.0) * scale
@@ -239,7 +357,7 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
         _draw_guides(painter, project, level, scale)
     painter.end()
     if include_coordinates:
-        img = _with_coordinate_border(img, project, level, scale, transparent)
+        img = _with_coordinate_border(img, project, level, scale, see_through)
     return img
 
 
@@ -359,17 +477,18 @@ def sample_level_color(project: Project, level: Level, world_x: float,
         return QColor()
 
     image = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
-    image.fill(QColor(level.background))
+    background = QColor(level.background)
+    image.fill(background if background.isValid() else QColor("#10141c"))
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.translate(-x, -y)
     cache = cache if cache is not None else PixmapCache()
+    draw_backdrop(painter, project, level, QRectF(0, 0, 1, 1), 1.0, cache,
+                  origin=(-x, -y))
+    painter.translate(-x, -y)
     for piece in level.paint_order():
         layer = level.layer_by_id(piece.layer)
         layer_opacity = layer.opacity if layer else 1.0
-        target_size = (max(1, round(piece.w * piece.scale)),
-                       max(1, round(piece.h * piece.scale)))
-        pixmap = piece_pixmap(piece, project, cache, target_size)
+        pixmap = piece_pixmap(piece, project, cache, source_target_size(piece, 1.0))
         painter.save()
         painter.translate(piece.center[0], piece.center[1])
         painter.rotate(piece.rotation)
@@ -386,11 +505,11 @@ def export_level_to_file(project, level, path, include_grid=True, scale=1.0,
                          transparent=False, grid_color=None, grid_opacity=None,
                          include_node_borders=None, include_zones=None,
                          include_centerlines=False, include_guides=False,
-                         include_coordinates=False):
+                         include_coordinates=False, opaque=False):
     img = render_level(project, level, include_grid, scale, transparent,
                        grid_color, grid_opacity, include_node_borders,
                        include_zones, include_centerlines, include_guides,
-                       include_coordinates)
+                       include_coordinates, opaque=opaque)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     img.save(path, "PNG")
     return path
@@ -400,7 +519,8 @@ def export_all_levels(project, out_dir, include_grid=True, scale=1.0,
                       name_prefix="map", transparent=False, grid_color=None,
                       grid_opacity=None, include_node_borders=None,
                       include_zones=None, include_centerlines=False,
-                      include_guides=False, include_coordinates=False):
+                      include_guides=False, include_coordinates=False,
+                      opaque=False):
     os.makedirs(out_dir, exist_ok=True)
     out = []
     for i, lvl in enumerate(project.levels, 1):
@@ -409,7 +529,7 @@ def export_all_levels(project, out_dir, include_grid=True, scale=1.0,
         export_level_to_file(project, lvl, path, include_grid, scale, transparent,
                              grid_color, grid_opacity, include_node_borders,
                              include_zones, include_centerlines, include_guides,
-                             include_coordinates)
+                             include_coordinates, opaque=opaque)
         out.append(path)
     return out
 
@@ -445,7 +565,7 @@ def export_pdf(project, out_path, include_grid=True, scale=1.0, levels=None,
                transparent=False, grid_color=None, grid_opacity=None,
                include_node_borders=None, include_zones=None,
                include_centerlines=False, include_guides=False,
-               include_coordinates=False):
+               include_coordinates=False, opaque=False):
     """Export chosen level(s) to PDF with the same grid/render options as PNG.
 
     Each selected level becomes one page. ``levels`` defaults to every level
@@ -461,7 +581,8 @@ def export_pdf(project, out_path, include_grid=True, scale=1.0, levels=None,
     extras = (include_centerlines, include_guides, include_coordinates)
     first = render_level(project, selected_levels[0], include_grid, scale,
                          transparent, grid_color, grid_opacity,
-                         include_node_borders, include_zones, *extras)
+                         include_node_borders, include_zones, *extras,
+                         opaque=opaque)
     writer.setPageSize(QPageSize(
         QSizeF(first.width() / 96.0, first.height() / 96.0),
         QPageSize.Unit.Inch))
@@ -471,7 +592,7 @@ def export_pdf(project, out_path, include_grid=True, scale=1.0, levels=None,
         writer.newPage()
         img = render_level(project, lvl, include_grid, scale, transparent,
                            grid_color, grid_opacity, include_node_borders,
-                           include_zones, *extras)
+                           include_zones, *extras, opaque=opaque)
         painter.drawImage(0, 0, img)
     painter.end()
     return out_path

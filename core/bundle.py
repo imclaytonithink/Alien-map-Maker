@@ -58,7 +58,32 @@ def export_project_bundle(project, out_path: str, include_renders: bool = True) 
     asset_files: dict[str, str] = {}
     missing_assets: list[str] = []
 
+    def pack_asset(asset_path: str) -> str:
+        """Copy one referenced library image into the pack and return its path
+        inside the pack ("" when it can't be found)."""
+        source_path = project.resolve_asset(asset_path)
+        if not os.path.isfile(source_path):
+            missing_name = os.path.basename(asset_path.replace("\\", "/"))
+            missing_assets.append(missing_name or "unresolved image")
+            # Do not leak machine-specific absolute paths in a portable pack.
+            return ""
+        with open(source_path, "rb") as source:
+            content = source.read()
+        member, relative = _asset_member(asset_path, source_path, content)
+        prior = asset_files.get(member)
+        if prior and prior != source_path:
+            # Same original relative path can refer to different stores.
+            digest = hashlib.sha256(content).hexdigest()[:16]
+            stem = _safe_name(os.path.basename(source_path))
+            member = f"assets/external/{digest}_{stem}"
+            relative = member[len("assets/"):]
+        asset_files[member] = source_path
+        return relative
+
     for level_data in data.get("levels", []):
+        texture = str(level_data.get("backdrop_texture", "") or "")
+        if texture:
+            level_data["backdrop_texture"] = pack_asset(texture)
         for piece_data in level_data.get("pieces", []):
             if piece_data.get("embedded"):
                 piece_data["asset_path"] = ""
@@ -66,25 +91,7 @@ def export_project_bundle(project, out_path: str, include_renders: bool = True) 
             asset_path = str(piece_data.get("asset_path", "") or "")
             if not asset_path:
                 continue
-            source_path = project.resolve_asset(asset_path)
-            if not os.path.isfile(source_path):
-                missing_name = os.path.basename(asset_path.replace("\\", "/"))
-                missing_assets.append(missing_name or "unresolved image")
-                # Do not leak machine-specific absolute paths in a portable pack.
-                piece_data["asset_path"] = ""
-                continue
-            with open(source_path, "rb") as source:
-                content = source.read()
-            member, relative = _asset_member(asset_path, source_path, content)
-            piece_data["asset_path"] = relative
-            prior = asset_files.get(member)
-            if prior and prior != source_path:
-                # Same original relative path can refer to different stores.
-                digest = hashlib.sha256(content).hexdigest()[:16]
-                stem = _safe_name(os.path.basename(source_path))
-                member = f"assets/external/{digest}_{stem}"
-                piece_data["asset_path"] = member[len("assets/"):]
-            asset_files[member] = source_path
+            piece_data["asset_path"] = pack_asset(asset_path)
 
     render_scale = min(1.0, 2048.0 / max(
         1.0, float(project.canvas_w), float(project.canvas_h)))

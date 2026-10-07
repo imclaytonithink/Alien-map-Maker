@@ -1,13 +1,14 @@
 """Small vector icons painted at runtime so they follow the theme colors.
 
-Used by the layer rows (visibility eye, export picture, padlock). Each icon is
-drawn on a 24-unit grid and rendered at several pixel sizes, so it stays crisp
-on normal and high-DPI screens.
+Used by the layer rows (visibility eye, export picture, padlock) and the
+cut-out tool's shape buttons. Each icon is drawn on a 24-unit grid and
+rendered at several pixel sizes, so it stays crisp on normal and high-DPI
+screens.
 """
 from __future__ import annotations
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 
 ICON_SIZES = (16, 18, 20, 24, 32, 36, 48)
 
@@ -110,4 +111,36 @@ def lock_icon(color: str, locked: bool = True) -> QIcon:
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(c)
         painter.drawRoundedRect(QRectF(5.0, 11.0, 14.0, 10.0), 2.0, 2.0)
+    return _icon(draw, color)
+
+
+# -- cut-out tool shapes -------------------------------------------------------
+def cut_shape_icon(shape: str, color: str) -> QIcon:
+    """Rectangle, ellipse, lasso or polygon selection shape (dashed outline)."""
+    def draw(painter: QPainter, c: QColor):
+        pen = _pen(c, 1.8)
+        pen.setDashPattern([2.2, 1.6])
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if shape == "rect":
+            painter.drawRect(QRectF(4.0, 6.0, 16.0, 12.0))
+        elif shape == "ellipse":
+            painter.drawEllipse(QRectF(3.5, 5.5, 17.0, 13.0))
+        elif shape == "lasso":
+            path = QPainterPath()
+            path.moveTo(7.0, 17.5)
+            path.cubicTo(1.5, 14.0, 3.0, 5.0, 11.5, 4.5)
+            path.cubicTo(20.0, 4.0, 22.5, 11.0, 17.0, 14.5)
+            path.cubicTo(13.5, 16.8, 9.5, 15.0, 9.0, 18.0)
+            painter.drawPath(path)
+            painter.setPen(_pen(c, 1.6))
+            painter.drawLine(QPointF(9.0, 18.0), QPointF(8.0, 21.0))
+        else:
+            points = [QPointF(12.0, 3.5), QPointF(20.5, 9.5), QPointF(17.0, 19.5),
+                      QPointF(7.0, 19.5), QPointF(3.5, 9.5)]
+            painter.drawPolygon(QPolygonF(points))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(c)
+            for point in points:
+                painter.drawEllipse(point, 1.7, 1.7)
     return _icon(draw, color)

@@ -481,6 +481,9 @@ class LibraryPanel(QWidget):
     assetActivated = pyqtSignal(str)   # double-click -> add at center
     collectionsChanged = pyqtSignal()
     pinStampRequested = pyqtSignal(int, str)   # hotbar slot (0-8), asset path
+    swapRequested = pyqtSignal(str)            # swap selected map nodes to this asset
+    swapAllRequested = pyqtSignal(str)         # swap every copy of the selected image
+    backdropRequested = pyqtSignal(str, bool)  # asset path, all levels?
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -502,6 +505,7 @@ class LibraryPanel(QWidget):
         self._zip_worker = None
         self._zip_import_target_root = ""
         self.stamp_labels = None    # callable -> names on the stamp keys 1-9
+        self.canvas_swap_info = None  # callable -> (selected map images, first's path)
         self._build_ui()
 
     def _build_ui(self):
@@ -1366,6 +1370,22 @@ class LibraryPanel(QWidget):
         act.triggered.connect(lambda: self._view_large(asset))
         act2 = menu.addAction("Add to canvas")
         act2.triggered.connect(lambda: self.assetActivated.emit(asset.path))
+        info_fn = getattr(self, "canvas_swap_info", None)
+        swap_count, swap_first = info_fn() if callable(info_fn) else (0, "")
+        swap = menu.addAction(
+            f"Swap the {swap_count} selected node(s) on the map to this" if swap_count
+            else "Swap the selected node(s) on the map to this")
+        swap.setToolTip("They keep their place, rotation, flips, layer, tint and cut-outs.")
+        swap.setEnabled(swap_count > 0)
+        swap.triggered.connect(lambda: self.swapRequested.emit(asset.path))
+        every = menu.addAction("Swap every copy of the selected node's image to this")
+        every.setToolTip("Every node on every level that uses the same picture as the "
+                         "selected node.")
+        every.setEnabled(bool(swap_first) and swap_first != asset.path)
+        every.triggered.connect(lambda: self.swapAllRequested.emit(asset.path))
+        backdrop = menu.addMenu("Use as backdrop (floor texture)")
+        backdrop.addAction("This level", lambda: self.backdropRequested.emit(asset.path, False))
+        backdrop.addAction("Every level", lambda: self.backdropRequested.emit(asset.path, True))
         pin_menu = menu.addMenu("Pin to stamp key")
         labels = self.stamp_labels() if callable(self.stamp_labels) else [""] * 9
         for index in range(9):

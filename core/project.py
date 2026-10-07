@@ -10,6 +10,8 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+from core.cutouts import clean_crop, clean_polygons, visible_at_source
+
 
 # --------------------------------------------------------------------------
 # Geometry helpers
@@ -153,6 +155,14 @@ class Piece:
     text_color: str = "#69b7f5"
     # grouping
     group_id: str = ""
+    # Non-destructive cut-outs (see core/cutouts.py): polygons in source-image
+    # fractions. ``cutouts`` are holes; ``clip_shapes`` keep only their inside.
+    cutouts: list = field(default_factory=list)
+    clip_shapes: list = field(default_factory=list)
+    # Clone patch: a piece of the same picture laid over a baked-in label.
+    # ``clone_home`` is the crop that shows exactly what lies under the patch
+    # (so a new source can be picked later); [] for ordinary nodes.
+    clone_home: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -199,6 +209,9 @@ class Piece:
         piece.text_background_opacity = max(
             0.0, min(1.0, float(piece.text_background_opacity)))
         piece.patch_opacity = max(0.0, min(1.0, float(piece.patch_opacity)))
+        piece.cutouts = clean_polygons(piece.cutouts)
+        piece.clip_shapes = clean_polygons(piece.clip_shapes)
+        piece.clone_home = clean_crop(piece.clone_home) or []
         return piece
 
     @property
@@ -231,8 +244,15 @@ class Piece:
         lx /= max(self.scale, 1e-6)
         ly /= max(self.scale, 1e-6)
         tolerance = 8.0 / max(self.scale, 1e-6) if self.is_connector else 0.0
-        return (abs(lx) <= self.w / 2.0 + tolerance
-                and abs(ly) <= self.h / 2.0 + tolerance)
+        inside = (abs(lx) <= self.w / 2.0 + tolerance
+                  and abs(ly) <= self.h / 2.0 + tolerance)
+        if inside and (self.cutouts or self.clip_shapes):
+            # clicks in a cut-out hole fall through to whatever is below
+            fx = lx / max(self.w, 1e-9) + 0.5
+            fy = ly / max(self.h, 1e-9) + 0.5
+            u0, v0, u1, v1 = self.crop_rect
+            return visible_at_source(self, u0 + fx * (u1 - u0), v0 + fy * (v1 - v0))
+        return inside
 
 
 @dataclass
@@ -302,6 +322,7 @@ class ZoneRegion:
         return inside
 
 
+BACKDROP_MODES = ("color", "texture", "none")
 GUIDE_AXES = ("v", "h")
 DEFAULT_GUIDE_COLOR = "#ff2bd6"   # magenta: unused by the grid, centerlines,
                                   # smart guides, theme accents and teal art
@@ -341,6 +362,13 @@ class Level:
     background: str = "#10141c"
     current_layer: str = ""
     guides: list[Guide] = field(default_factory=list)
+    # What lies under everything on this level: "color" (``background``),
+    # "texture" (a library image tiled over the background color) or "none"
+    # (transparent: the canvas shows a checkerboard, PNG exports keep alpha).
+    backdrop: str = "color"
+    backdrop_texture: str = ""        # store-relative library image
+    backdrop_tile: float = 0.0        # squares per texture tile; 0 = natural size
+    backdrop_opacity: float = 1.0     # texture strength over the background color
 
     def __post_init__(self):
         if not self.layers:
@@ -365,6 +393,10 @@ class Level:
             data.pop("export", None)
             layers.append(data)
         return {"name": self.name, "background": self.background,
+                "backdrop": self.backdrop,
+                "backdrop_texture": self.backdrop_texture,
+                "backdrop_tile": self.backdrop_tile,
+                "backdrop_opacity": self.backdrop_opacity,
                 "current_layer": self.current_layer,
                 "layers": layers,
                 "layers_not_exported": [l.id for l in self.layers
@@ -392,7 +424,19 @@ class Level:
                     layer.export = False
         if not lv.current_layer and lv.layers:
             lv.current_layer = lv.layers[0].id
+        if not isinstance(lv.background, str) or not lv.background.strip():
+            lv.background = "#10141c"
+        mode = d.get("backdrop", "color")
+        lv.backdrop = mode if mode in BACKDROP_MODES else "color"
+        texture = d.get("backdrop_texture", "")
+        lv.backdrop_texture = texture if isinstance(texture, str) else ""
+        lv.backdrop_tile = _clamped_float(d.get("backdrop_tile", 0.0), 0.0, 1000.0, 0.0)
+        lv.backdrop_opacity = _clamped_float(d.get("backdrop_opacity", 1.0), 0.0, 1.0, 1.0)
         return lv
+
+    def backdrop_texture_in_use(self) -> str:
+        """The library image the backdrop tiles, or "" when none is used."""
+        return self.backdrop_texture if self.backdrop == "texture" else ""
 
     # ---- guides ----
     def guide_positions(self, axis: str) -> list[float]:
@@ -669,12 +713,16 @@ class Project:
         return os.path.abspath(path)
 
     def referenced_assets(self, levels=None) -> dict[str, int]:
-        """Library images used by image nodes: {store path: node count}.
-        Embedded custom images travel inside the map and are not listed."""
+        """Library images used by image nodes and level backdrops: {store path:
+        use count}. Embedded custom images travel inside the map and are not
+        listed."""
         counts: dict[str, int] = {}
         for level in (self.levels if levels is None else levels):
             if level is None:
                 continue
+            texture = level.backdrop_texture_in_use()
+            if texture:
+                counts[texture] = counts.get(texture, 0) + 1
             for piece in level.pieces:
                 if (piece.asset_path and not piece.embedded and not piece.is_text
                         and not piece.is_patch and not piece.is_scale_bar
@@ -691,6 +739,10 @@ class Project:
         """Point nodes at new store paths ({old: new}); returns nodes changed."""
         changed = 0
         for level in self.levels:
+            texture = mapping.get(level.backdrop_texture) if level.backdrop_texture else None
+            if texture and texture != level.backdrop_texture:
+                level.backdrop_texture = texture
+                changed += 1
             for piece in level.pieces:
                 new_path = mapping.get(piece.asset_path) if not piece.embedded else None
                 if new_path and new_path != piece.asset_path:

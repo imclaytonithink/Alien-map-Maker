@@ -32,7 +32,14 @@ def main():
     win = MainWindow()
     win.show()
     win.canvas.fit_to_view()
-    sys.exit(app.exec())
+    code = app.exec()
+    # Tear the window down while Qt is still running, so nothing in it can
+    # outlive the application object on the way out.
+    from PyQt6 import sip
+    if not sip.isdeleted(win):
+        sip.delete(win)
+    del win
+    sys.exit(code)
 
 
 if __name__ == "__main__":

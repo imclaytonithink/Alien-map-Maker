@@ -24,6 +24,7 @@ class StampSlotButton(QToolButton):
         self.bar = bar
         self.filled = False
         self.active = False
+        self.edge = False           # door mode: copies sit on grid lines
         self.setObjectName("StampSlot")
         self.setFixedSize(SLOT_PX, SLOT_PX)
         self.setIconSize(QSize(SLOT_PX - 10, SLOT_PX - 10))
@@ -70,6 +71,20 @@ class StampSlotButton(QToolButton):
         else:
             painter.setPen(QColor(colors["muted"]))
         painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, str(self.index + 1))
+        if self.filled and self.edge:
+            # door-mode badge: a short wall segment with a door gap
+            corner = QRectF(self.width() - 15.0, self.height() - 12.0, 13.0, 10.0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 160))
+            painter.drawRoundedRect(corner, 3.0, 3.0)
+            pen = QPen(QColor(colors["accent"]))
+            pen.setWidthF(1.8)
+            painter.setPen(pen)
+            y = corner.center().y()
+            painter.drawLine(int(corner.left() + 2), int(y), int(corner.left() + 4.5), int(y))
+            painter.drawLine(int(corner.right() - 4.5), int(y), int(corner.right() - 2), int(y))
+            painter.drawLine(int(corner.left() + 4.5), int(y), int(corner.right() - 4.5),
+                             int(corner.top() + 2))
         painter.end()
 
     def enterEvent(self, event):
@@ -127,9 +142,12 @@ class StampBar(QFrame):
         for button in self.buttons:
             button.update()
 
-    def set_slots(self, icons: list, tips: list[str]):
-        for button, icon, tip in zip(self.buttons, icons, tips):
+    def set_slots(self, icons: list, tips: list[str], edges: list | None = None):
+        edges = list(edges or [])
+        edges += [False] * (len(self.buttons) - len(edges))
+        for button, icon, tip, edge in zip(self.buttons, icons, tips, edges):
             button.filled = icon is not None
+            button.edge = bool(edge)
             button.setIcon(icon if isinstance(icon, QIcon) else QIcon())
             button.setToolTip(tip)
             button.update()

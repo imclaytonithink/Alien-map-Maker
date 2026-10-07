@@ -15,13 +15,14 @@ def collect_commands(menu_bar) -> list[tuple[str, str, object]]:
         for action in menu.actions():
             if action.isSeparator():
                 continue
-            text = action.text().replace("&", "").rstrip("…").strip()
+            raw, _tab, hint = action.text().replace("&", "").partition("\t")
+            text = raw.rstrip("…").strip()
             sub = action.menu()
             if sub is not None:
                 walk(sub, trail + [text])
             elif text:
                 found.append((" › ".join(trail + [text]),
-                              action.shortcut().toString(), action))
+                              action.shortcut().toString() or hint.strip(), action))
 
     for top in menu_bar.actions():
         if top.menu() is not None:

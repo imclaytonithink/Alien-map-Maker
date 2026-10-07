@@ -10,7 +10,7 @@ from PyQt6.QtCore import (Qt, QEvent, QObject, QPoint, QPointF, QRectF, QRunnabl
                           QSize, QThreadPool, QTimer, pyqtSignal)
 from PyQt6.QtGui import (
     QImageReader, QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont,
-    QFontMetricsF, QPolygonF,
+    QFontMetricsF, QPolygonF, QTransform,
 )
 from PyQt6.QtWidgets import QWidget, QFrame, QPushButton, QHBoxLayout, QToolTip
 
@@ -21,6 +21,7 @@ from core.transforms import (grid_offsets, mirror_piece_data, on_mirror_line,
                              remap_groups)
 from core import exporter
 from core.render import draw_node_border, draw_piece, draw_zone_borders
+from ui.canvas_tools import CloneToolMixin, CutoutToolMixin, SelectionToolsMixin
 from ui.theme import theme_colors
 
 HANDLE_DIST = 26
@@ -71,7 +72,7 @@ class _BoundsTask(QRunnable):
             pass
 
 
-class CanvasView(QWidget):
+class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
     selectionChanged = pyqtSignal(object)   # list[Piece]
     zoneSelectionChanged = pyqtSignal(object)  # ZoneRegion or None
     dirty = pyqtSignal()
@@ -89,6 +90,8 @@ class CanvasView(QWidget):
     guideSettingsChanged = pyqtSignal()              # show/snap/lock flags changed here
     railsChanged = pyqtSignal()                      # rail thickness / visibility changed
     stampToolChanged = pyqtSignal(object)            # armed hotbar slot index, or None
+    cutoutChanged = pyqtSignal()                     # cut-out tool / area / targets changed
+    cutoutMenuRequested = pyqtSignal(QPoint)         # right-click inside the cut-out area
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -170,6 +173,8 @@ class CanvasView(QWidget):
         self.stamp_slot = None          # hotbar slot that armed the stamp tool
         self._stamp_tighten = False     # trim stamped library assets like drops
         self._stamp_hover = None        # world point of the stamp preview
+        self._stamp_edge = False        # door mode: copies sit on grid lines
+        self._stamp_last_spot = None    # door mode: last spot placed while dragging
         self.crop_tool = False
         self._crop_target_id = None
         self._crop_drag = None
@@ -186,6 +191,8 @@ class CanvasView(QWidget):
         self._lasso_add = False
         self.copy_style_mode = False
         self._style_template = None
+        self._init_cutout_state()
+        self._init_clone_state()
 
         # quick toolbar (J3)
         self.quick = QFrame(self)
@@ -231,9 +238,13 @@ class CanvasView(QWidget):
 
     def _reset_tool_state(self):
         was_stamping = self.stamp_tool
+        was_cutting = self._reset_cutout_state()
+        self._reset_clone_state()
         self.stamp_slot = None
         self._stamp_tighten = False
         self._stamp_hover = None
+        self._stamp_edge = False
+        self._stamp_last_spot = None
         self.zone_tool = None
         self._zone_drag_start = None
         self._zone_preview = None
@@ -261,6 +272,8 @@ class CanvasView(QWidget):
         self._style_template = None
         if was_stamping:
             self.stampToolChanged.emit(None)
+        if was_cutting:
+            self.cutoutChanged.emit()
 
     def set_project(self, project: Project, library=None):
         self.project = project
@@ -390,7 +403,7 @@ class CanvasView(QWidget):
     def cancel_extra_tool(self) -> bool:
         active = (self.stamp_tool or self.crop_tool or self.ruler_tool
                   or self.scale_tool or self.connector_tool or self.lasso_tool
-                  or self.copy_style_mode)
+                  or self.copy_style_mode or self.cutout_tool or self.clone_tool)
         if active:
             self._reset_tool_state()
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -614,9 +627,10 @@ class CanvasView(QWidget):
             self.project, self.level, wx, wy, self._cache)
 
     def set_stamp_template(self, template: dict, slot=None,
-                           tighten: bool = False) -> bool:
+                           tighten: bool = False, edge: bool = False) -> bool:
         """Arm the stamp tool with node data (used by the hotbar keys 1-9).
-        ``tighten`` trims each copy to its visible pixels, like a library drop."""
+        ``tighten`` trims each copy to its visible pixels, like a library drop;
+        ``edge`` (door mode) puts each copy on the nearest grid line."""
         if not self.project or not self.level or not isinstance(template, dict):
             return False
         self._reset_tool_state()
@@ -625,6 +639,7 @@ class CanvasView(QWidget):
                                 else dict(template))
         self.stamp_slot = slot
         self._stamp_tighten = bool(tighten)
+        self._stamp_edge = bool(edge)
         self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         self.setFocus(Qt.FocusReason.OtherFocusReason)
         if self._cursor_world[0] >= 0:
@@ -699,6 +714,12 @@ class CanvasView(QWidget):
         data["z"] = self.level.next_z()
         data["locked"] = False
         data["group_id"] = ""
+        if self._stamp_edge:
+            cx, cy, angle = self._edge_stamp_spot(wx, wy, data)
+            data["rotation"] = angle
+            data["x"] = cx - float(data.get("w", 0)) * float(data.get("scale", 1)) / 2
+            data["y"] = cy - float(data.get("h", 0)) * float(data.get("scale", 1)) / 2
+            return Piece.from_dict(data)
         piece = Piece.from_dict(data)
         if piece.snap:
             piece.x = snap_value(piece.x, self.project.cell_size)
@@ -709,6 +730,12 @@ class CanvasView(QWidget):
         piece = self._stamp_piece_at(wx, wy)
         if piece is None:
             return None
+        if self._stamp_edge:
+            spot = (round(piece.center[0], 2), round(piece.center[1], 2),
+                    round(piece.rotation % 360.0, 1))
+            if spot == self._stamp_last_spot or self._stamp_spot_taken(piece):
+                return None
+            self._stamp_last_spot = spot
         self.push_history("Stamp node")
         self.level.add(piece)
         if self._stamp_tighten and self.auto_tighten and not piece.is_overlay:
@@ -941,7 +968,7 @@ class CanvasView(QWidget):
         piece = selected[0]
         if piece.is_text or piece.is_patch or piece.is_connector or piece.is_scale_bar:
             return False
-        if piece.crop_rect == [0.0, 0.0, 1.0, 1.0]:
+        if piece.crop_rect == [0.0, 0.0, 1.0, 1.0] and not piece.clip_shapes:
             return False
         crop_w = max(1e-6, piece.crop_rect[2] - piece.crop_rect[0])
         crop_h = max(1e-6, piece.crop_rect[3] - piece.crop_rect[1])
@@ -950,6 +977,8 @@ class CanvasView(QWidget):
         piece.w /= crop_w
         piece.h /= crop_h
         piece.crop_rect = [0.0, 0.0, 1.0, 1.0]
+        piece.clip_shapes = []
+        piece.clone_home = []
         piece.x = center_x - piece.w * piece.scale / 2.0
         piece.y = center_y - piece.h * piece.scale / 2.0
         self.selectionChanged.emit(self.selected_pieces())
@@ -1041,6 +1070,8 @@ class CanvasView(QWidget):
         piece.name = os.path.basename(path)
         piece.w, piece.h = float(size.width()), float(size.height())
         piece.crop_rect = [0.0, 0.0, 1.0, 1.0]
+        piece.clip_shapes = []          # the shape of a pasted part doesn't carry over
+        piece.clone_home = []
         piece.x = center_x - piece.w * piece.scale / 2.0
         piece.y = center_y - piece.h * piece.scale / 2.0
         self._cache.pop("emb:" + piece.id, None)
@@ -2022,7 +2053,13 @@ class CanvasView(QWidget):
             min(1.0, bounds[2] + pad / kx) if sides[2] else 1.0,
             min(1.0, bounds[3] + pad / ky) if sides[3] else 1.0,
         ]
-        if target[2] - target[0] < 0.02 or target[3] - target[1] < 0.02:
+        if piece.clip_shapes:
+            # a pasted part only ever shrinks inside the piece it already shows
+            target = [max(target[0], crop[0]), max(target[1], crop[1]),
+                      min(target[2], crop[2]), min(target[3], crop[3])]
+            if target[2] - target[0] <= 1e-4 or target[3] - target[1] <= 1e-4:
+                return False
+        elif target[2] - target[0] < 0.02 or target[3] - target[1] < 0.02:
             return False
         if all(abs(a - b) < 0.0005 for a, b in zip(target, crop)):
             return False                      # already exactly this tight
@@ -2347,6 +2384,8 @@ class CanvasView(QWidget):
         self._draw_patch_tool_preview(painter)
         self._draw_compose_tool_previews(painter)
         self._draw_stamp_preview(painter)
+        self._draw_cutout_overlay(painter)
+        self._draw_clone_overlay(painter)
         if self.selected_zone:
             self._draw_zone_edit_overlay(painter, self.selected_zone)
         self._draw_guides(painter)
@@ -2488,10 +2527,35 @@ class CanvasView(QWidget):
         painter.restore()
 
     def _draw_bg(self, painter):
+        """The level's backdrop: a color, a tiled floor texture, or (when it is
+        transparent) an editor-only checkerboard."""
         x0, y0 = self.world_to_screen(0, 0)
         w = self.project.canvas_w * self.zoom
         h = self.project.canvas_h * self.zoom
-        painter.fillRect(QRectF(x0, y0, w, h), QColor(self.level.background))
+        rect = QRectF(x0, y0, w, h)
+        if exporter.backdrop_is_transparent(self.level):
+            painter.fillRect(rect, self._checker_brush(x0, y0))
+            return
+        exporter.draw_backdrop(painter, self.project, self.level, rect, self.zoom,
+                               self._cache, origin=(x0, y0))
+
+    def _checker_brush(self, x0: float, y0: float) -> QBrush:
+        """Grey checkerboard that marks a transparent backdrop on screen."""
+        dark = self.theme_mode != "light"
+        key = ("checker", dark)
+        tile = getattr(self, "_checker_tiles", {}).get(key)
+        if tile is None:
+            tile = QPixmap(16, 16)
+            tile.fill(QColor("#2b2f36" if dark else "#e4e6ea"))
+            tile_painter = QPainter(tile)
+            other = QColor("#363b44" if dark else "#cfd3d9")
+            tile_painter.fillRect(0, 0, 8, 8, other)
+            tile_painter.fillRect(8, 8, 8, 8, other)
+            tile_painter.end()
+            self._checker_tiles = {**getattr(self, "_checker_tiles", {}), key: tile}
+        brush = QBrush(tile)
+        brush.setTransform(QTransform.fromTranslate(x0, y0))
+        return brush
 
     def _draw_grid(self, painter, color, opacity):
         """Grid lines are anchored to the map origin (world x/y = 0), so they
@@ -2621,9 +2685,7 @@ class CanvasView(QWidget):
             self._draw_piece(painter, p, self.ref_opacity, mark_missing=False)
 
     def _draw_piece(self, painter, p: Piece, opacity: float, mark_missing: bool = True):
-        target_size = (max(1, round(p.w * p.scale * self.zoom)),
-                       max(1, round(p.h * p.scale * self.zoom)))
-        pm = self.pixmap(p, target_size)
+        pm = self.pixmap(p, exporter.source_target_size(p, self.zoom))
         cx, cy = p.center
         scx, scy = self.world_to_screen(cx, cy)
         lyr = self.level.layer_by_id(p.layer)
@@ -2851,6 +2913,10 @@ class CanvasView(QWidget):
         return self.level.selectable_at(wx, wy) if self.level else None
 
     def _tool_press(self, sx, sy, event):
+        if self.cutout_tool:
+            return self._cutout_press(sx, sy, event)
+        if self.clone_tool:
+            return self._clone_press(sx, sy, event)
         wx, wy = self.screen_to_world(sx, sy)
         left = event.button() == Qt.MouseButton.LeftButton
         right = event.button() == Qt.MouseButton.RightButton
@@ -2948,7 +3014,15 @@ class CanvasView(QWidget):
     def _tool_move(self, sx, sy, event):
         wx, wy = self.screen_to_world(sx, sy)
         self._cursor_world = (wx, wy)
+        if self.cutout_tool and self._cutout_motion(sx, sy, event):
+            return True
+        if self.clone_tool and self._clone_motion(sx, sy, event):
+            return True
         if self.stamp_tool and self._stamp_drag_last is not None:
+            if self._stamp_edge:
+                self._place_stamp(wx, wy)      # skips spots already filled
+                self.update()
+                return True
             lx, ly = self._stamp_drag_last
             template = Piece.from_dict(self._stamp_template or {})
             spacing = max(8.0, min(template.vis_w, template.vis_h) * 0.75)
@@ -3002,9 +3076,14 @@ class CanvasView(QWidget):
         return inside
 
     def _tool_release(self, sx, sy, event):
+        if self.cutout_tool and self._cutout_release(sx, sy, event):
+            return True
+        if self.clone_tool and self._clone_release(sx, sy, event):
+            return True
         wx, wy = self.screen_to_world(sx, sy)
         if self.stamp_tool and self._stamp_drag_last is not None:
             self._stamp_drag_last = None
+            self._stamp_last_spot = None
             event.accept()
             return True
         if self._crop_drag:
@@ -3073,6 +3152,9 @@ class CanvasView(QWidget):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape and self.cancel_guide_drag():
+            e.accept()
+            return
+        if self.handle_cutout_key(e) or self.handle_clone_key(e):
             e.accept()
             return
         if e.key() == Qt.Key.Key_Escape:
@@ -3606,7 +3688,8 @@ class CanvasView(QWidget):
         self._guide_flash = set()
         if (self.zone_tool or self.patch_tool or self.stamp_tool or self.crop_tool
                 or self.ruler_tool or self.scale_tool or self.connector_tool
-                or self.lasso_tool or self.copy_style_mode):
+                or self.lasso_tool or self.copy_style_mode or self.cutout_tool
+                or self.clone_tool):
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -3616,7 +3699,8 @@ class CanvasView(QWidget):
         return bool(self.zone_tool or self.patch_tool or self.stamp_tool
                     or self.crop_tool or self.ruler_tool or self.scale_tool
                     or self.connector_tool or self.lasso_tool
-                    or self.copy_style_mode or self._color_pick_callback)
+                    or self.copy_style_mode or self.cutout_tool or self.clone_tool
+                    or self._color_pick_callback)
 
     def _open_context_menu(self, e):
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -3650,6 +3734,9 @@ class CanvasView(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self._cutout_double_click():
+            e.accept()
+            return
         if self.zone_tool == "polygon" and e.button() == Qt.MouseButton.LeftButton:
             self.finish_zone_polygon()
             e.accept()
@@ -3917,6 +4004,7 @@ class CanvasView(QWidget):
         sel = self.selected_pieces()
         if len(sel) < 2:
             return
+        self.push_history("Group")
         from core.project import uuid
         gid = uuid.uuid4().hex
         for p in sel:
@@ -3924,18 +4012,22 @@ class CanvasView(QWidget):
         self.dirty.emit()
 
     def ungroup(self):
-        for p in self.selected_pieces():
+        grouped = [p for p in self.selected_pieces() if p.group_id]
+        if not grouped:
+            return
+        self.push_history("Ungroup")
+        for p in grouped:
             p.group_id = ""
         self.dirty.emit()
 
     def _raise(self, sel):
-        for p in sel:
-            p.z += 1
+        """Bring forward: past the next node above that overlaps it."""
+        self._step_order(sel, up=True)
         self.dirty.emit()
 
     def _lower(self, sel):
-        for p in sel:
-            p.z -= 1
+        """Send backward: below the next node underneath that overlaps it."""
+        self._step_order(sel, up=False)
         self.dirty.emit()
 
     def nudge(self, dx, dy):

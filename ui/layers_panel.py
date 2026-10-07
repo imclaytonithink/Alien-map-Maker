@@ -460,6 +460,8 @@ class LayersPanel(QWidget):
             colors.addAction(name, lambda c=hexc: self._set_color(lid, c))
         colors.addAction("None", lambda: self._set_color(lid, ""))
         menu.addSeparator()
+        menu.addAction("Select everything on this layer",
+                       lambda: self.canvas.select_layer(lid))
         menu.addAction("Duplicate layer (with its pieces)", lambda: self._duplicate(lid))
         menu.addAction("Delete layer", lambda: self._delete_id(lid))
         menu.exec(pos)

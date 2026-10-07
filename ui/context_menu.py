@@ -44,10 +44,23 @@ def fill_stamp_menu(main, menu: QMenu) -> QMenu:
     return menu
 
 
-def build_canvas_menu(main, hit_piece) -> QMenu:
+CUT_SHAPES = (("rect", "Rectangle"), ("ellipse", "Ellipse / circle"),
+              ("lasso", "Lasso (freehand)"), ("polygon", "Polygon"))
+
+
+def _is_image(piece) -> bool:
+    return (not (piece.is_text or piece.is_patch or piece.is_scale_bar or piece.is_connector)
+            and bool(piece.asset_path or piece.embedded))
+
+
+def build_canvas_menu(main, hit_piece, world_pos=None) -> QMenu:
+    """Right-click menu for the map. ``world_pos`` (the clicked map point)
+    enables "Paste here"."""
     canvas = main.canvas
     menu = QMenu(main)
     sel = canvas.selected_pieces()
+    has_clipboard = bool(canvas._clipboard)
+    many_levels = bool(canvas.project and len(canvas.project.levels) > 1)
 
     def add(target, label, slot, enabled=True, shortcut=""):
         action = QAction(label + (f"\t{shortcut}" if shortcut else ""), menu)
@@ -56,18 +69,44 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         target.addAction(action)
         return action
 
+    def add_paste_here():
+        if world_pos is not None:
+            add(menu, "Paste here", lambda: canvas.paste_at(*world_pos), has_clipboard)
+
     if sel:
-        add(menu, "Duplicate", canvas.duplicate)
+        images = [piece for piece in sel if _is_image(piece)]
+        add(menu, "Duplicate", canvas.duplicate, shortcut="Ctrl+D")
         add(menu, "Duplicate as grid…", main._duplicate_as_grid_dialog,
             shortcut="Ctrl+Shift+D")
         fill_mirror_menu(main, menu.addMenu("Mirror copy"))
-        add(menu, "Copy", canvas.copy)
-        add(menu, "Paste", canvas.paste, bool(canvas._clipboard))
+        add(menu, "Cut", main._cut, shortcut="Ctrl+X")
+        add(menu, "Copy", main._copy, shortcut="Ctrl+C")
+        add(menu, "Paste", canvas.paste, has_clipboard, "Ctrl+V")
+        add_paste_here()
         add(menu, "Delete", canvas.delete_selected, shortcut="Del")
         menu.addSeparator()
+        if images:
+            cut_menu = menu.addMenu("Cut out part of the image")
+            for shape, label in CUT_SHAPES:
+                add(cut_menu, label, lambda s=shape: main._start_cutout_tool(s))
+            holes = [piece for piece in images if piece.cutouts]
+            if holes:
+                restore = menu.addMenu("Restore cut-out areas")
+                add(restore, "Undo the last cut-out",
+                    lambda: canvas.restore_cutouts(holes, last_only=True))
+                add(restore, "Restore all cut-outs",
+                    lambda: canvas.restore_cutouts(holes, last_only=False))
+            add(menu, "Clone patch over a label…", main._start_clone_tool)
+            clones = [piece for piece in images if piece.clone_home]
+            if len(sel) == 1 and clones:
+                add(menu, "Pick a new clone source…", main._repick_clone_source)
+            main._fill_swap_menu(menu.addMenu("Swap image"))
+            menu.addSeparator()
         arrange = menu.addMenu("Arrange")
+        add(arrange, "Bring to front", canvas.bring_to_front)
         add(arrange, "Bring forward", lambda: canvas._quick("up"))
         add(arrange, "Send backward", lambda: canvas._quick("down"))
+        add(arrange, "Send to back", canvas.send_to_back)
         transform = menu.addMenu("Transform")
         add(transform, "Rotate 90° clockwise", lambda: canvas._quick("rotR"))
         add(transform, "Rotate 90° counter-clockwise", lambda: canvas._quick("rotL"))
@@ -76,6 +115,8 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         add(transform, "Flip horizontal", lambda: canvas._quick("fh"))
         add(transform, "Flip vertical", lambda: canvas._quick("fv"))
         add(menu, "Lock / unlock", lambda: canvas._quick("lock"))
+        if many_levels:
+            main._fill_send_level_menu(menu.addMenu("Send to level"))
         menu.addSeparator()
         multi = len(sel) > 1
         add(menu, "Group", canvas.group, multi)
@@ -97,9 +138,13 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         add(dist, "Horizontally", lambda: canvas.distribute("h"), len(sel) > 2)
         add(dist, "Vertically", lambda: canvas.distribute("v"), len(sel) > 2)
         menu.addSeparator()
+        select = menu.addMenu("Select")
+        add(select, "Select all", main._select_all, shortcut="Ctrl+A")
+        add(select, "Invert selection", main._invert_selection, shortcut="Ctrl+Shift+I")
+        add(select, "Everything on this layer", lambda: canvas.select_layer(sel[0].layer))
+        add(select, "Similar nodes", main._select_similar)
         add(menu, "Select similar", main._select_similar)
         add(menu, "Copy style…", main._start_copy_style)
-        add(menu, "Replace image…", main._replace_selected_image)
         add(menu, "Tighten to visible pixels…", main._tighten_dialog)
         if len(sel) == 1:
             fill_stamp_menu(main, menu.addMenu("Pin to stamp key"))
@@ -109,9 +154,12 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
         add(guides, "Through its center", lambda: canvas.add_guides_around_selection("center"))
         add(guides, "Edges and center", lambda: canvas.add_guides_around_selection("both"))
     else:
-        add(menu, "Paste", canvas.paste, bool(canvas._clipboard))
+        add(menu, "Paste", canvas.paste, has_clipboard, "Ctrl+V")
+        add_paste_here()
+        add(menu, "Select all", main._select_all, shortcut="Ctrl+A")
         add(menu, "Add text", main._add_text)
         menu.addSeparator()
+        add(menu, "Backdrop…", main._show_backdrop_settings)
         add(menu, "Fit to view", canvas.fit_to_view)
         add(menu, "Zoom 100%", lambda: canvas.set_zoom(1.0))
     menu.addSeparator()

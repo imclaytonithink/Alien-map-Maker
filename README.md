@@ -144,7 +144,61 @@ clearly reports skipped GUI checks.
 - Multi-select: **Shift-click** or drag a marquee. Then align / distribute /
   **Glue** (group) / tint / delete / duplicate / copy-paste together. Grouped
   nodes are picked together by a click, marquee or lasso; **Ctrl+click** picks
-  a single member. Copies of a group form their own group.
+  a single member. Copies of a group form their own group. Glue and unglue can
+  be undone.
+- **Selecting and the clipboard**: **Ctrl+A** selects everything you could
+  click (locked nodes and hidden or locked layers are skipped),
+  **Ctrl+Shift+I** inverts the selection and **Ctrl+Shift+A** deselects.
+  **Edit → Select**, the node right-click menu (*Select → Everything on this
+  layer*) and the Layers panel's right-click menu select a whole layer.
+  **Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D** copy, cut, paste and duplicate (text
+  boxes and the library keep their own copy and paste). Right-click the map →
+  **Paste here** drops the clipboard where you clicked.
+- **Arrange**: right-click → *Arrange* → **Bring to front**, *Bring forward*,
+  *Send backward* or **Send to back** (also in the Edit menu). Forward and
+  backward now step past the next overlapping node every time.
+- **Send to level**: right-click → *Send to level* → **Move to** / **Copy to**
+  another level, or *Copy to → Every other level*. Nodes keep their exact
+  position and go on the layer with the same name there — handy for lift
+  shafts, ladders and hull pieces that repeat on every deck.
+- **Swap image**: select node(s) on the map, right-click a library image →
+  *Swap the selected node(s) on the map to this*. They keep their place,
+  rotation, flips, layer, tint and cut-outs; the size follows the new picture
+  (a 100x100 ft tile stays 20x20 squares). **[** and **]** step a selected tile
+  through the other images in its library folder (holding the key is one undo
+  step). *Swap every copy of the selected node's image to this* changes every
+  copy on every level. The node right-click menu has the same under *Swap
+  image* (plus the old *Replace with a file from disk*).
+- **Cut out part of an image** (right-click an image → *Cut out part of the
+  image*, Tools menu, the Inspector's *Cut out part…* button, or the **Cut
+  Out** toolbar tool): pick a **Rectangle**, **Ellipse** (Shift = circle),
+  **Lasso** (freehand) or **Polygon** (click the corners; double-click, Enter
+  or click the first corner to close) on the bar at the top of the canvas, and
+  draw the area. *Snap to grid* puts rectangle, ellipse and polygon corners on
+  grid lines (Alt = free), so a doorway is exactly one or two squares wide. The
+  area shows as marching ants; drag it or use the arrow keys to move it. Then:
+  - **Delete** (or Backspace) hides that part of the image — the tile or the
+    backdrop underneath shows through, and clicks there go to whatever is below;
+  - **Ctrl+X** cuts it and **Ctrl+C** copies it; **Ctrl+V** pastes it as a new
+    node (right-click → *Paste here* puts it where you click), so you can move a
+    console or a room section anywhere, even to another level;
+  - **New node** cuts it out into its own node right where it was, ready to drag;
+  - **Keep only** hides everything else.
+  Right-click inside the area for the same choices. The tool works on the
+  selected image(s); with nothing selected it takes the image under the area,
+  and **Ctrl+click** adds or removes images — select two tiles to open a
+  doorway across the seam between them in one go. Everything is
+  non-destructive: the image file is never changed, undo works, and
+  *Restore cut-out areas* (right-click) or the Inspector's *Restore cut-outs*
+  brings the picture back. A pasted part's *Reset crop* turns it back into the
+  whole picture. Esc clears the area, a second Esc puts the tool away.
+- **Clone patch** (right-click an image, Tools menu or the **Clone** toolbar
+  tool): drag a box over a label printed on a tile, then point at clean floor —
+  a dashed box shows what will be copied — and click. The patch is a piece of
+  the same picture laid right over the label, so floor plates, grating and
+  stains match. The source moves in whole squares so repeating floor patterns
+  line up (Alt = free). The tool stays on for the next label; Esc finishes.
+  Select a patch → *Pick a new clone source…* to choose a different spot later.
 - **Mirror copy**: ship decks are mostly symmetrical, so select one side and
   right-click a guide (or the map's dashed center line) → *Mirror selection
   across this guide*. The node right-click menu and **Edit → Mirror copy** list
@@ -163,6 +217,15 @@ clearly reports skipped GUI checks.
   are placed like a library drop; pinned nodes keep their size, rotation, flips,
   tint and crop. The keys are remembered across maps (View → Stamp hotbar
   hides it).
+  **Door mode** (right-click a slot → *Door mode*): each copy sits centered on
+  the nearest grid line and turns to run along it — horizontal walls get a
+  horizontal door, vertical walls a vertical one — with its ends on grid
+  points (a door two squares long is centered on a grid crossing). The door's
+  bottom side faces the side of the wall your pointer is on, so a swing arc
+  follows the pointer. Drag along a wall to fill it, one door per segment;
+  clicking a spot that already has the same door does nothing. Assets named or
+  sorted as doors, hatches, airlocks or vents start out in door mode; a small
+  wall-and-door badge marks those slots.
 - The **quick toolbar** (top-right of canvas) rotates/flips, raises/lowers,
   locks, copies, duplicates, deletes the selection.
 - The main toolbar can be customized from **View → Customize toolbar…** (or
@@ -176,7 +239,8 @@ clearly reports skipped GUI checks.
   padding, text color, and a translucent fill behind the label. Text formatting
   and content are undoable. Text nodes are separate from image nodes: lettering
   already present in an imported PNG or other image is rasterized into that
-  image and is not directly editable. To replace a baked-in label, use the
+  image and is not directly editable. To hide a baked-in label on a textured
+  floor, use **Clone patch** (below). For a flat cover, use the
   **Patch** toolbar tool (or Tools menu) and drag a cover rectangle. In the
   patch properties, sample a nearby clean map color, adjust fill opacity, then
   add an editable text node above the patch. Both overlays remain separate
@@ -261,6 +325,17 @@ bulk. Your choices (★) are saved with the asset store and always win.
 
 ### 5. Floors / Levels
 - Tab bar above the canvas: add / remove / rename / reorder floors.
+- **Backdrop** (per level; Node tab with nothing selected, right-click the empty
+  map → *Backdrop…*, or **View → Backdrop**): **Solid color**, **Floor
+  texture** — a library image tiled under everything (pick it in the library
+  and press *Use the highlighted library image*, or right-click a library image
+  → *Use as backdrop*), with a tile size in squares and a strength that fades it
+  into the color — or **None (transparent)**, shown as a checkerboard on the
+  canvas and kept transparent in PNG exports. Packs whose tiles have
+  transparent surroundings sit on the backdrop, and it shows through cut-out
+  holes. *Use this backdrop on every level* copies it to the other levels.
+  Backdrop textures count as images the map uses: missing ones are reported,
+  and project bundles carry them.
 - **Reference floor overlay**: ghost the floor above/below (adjustable opacity)
   so you can align things between levels.
 - **Layers** (right panel): per-level layers with an **eye** button to show or
@@ -271,12 +346,16 @@ bulk. Your choices (★) are saved with the asset store and always win.
 
 ### 6. Export
 - **Export PNG…**: current level or all levels, size presets (Foundry, Roll20,
-  Tabletop Simulator, Print 2×/4×), transparent background, and separate
-  exported-grid on/off, color, and opacity controls.
+  Tabletop Simulator, Print 2×/4×), the level's backdrop (or *Leave out the
+  backdrop* for a transparent PNG; a level whose backdrop is *None* is
+  transparent anyway), and separate exported-grid on/off, color, and opacity
+  controls. Cropped nodes and pasted parts export at full sharpness (they
+  used to be decoded at the size of the cropped part, which blurred them).
 - **Export for Tabletop Simulator…**: a direct entry point to an opaque PNG
   export, with 1024/2048/3072px longest-edge presets that preserve aspect
   ratio. Import the PNG in TTS as a **Custom Board**; the preset defaults to
-  2048px and lets you choose whether to bake in the grid. Gameplay-zone
+  2048px and lets you choose whether to bake in the grid. Boards are always
+  opaque: a transparent backdrop is filled with the level's color. Gameplay-zone
   borders/labels are static artwork in the PNG; use TTS's native zone tools
   separately when you need interactive in-game behavior such as Fog of War.
 - **Export PDF…**: choose the current level or all levels (one page per level),
@@ -381,6 +460,12 @@ bulk. Your choices (★) are saved with the asset store and always win.
 | 1 – 9 | Pick up that stamp key; click to place copies (same key, Esc or right-click stops) |
 | Ctrl+Shift+D | Duplicate as grid |
 | Ctrl+click | Pick one member of a group |
+| Ctrl+A / Ctrl+Shift+A / Ctrl+Shift+I | Select all / Deselect / Invert selection |
+| Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D | Copy / Cut / Paste / Duplicate (in the cut-out tool: the selected area) |
+| [ / ] | Swap the selected image to the previous / next image in its library folder |
+| Cut-out tool: Delete or Backspace | Hide the selected area (Backspace also removes the last polygon corner) |
+| Cut-out tool: Shift / Alt / Ctrl+click | Square or circle / no grid snapping / add or remove an image |
+| Cut-out tool: Esc | Clear the area; press again to put the tool away |
 
 ---
 
@@ -391,9 +476,12 @@ core/   project (data model) · history (undo/redo) · asset_manager (internal
         render (shared piece drawing) · generator (tile layouts + geomorph assembly) ·
         guides · transforms (mirror / grid copies) · stamps (hotbar keys) ·
         backups (rolling auto-save backups) · relink (missing images) ·
-        userfiles (recent maps, previews, file names)
+        userfiles (recent maps, previews, file names) · cutouts (cut-out
+        holes, pasted parts, clone patches)
 ui/     main_window · canvas · library · properties · layers_panel · zones_panel ·
         menu_overlay (ESC project menu) · generator_dialog · theme (Dark/Light/Alien) ·
-        export_dialog · stamp_bar · tool_dialogs · glyphs · app_icon
+        export_dialog · stamp_bar · tool_dialogs · glyphs · app_icon ·
+        canvas_tools (selection basics, swapping, cut-out tool, clone patch) ·
+        cutout_bar
 sample_fixtures.py   demo images for tests, generated on demand (generate_samples.py)
 ```
