@@ -148,6 +148,7 @@ class AssetListModel(QAbstractListModel):
         self._path_to_row = {}
         self._icons = OrderedDict()
         self._attempted = set()
+        self._failed = set()          # decoded but unreadable: show "no preview"
         self._pending = {}
         self._thread_pool = QThreadPool(self)
         # Two decoders balance speed against peak memory for very large PNGs;
@@ -174,12 +175,14 @@ class AssetListModel(QAbstractListModel):
             if icon is not None:
                 self._icons.move_to_end(asset.path)
                 return icon
-            return self._placeholder_icon()
+            return self._placeholder_icon(failed=asset.path in self._failed)
         if role == Qt.ItemDataRole.ToolTipRole:
             tags = self.category_tags.get(asset.path, ())
             labels = sorted(CATEGORY_LABELS[tag] for tag in tags
                             if tag in CATEGORY_LABELS)
             tooltip = asset.path
+            if asset.path in self._failed:
+                tooltip += "\nPreview could not be generated for this image."
             if labels:
                 tooltip += "\nSmart categories: " + ", ".join(labels)
             return tooltip
@@ -189,9 +192,13 @@ class AssetListModel(QAbstractListModel):
             return int(Qt.AlignmentFlag.AlignHCenter)
         return None
 
-    def _placeholder_icon(self):
-        """Neutral tile shown until the real preview has been decoded."""
-        cached = getattr(self, "_placeholder", None)
+    def _placeholder_icon(self, failed: bool = False):
+        """Neutral tile shown until the real preview has been decoded (or a
+        distinct one when the image could not be read at all)."""
+        cache = getattr(self, "_placeholders", None)
+        if cache is None:
+            cache = self._placeholders = {}
+        cached = cache.get(failed)
         if cached is not None and cached[0] == self.thumb_size:
             return cached[1]
         size = self.thumb_size
@@ -202,10 +209,11 @@ class AssetListModel(QAbstractListModel):
         pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(pen)
         painter.drawRect(2, 2, size - 5, size - 5)
-        painter.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "loading…")
+        painter.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter,
+                         "no preview" if failed else "loading…")
         painter.end()
         icon = QIcon(pm)
-        self._placeholder = (size, icon)
+        cache[failed] = (size, icon)
         return icon
 
     def set_assets(self, assets, category_tags=None, library=None):
@@ -218,6 +226,7 @@ class AssetListModel(QAbstractListModel):
                              for row, asset in enumerate(self.assets)}
         self._icons.clear()
         self._attempted.clear()
+        self._failed.clear()
         self.endResetModel()
 
     def set_thumb_size(self, size: int):
@@ -228,6 +237,7 @@ class AssetListModel(QAbstractListModel):
         self._generation += 1
         self._icons.clear()
         self._attempted.clear()
+        self._failed.clear()
 
     def asset_at(self, index):
         if index is None or not index.isValid():
@@ -276,7 +286,15 @@ class AssetListModel(QAbstractListModel):
             self.thumbnailLoaded.emit()
             return
         self._attempted.add(path)
-        if not image.isNull():
+        if image.isNull():
+            self._failed.add(path)
+            row = self._path_to_row.get(path)
+            if row is not None:
+                index = self.index(row, 0)
+                self.dataChanged.emit(
+                    index, index, [int(Qt.ItemDataRole.DecorationRole)])
+        else:
+            self._failed.discard(path)
             self._icons[path] = QIcon(QPixmap.fromImage(image))
             self._icons.move_to_end(path)
             while len(self._icons) > self.MAX_CACHED_ICONS:

@@ -214,6 +214,28 @@ assert not model._pending, "finished thumbnail requests must free their slot"
 assert not model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole).isNull()
 print("library previews ok")
 
+# ---- images larger than Qt's default 256 MB decode limit still load
+huge = os.path.join(tmp, "huge.png")
+big = QImage(8400, 8400, QImage.Format.Format_ARGB32)       # ~282 MB decoded
+big.fill(QColor("#224466")); big.save(huge); del big
+from ui.image_utils import load_scaled_image
+assert not load_scaled_image(huge, 110).isNull(), "huge tile must produce a preview"
+hp = Piece(asset_path="huge.png", x=0, y=0, w=400, h=400, snap=False)
+assert not canvas.pixmap(hp, (300, 300)).isNull(), "huge tile must draw on the canvas"
+os.remove(huge)
+print("huge image decode ok")
+
+# unreadable images get a distinct "no preview" tile instead of loading forever
+model._failed.clear()
+asset = model.assets[0]
+model._pending[(model._generation, asset.path)] = object()
+model._thumbnail_ready(asset.path, model.thumb_size, model._generation, QImage())
+assert asset.path in model._failed and not model._pending
+failed_icon = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
+assert not failed_icon.isNull()
+assert "could not be generated" in model.data(model.index(0, 0), Qt.ItemDataRole.ToolTipRole)
+print("failed preview state ok")
+
 # ---- generator dialog shows only relevant options and never greys Output
 from ui.generator_dialog import GeneratorDialog
 dlg = GeneratorDialog(project, win.library, canvas, lambda opts: {"pieces": []}, win)

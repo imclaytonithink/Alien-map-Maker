@@ -10,6 +10,8 @@ from functools import lru_cache
 from PyQt6.QtCore import QSize, QStandardPaths, Qt
 from PyQt6.QtGui import QImage, QImageReader, QPixmap
 
+from core.imaging import decode_guard
+
 # Decoding a multi-thousand-pixel PNG takes seconds, so small previews are
 # generated once and kept on disk (as 256 px PNGs) for every later session.
 DISK_THUMB_MAX = 384
@@ -76,7 +78,8 @@ def _read_scaled_image(path: str, max_dimension: int) -> QImage:
     width = max(1, int(round(source.width() * scale)))
     height = max(1, int(round(source.height() * scale)))
     reader.setScaledSize(QSize(width, height))
-    return reader.read()
+    with decode_guard(source.width(), source.height()):
+        return reader.read()
 
 
 def load_scaled_image(path: str, max_dimension: int = 110) -> QImage:

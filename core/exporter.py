@@ -12,6 +12,7 @@ from PyQt6.QtGui import (QImage, QImageReader, QPainter, QPixmap, QColor, QPen,
                          QPdfWriter, QPageSize)
 from PyQt6.QtWidgets import QApplication
 
+from core.imaging import decode_guard
 from core.project import Level, Project, Piece, decode_embed
 from core.render import draw_node_border, draw_piece, draw_zone_borders
 
@@ -79,7 +80,8 @@ def _scaled_pixmap_from_reader(reader: QImageReader, target_size) -> QPixmap:
     if factor < 0.999:
         reader.setScaledSize(QSize(max(1, round(source.width() * factor)),
                                    max(1, round(source.height() * factor))))
-    image = reader.read()
+    with decode_guard(source.width(), source.height()):
+        image = reader.read()
     return QPixmap.fromImage(image) if not image.isNull() else QPixmap()
 
 
