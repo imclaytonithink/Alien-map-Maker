@@ -161,6 +161,22 @@ def _draw_grid(painter, project, scale, color, opacity):
         painter.drawLine(int(gx * scale), 0, int(gx * scale), int(h * scale))
     for gy in range(0, h + 1, cell):
         painter.drawLine(0, int(gy * scale), int(w * scale), int(gy * scale))
+    if getattr(project, "show_centerlines", False):
+        mid = QPen(QColor(color))
+        mid.setWidthF(max(1.0, scale))
+        mid.setStyle(Qt.PenStyle.DashLine)
+        painter.setOpacity(opacity * 0.45)
+        painter.setPen(mid)
+        half = cell / 2.0
+        gx = half
+        while gx < w:
+            painter.drawLine(int(gx * scale), 0, int(gx * scale), int(h * scale))
+            gx += cell
+        gy = half
+        while gy < h:
+            painter.drawLine(0, int(gy * scale), int(w * scale), int(gy * scale))
+            gy += cell
+        painter.setPen(pen)
     # major lines
     pen.setWidthF(max(2.0, scale * 1.6))
     painter.setOpacity(opacity)

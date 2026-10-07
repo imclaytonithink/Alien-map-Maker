@@ -5,7 +5,7 @@ import os
 from collections import OrderedDict
 from typing import Optional
 
-from PyQt6.QtCore import (Qt, QMimeData, QSize, QPoint, QModelIndex,
+from PyQt6.QtCore import (Qt, QMimeData, QSettings, QSize, QPoint, QModelIndex,
                           QAbstractListModel, QObject, QRunnable, QThread,
                           QThreadPool, pyqtSignal, QTimer)
 from PyQt6.QtGui import (QDrag, QPixmap, QIcon, QMouseEvent, QCursor, QImage,
@@ -13,7 +13,8 @@ from PyQt6.QtGui import (QDrag, QPixmap, QIcon, QMouseEvent, QCursor, QImage,
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox,
     QLabel, QSlider, QDialog, QFileDialog, QAbstractItemView,
-    QListView, QTreeWidget, QTreeWidgetItem,
+    QListView, QTreeWidget, QTreeWidgetItem, QToolButton, QMenu, QSpinBox,
+    QWidgetAction,
 )
 
 from core.asset_manager import AssetLibrary
@@ -24,8 +25,8 @@ from core.asset_taxonomy import (
     classify_asset_categories,
 )
 from core.project import Project
-from ui.branding import (default_asset_store_path, prune_demo_assets,
-                         seed_bundled_assets)
+from ui.branding import (SETTINGS_ID, default_asset_store_path,
+                         prune_demo_assets, seed_bundled_assets)
 from ui.image_utils import load_scaled_image, load_scaled_pixmap
 
 
@@ -96,6 +97,12 @@ class ZipImportWorker(QThread):
         self.completed.emit(reports, errors)
 
 
+THUMB_MIN = 32
+THUMB_MAX = 360
+THUMB_PRESETS = (("Small", 64), ("Medium", 96), ("Large", 160),
+                 ("Extra large", 240), ("Huge", 360))
+
+
 class ThumbnailSignals(QObject):
     completed = pyqtSignal(str, int, int, QImage)
 
@@ -129,7 +136,7 @@ class AssetListModel(QAbstractListModel):
 
     thumbnailLoaded = pyqtSignal()
     MAX_CACHED_ICONS = 96
-    MAX_PENDING_THUMBNAILS = 8
+    MAX_PENDING_THUMBNAILS = 12
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -146,7 +153,7 @@ class AssetListModel(QAbstractListModel):
         # Two decoders balance speed against peak memory for very large PNGs;
         # previews are also kept on disk (see image_utils) so each is slow only
         # once. The editor stays responsive because decoding is off-thread.
-        self._thread_pool.setMaxThreadCount(2)
+        self._thread_pool.setMaxThreadCount(3)
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.assets)
@@ -287,6 +294,7 @@ class AssetList(QListView):
     """Thumbnail grid whose items stay virtual and whose images load lazily."""
 
     viewportResized = pyqtSignal()
+    thumbnailZoomRequested = pyqtSignal(int)   # +1 / -1 from Ctrl+wheel
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -319,6 +327,14 @@ class AssetList(QListView):
         self.asset_model.thumbnailLoaded.connect(self._thumbnail_ready)
         self.setMouseTracking(True)
         self._update_grid_size()
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            step = 1 if event.angleDelta().y() > 0 else -1
+            self.thumbnailZoomRequested.emit(step)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def count(self):
         """Compatibility helper for callers/tests that previously used QListWidget."""
@@ -474,32 +490,30 @@ class LibraryPanel(QWidget):
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(140)
         self._search_timer.timeout.connect(self.refresh)
-        layout.addWidget(self.search)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(4)
+        search_row.addWidget(self.search, 1)
+        self.btn_menu = QToolButton()
+        self.btn_menu.setText("☰")
+        self.btn_menu.setObjectName("LibraryMenuButton")
+        self.btn_menu.setToolTip(
+            "Library menu — import, collections, thumbnail size, folder tree")
+        self.btn_menu.setMinimumSize(38, 34)
+        self.btn_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        search_row.addWidget(self.btn_menu)
+        layout.addLayout(search_row)
 
-        import_row = QHBoxLayout()
-        import_row.setSpacing(4)
-        self.b_imp_f = QPushButton("Folder")
-        self.b_imp_f.setToolTip(
-            "Import Folder — copy images into the internal library, keeping the selected "
-            "folder name and its subfolders as an expandable file tree. "
-            "Useful for Core / Symbols packs. Importing does not place them "
-            "on the map; drag or double-click "
-            "an asset afterward.")
+        # Import actions live in the library menu (☰ next to search) instead of
+        # a permanent row of buttons. The buttons stay as hidden state holders
+        # so a running ZIP import can still disable them.
+        self.b_imp_f = QPushButton("Folder", self)
         self.b_imp_f.clicked.connect(self._import_folder)
-        self.b_imp_p = QPushButton("File")
-        self.b_imp_p.setToolTip(
-            "Import File — copy one image into the internal library. Drag or double-click "
-            "it afterward to place it on the map.")
+        self.b_imp_p = QPushButton("File", self)
         self.b_imp_p.clicked.connect(self._import_file)
-        self.b_imp_zip = QPushButton("ZIP")
-        self.b_imp_zip.setToolTip(
-            "Import ZIP — import supported images from one or more archives. "
-            "Folder paths are preserved; non-image files are skipped.")
+        self.b_imp_zip = QPushButton("ZIP", self)
         self.b_imp_zip.clicked.connect(self._import_zip)
         for button in (self.b_imp_f, self.b_imp_p, self.b_imp_zip):
-            button.setMinimumWidth(0)
-            import_row.addWidget(button, 1)
-        layout.addLayout(import_row)
+            button.hide()
 
         # Hierarchical file paths and virtual smart-category views.
         g_row = QHBoxLayout()
@@ -516,50 +530,43 @@ class LibraryPanel(QWidget):
             "move or duplicate assets.")
         self.group_tree.currentItemChanged.connect(self._on_tree_pick)
         g_row.addWidget(self.group_tree, 1)
-        g_btns = QVBoxLayout()
-        self.b_group_up = QPushButton("▲")
-        self.b_group_up.setObjectName("PanelIconButton")
-        self.b_group_up.setFixedSize(38, 34)
-        self.b_group_up.setToolTip("Move this folder earlier among its siblings")
+        # Reordering moves to the tree's right-click menu; hidden buttons keep
+        # the enabled/disabled state used by that menu.
+        self.b_group_up = QPushButton("▲", self)
         self.b_group_up.clicked.connect(self._group_up)
-        self.b_group_down = QPushButton("▼")
-        self.b_group_down.setObjectName("PanelIconButton")
-        self.b_group_down.setFixedSize(38, 34)
-        self.b_group_down.setToolTip("Move this folder later among its siblings")
+        self.b_group_down = QPushButton("▼", self)
         self.b_group_down.clicked.connect(self._group_down)
-        g_btns.addWidget(self.b_group_up)
-        g_btns.addWidget(self.b_group_down)
-        g_row.addLayout(g_btns)
-        layout.addLayout(g_row)
+        self.b_group_up.hide()
+        self.b_group_down.hide()
+        self.group_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.group_tree.customContextMenuRequested.connect(self._tree_menu)
+        self.group_tree_box = QWidget()
+        box_layout = QVBoxLayout(self.group_tree_box)
+        box_layout.setContentsMargins(0, 0, 0, 0)
+        box_layout.addLayout(g_row)
+        layout.addWidget(self.group_tree_box)
 
-        # collections
-        coll_row = QHBoxLayout()
+        # collections: the picker only takes space once a collection exists;
+        # creating/editing them is in the library menu.
         self.coll_combo = QComboBox()
         self.coll_combo.addItem("All assets")
         self.coll_combo.setMinimumWidth(70)
         self.coll_combo.currentIndexChanged.connect(self._on_collection_pick)
-        btn_new = QPushButton("New"); btn_new.setMaximumWidth(52)
-        btn_new.setToolTip("Create a collection")
-        btn_new.clicked.connect(self._new_collection)
-        btn_add = QPushButton("Add"); btn_add.setMaximumWidth(52)
-        btn_add.setToolTip("Add the selected asset to this collection")
-        btn_add.clicked.connect(self._add_to_collection)
-        btn_del = QPushButton("×"); btn_del.setMaximumWidth(36)
-        btn_del.setToolTip("Remove the selected asset from this collection")
-        btn_del.clicked.connect(self._remove_from_collection)
-        coll_row.addWidget(self.coll_combo, 1)
-        coll_row.addWidget(btn_new); coll_row.addWidget(btn_add); coll_row.addWidget(btn_del)
-        layout.addLayout(coll_row)
+        self.coll_combo.setVisible(False)
+        layout.addWidget(self.coll_combo)
 
-        # thumb size slider
-        ts = QHBoxLayout()
-        ts.addWidget(QLabel("Thumb"))
+        # thumbnail size: lives in the library menu; wide range plus presets
+        self._settings = QSettings("ArenaMaps", SETTINGS_ID)
+        saved_size = self._settings.value("library/thumb_size", 96)
+        try:
+            saved_size = int(saved_size)
+        except (TypeError, ValueError):
+            saved_size = 96
         self.sl_thumb = QSlider(Qt.Orientation.Horizontal)
-        self.sl_thumb.setRange(32, 110)
-        self.sl_thumb.setValue(56)
+        self.sl_thumb.setRange(THUMB_MIN, THUMB_MAX)
+        self.sl_thumb.setValue(max(THUMB_MIN, min(THUMB_MAX, saved_size)))
         self.sl_thumb.valueChanged.connect(self._thumb_size)
-        ts.addWidget(self.sl_thumb, 1)
-        layout.addLayout(ts)
+        self._build_library_menu()
 
         self.list = AssetList()
         self.list.doubleClicked.connect(self._asset_double_clicked)
@@ -575,32 +582,13 @@ class LibraryPanel(QWidget):
         self.list.asset_model.thumbnailLoaded.connect(
             self._schedule_visible_thumbnails)
         layout.addWidget(self.list, 1)
+        self.list.set_thumbnail_size(self.sl_thumb.value())
+        self.list.thumbnailZoomRequested.connect(self._zoom_thumbnails)
 
-        # where the internal store lives + how to get help
-        store_row = QHBoxLayout()
-        self.lbl_store = QLabel("Store: (not set)")
-        self.lbl_store.setToolTip(
-            "Internal asset store.\n\nEverything you import is COPIED into "
-            "this folder and lives there permanently — maps reference those "
-            "copies. Subfolders remain visible in the expandable file tree; "
-            "smart categories are virtual views only.\n\n"
-            "PNGs dropped straight onto the canvas are different: they are "
-            "embedded inside the .bmap file itself.")
-        self.lbl_store.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
-        store_row.addWidget(self.lbl_store, 1)
-        b_where = QPushButton("?")
-        b_where.setMaximumWidth(36)
-        b_where.setToolTip("Explain where imported assets are stored")
-        b_where.clicked.connect(self._show_store_help)
-        store_row.addWidget(b_where)
-        b_open = QPushButton("Open")
-        b_open.setMaximumWidth(52)
-        b_open.setToolTip("Open the internal asset store folder in your "
-                          "file manager")
-        b_open.clicked.connect(self._open_store)
-        store_row.addWidget(b_open)
-        layout.addLayout(store_row)
+        # The store path/help/open actions moved into the library menu; the
+        # label stays as a hidden holder for the elided path text.
+        self.lbl_store = QLabel("Store: (not set)", self)
+        self.lbl_store.hide()
 
         self.count_label = QLabel("")
         self.count_label.setWordWrap(True)
@@ -805,6 +793,7 @@ class LibraryPanel(QWidget):
             for name in self.project.collections:
                 self.coll_combo.addItem(f"★ {name}")
         self.coll_combo.blockSignals(False)
+        self.coll_combo.setVisible(self.coll_combo.count() > 1)
 
     # ------------------------------------------------------------------
     def _asset_double_clicked(self, index):
@@ -988,12 +977,131 @@ class LibraryPanel(QWidget):
                 continue
             if model.request_thumbnail(index):
                 requested += 1
-            if requested >= 3:
+            if requested >= 6:
                 break
+        # then quietly warm the next screenful so scrolling finds them ready
+        if visible_rows and requested < 6:
+            last = max(visible_rows)
+            for row in range(last + 1, min(model.rowCount(), last + 25)):
+                index = model.index(row, 0)
+                if model.has_requested_thumbnail(index):
+                    continue
+                if not model.request_thumbnail(index):
+                    break
+                requested += 1
+                if requested >= 6:
+                    break
 
     def _thumb_size(self, v):
         self.list.set_thumbnail_size(v)
         self._schedule_visible_thumbnails()
+        self._settings.setValue("library/thumb_size", int(v))
+        spin = getattr(self, "spin_thumb", None)
+        if spin is not None and spin.value() != v:
+            spin.blockSignals(True)
+            spin.setValue(int(v))
+            spin.blockSignals(False)
+
+    def _zoom_thumbnails(self, direction: int):
+        """Ctrl+wheel over the list: ~12% per notch."""
+        value = self.sl_thumb.value()
+        step = max(8, int(value * 0.12))
+        self.sl_thumb.setValue(max(THUMB_MIN, min(THUMB_MAX, value + direction * step)))
+
+    # -- library menu (☰) --------------------------------------------------
+    def _build_library_menu(self):
+        menu = QMenu(self)
+        self.lib_menu = menu
+        imp = menu.addMenu("Import")
+        imp.addAction("Folder…", self._import_folder)
+        imp.addAction("File…", self._import_file)
+        imp.addAction("ZIP archive(s)…", self._import_zip)
+        self._import_menu = imp
+        coll = menu.addMenu("Collections")
+        coll.addAction("New collection…", self._new_collection)
+        coll.addAction("Add selected asset to the chosen collection",
+                       self._add_to_collection)
+        coll.addAction("Remove selected asset from the chosen collection",
+                       self._remove_from_collection)
+        menu.addSeparator()
+
+        size_menu = menu.addMenu("Thumbnail size")
+        self._size_actions = {}
+        for label, value in THUMB_PRESETS:
+            action = size_menu.addAction(f"{label}  ({value}px)")
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda checked=False, v=value: self.sl_thumb.setValue(v))
+            self._size_actions[value] = action
+        size_menu.addSeparator()
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(10, 4, 10, 4)
+        row.addWidget(QLabel("Custom"))
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(THUMB_MIN, THUMB_MAX)
+        slider.setMinimumWidth(140)
+        self.spin_thumb = QSpinBox()
+        self.spin_thumb.setRange(THUMB_MIN, THUMB_MAX)
+        self.spin_thumb.setSuffix(" px")
+        slider.valueChanged.connect(self.sl_thumb.setValue)
+        self.spin_thumb.valueChanged.connect(self.sl_thumb.setValue)
+        self.sl_thumb.valueChanged.connect(lambda v: slider.setValue(v)
+                                           if slider.value() != v else None)
+        row.addWidget(slider, 1)
+        row.addWidget(self.spin_thumb)
+        widget_action = QWidgetAction(size_menu)
+        widget_action.setDefaultWidget(holder)
+        size_menu.addAction(widget_action)
+        size_menu.addAction("Tip: Ctrl + mouse wheel over the list also resizes").setEnabled(False)
+        self._size_slider = slider
+        slider.setValue(self.sl_thumb.value())
+        self.spin_thumb.setValue(self.sl_thumb.value())
+
+        self.act_tree = menu.addAction("Show folder tree")
+        self.act_tree.setCheckable(True)
+        show_tree = self._settings.value("library/show_tree", True, type=bool)
+        self.act_tree.setChecked(show_tree)
+        self.group_tree_box.setVisible(show_tree)
+        self.act_tree.toggled.connect(self._set_tree_visible)
+        menu.addSeparator()
+        self.act_store = menu.addAction("Store: (not set)")
+        self.act_store.setEnabled(False)
+        menu.addAction("Open asset folder", self._open_store)
+        menu.addAction("Where are my assets?", self._show_store_help)
+        menu.aboutToShow.connect(self._sync_library_menu)
+        self.btn_menu.setMenu(menu)
+
+    def _sync_library_menu(self):
+        importing = not self.b_imp_zip.isEnabled()
+        self._import_menu.setEnabled(not importing)
+        current = self.sl_thumb.value()
+        for value, action in self._size_actions.items():
+            action.setChecked(value == current)
+        path = (self.project.asset_store if self.project
+                and self.project.asset_store else "")
+        shown = self.lbl_store.fontMetrics().elidedText(
+            "Store: " + (path or "(created on first import)"),
+            Qt.TextElideMode.ElideMiddle, 340)
+        self.act_store.setText(shown)
+
+    def _set_tree_visible(self, on: bool):
+        self.group_tree_box.setVisible(bool(on))
+        self._settings.setValue("library/show_tree", bool(on))
+
+    def _tree_menu(self, pos):
+        item = self.group_tree.itemAt(pos)
+        if item is not None:
+            self.group_tree.setCurrentItem(item)
+        menu = QMenu(self)
+        up = menu.addAction("Move earlier", self._group_up)
+        up.setEnabled(self.b_group_up.isEnabled())
+        down = menu.addAction("Move later", self._group_down)
+        down.setEnabled(self.b_group_down.isEnabled())
+        menu.addSeparator()
+        menu.addAction("Expand all", self.group_tree.expandAll)
+        menu.addAction("Collapse all", self.group_tree.collapseAll)
+        menu.exec(self.group_tree.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------
     def _import_folder(self):
@@ -1179,6 +1287,11 @@ class LibraryPanel(QWidget):
         act.triggered.connect(lambda: self._view_large(asset))
         act2 = menu.addAction("Add to canvas")
         act2.triggered.connect(lambda: self.assetActivated.emit(asset.path))
+        if self.project and self.project.collections:
+            coll = menu.addMenu("Add to collection")
+            for name in self.project.collections:
+                coll.addAction(name, lambda n=name, p=asset.path:
+                               self._add_path_to_collection(n, p))
         menu.exec(self.list.mapToGlobal(pos))
 
     def _view_large(self, asset):
@@ -1196,6 +1309,14 @@ class LibraryPanel(QWidget):
             self.project.collections.setdefault(name, [])
             self._rebuild_collections()
             self.collectionsChanged.emit()
+
+    def _add_path_to_collection(self, name: str, path: str):
+        if not self.project:
+            return
+        members = self.project.collections.setdefault(name, [])
+        if path not in members:
+            members.append(path)
+        self.collectionsChanged.emit()
 
     def _add_to_collection(self):
         path = self.list.current_path()

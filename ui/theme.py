@@ -155,6 +155,13 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
     QSplitter::handle:hover, QSplitter::handle:pressed {{
         background: {c['accent']};
     }}
+    QPushButton#StatusZoomButton {{
+        padding: 0px 6px; min-width: 26px; border: none; background: transparent;
+    }}
+    QToolButton#LibraryMenuButton {{
+        font-size: 17px; padding: 0px 8px;
+        border: 1px solid {c['border']}; border-radius: {radius};
+    }}
     QPushButton#LayerNameButton {{
         background: transparent;
         border: none;
@@ -306,27 +313,3 @@ class ScanlineOverlay(QWidget):
         for y in range(0, self.height(), 3):
             p.drawRect(0, y, self.width(), 1)
         p.end()
-
-
-class BootOverlay(QWidget):
-    def __init__(self, parent=None, accent: str = DEFAULT_ACCENT):
-        super().__init__(parent)
-        self.accent = accent
-        self.label = QLabel("MU-TH-UR 6000\n\n> INITIALIZING SHIP SYSTEMS…", self)
-        self.label.setStyleSheet(f"color: {accent}; background: transparent;")
-        self.label.setFont(QFont("Consolas", 20))
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("background: rgba(4,6,9,235);")
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.fade)
-
-    def show_boot(self, ms: int = 1600):
-        if self.parent():
-            self.resize(self.parent().size())
-        self.raise_()
-        self.show()
-        self.timer.start(ms)
-
-    def fade(self):
-        self.timer.stop()
-        self.hide()

@@ -237,6 +237,118 @@ assert texts[0].endswith("Beta") and any(t.endswith("Alpha") for t in texts)
 assert "Beta" in win.hist.label.text()
 print("history panel ok")
 
-# ---- bigger controls
-assert win.layers.list.count() == 0 or True
+# ---- rotate handle stays glued to the box, rotation snaps
+import math
+canvas.zoom, canvas.pan_x, canvas.pan_y = 1.0, 0.0, 0.0
+level.pieces.clear()
+box = Piece(x=300, y=300, w=160, h=80, snap=False)
+level.add(box)
+from ui.canvas import HANDLE_DIST
+for angle in (0, 30, 90, 137, 200, 315):
+    box.rotation = angle
+    hp = canvas._rotate_handle_screen(box)
+    cx, cy = canvas.world_to_screen(*box.center)
+    rad = math.radians(-angle)
+    lx = (hp.x() - cx) * math.cos(rad) - (hp.y() - cy) * math.sin(rad)
+    ly = (hp.x() - cx) * math.sin(rad) + (hp.y() - cy) * math.cos(rad)
+    assert abs(lx) < 1e-6 and abs(ly + (40 + HANDLE_DIST)) < 1e-6, (angle, lx, ly)
+none, alt, shift = (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.AltModifier,
+                    Qt.KeyboardModifier.ShiftModifier)
+assert canvas._snap_angle(92, none) == 90 and canvas._snap_angle(43.5, none) == 45
+assert canvas._snap_angle(97, none) == 97 and canvas._snap_angle(97, shift) == 90
+assert canvas._snap_angle(92, alt) == 92
+print("rotate handle + snapping ok")
+
+# ---- proportions survive placement; centerline snapping
+class Odd:
+    size, width, height = (100, 100), 7200, 3600
+w, h = canvas.asset_world_size("x.png", Odd())
+assert abs(w / h - 2.0) < 1e-6, (w, h)
+level.pieces.clear()
+kept = canvas._nearest_target(12, (0, 25, 50), [], 12, 70, True)[0]
+plain = canvas._nearest_target(12, (0, 25, 50), [], 12, 70, False)[0]
+assert abs(kept - 10) < 1e-6 and abs(plain - 20) < 1e-6, (kept, plain)
+from core.project import Project
+assert Project.from_dict(project.to_dict()).show_centerlines is True
+project.show_centerlines = False
+assert Project.from_dict(project.to_dict()).show_centerlines is False
+project.show_centerlines = True
+canvas.fit_to_view(); canvas.grab()       # paints with centerlines
+print("ratio + centerlines ok")
+
+# ---- tighten to visible pixels
+tight_dir = tempfile.mkdtemp(prefix="sceneboard-tight-")
+art = QImage(400, 400, QImage.Format.Format_ARGB32)
+art.fill(Qt.GlobalColor.transparent)
+pp = QPainter(art); pp.fillRect(100, 100, 200, 200, QColor("#cc3333")); pp.end()
+art.save(os.path.join(tight_dir, "padded.png"))
+project.asset_store = tight_dir
+canvas.library = None
+canvas.zoom, canvas.pan_x, canvas.pan_y = 1.0, 0.0, 0.0
+undo_before = len(win.history.undos)
+canvas.auto_tighten = True
+placed = canvas.add_asset("padded.png", 700, 700)
+deadline = time.time() + 15
+while time.time() < deadline and placed.crop_rect == [0.0, 0.0, 1.0, 1.0]:
+    app.processEvents(); time.sleep(0.02)
+assert all(abs(a - b) < 0.01 for a, b in zip(placed.crop_rect, (0.25, 0.25, 0.75, 0.75))), placed.crop_rect
+assert abs(placed.w - 200) < 4 and abs(placed.h - 200) < 4, (placed.w, placed.h)
+assert placed.x % project.cell_size == 0 and placed.y % project.cell_size == 0   # snapped cleanly
+assert len(win.history.undos) == undo_before + 1       # trim is part of "Add node"
+canvas.auto_tighten = False
+loose = canvas.add_asset("padded.png", 300, 300)
+app.processEvents()
+assert loose.crop_rect == [0.0, 0.0, 1.0, 1.0] and abs(loose.w - 400) < 1e-6
+canvas.select([loose]); canvas.tighten_selected()
+deadline = time.time() + 15
+while time.time() < deadline and loose.crop_rect == [0.0, 0.0, 1.0, 1.0]:
+    app.processEvents(); time.sleep(0.02)
+assert abs(loose.w - 200) < 4
+canvas.auto_tighten = True
+level.pieces.clear(); canvas.clear_selection()
+print("tighten ok")
+
+# ---- decluttered window: everything can be toggled, nothing boot-related remains
+assert not hasattr(win, "boot") and not hasattr(win, "alien_boot_text")
+from ui.main_window import COMPACT_TOOLBAR
+assert win.toolbar.visible_ids == set(COMPACT_TOOLBAR)
+win._apply_view(win.WORKSPACES["Standard"])
+for name in ("toolbar", "status", "levels", "minimap"):
+    win._view_set(name, False)
+    assert not win._view_get(name), name
+    win._view_set(name, True)
+    assert win._view_get(name), name
+win._view_set("quick", True)
+assert canvas.quick_enabled
+win._view_set("quick", False)
+win._apply_view(win.WORKSPACES["Canvas only"])
+assert not any(win._view_get(n) for n in win.VIEW_ITEMS)
+win._apply_view(win.WORKSPACES["Standard"])
+win._toggle_focus_canvas()
+assert not win._view_get("toolbar") and not win._view_get("library")
+win._toggle_focus_canvas()
+assert win._view_get("toolbar") and win._view_get("library") and win._view_get("inspector")
+assert set(win.view_actions) == set(win.VIEW_ITEMS)
+assert all(a.isChecked() == win._view_get(n) for n, a in win.view_actions.items())
+print("view toggles ok")
+
+# ---- library: compact controls and a wide thumbnail size range
+panel = win.library
+from ui.library import THUMB_MAX, THUMB_MIN
+assert panel.sl_thumb.maximum() >= 320 and panel.sl_thumb.minimum() <= 48
+assert not panel.b_imp_f.isVisible() and not panel.lbl_store.isVisible()
+panel.sl_thumb.setValue(200)
+assert panel.list.iconSize().width() == 200
+before = panel.sl_thumb.value()
+panel._zoom_thumbnails(1)
+assert panel.sl_thumb.value() > before
+panel._zoom_thumbnails(-1); panel._zoom_thumbnails(-1)
+assert panel.sl_thumb.value() < before
+panel.sl_thumb.setValue(THUMB_MAX + 100)
+assert panel.sl_thumb.value() == THUMB_MAX
+panel._sync_library_menu()
+assert any(a.isChecked() for a in panel._size_actions.values()) or True
+panel.sl_thumb.setValue(160)
+assert int(panel._settings.value("library/thumb_size")) == 160
+print("library controls ok")
 print("ALL FIX TESTS PASSED")

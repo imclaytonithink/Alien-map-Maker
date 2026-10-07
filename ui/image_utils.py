@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import threading
 from functools import lru_cache
 
 from PyQt6.QtCore import QSize, QStandardPaths, Qt
@@ -10,7 +12,7 @@ from PyQt6.QtGui import QImage, QImageReader, QPixmap
 
 # Decoding a multi-thousand-pixel PNG takes seconds, so small previews are
 # generated once and kept on disk (as 256 px PNGs) for every later session.
-DISK_THUMB_MAX = 256
+DISK_THUMB_MAX = 384
 _THUMB_DIR: str | None = None
 
 
@@ -31,7 +33,8 @@ def _disk_cached_base(path: str, modified_ns: int) -> QImage:
     except OSError:
         size = 0
     key = hashlib.sha1(
-        f"{os.path.abspath(path)}|{modified_ns}|{size}".encode("utf-8", "ignore")
+        f"{os.path.abspath(path)}|{modified_ns}|{size}|{DISK_THUMB_MAX}".encode(
+            "utf-8", "ignore")
     ).hexdigest()
     cache_file = os.path.join(_thumb_dir(), key[:2], key + ".png")
     if os.path.isfile(cache_file):
@@ -87,7 +90,7 @@ def load_scaled_image(path: str, max_dimension: int = 110) -> QImage:
         modified_ns = os.stat(path).st_mtime_ns
     except OSError:
         return QImage()
-    if max_dimension <= 256:
+    if max_dimension <= DISK_THUMB_MAX:
         return _cached_small_image(path, max_dimension, modified_ns)
     return _read_scaled_image(path, max_dimension)
 
@@ -111,6 +114,96 @@ def load_scaled_pixmap(path: str, max_dimension: int = 110) -> QPixmap:
         modified_ns = os.stat(path).st_mtime_ns
     except OSError:
         return QPixmap()
-    if max_dimension <= 256:
+    if max_dimension <= DISK_THUMB_MAX:
         return _cached_small_preview(path, max_dimension, modified_ns)
     return _read_scaled(path, max_dimension)
+
+
+# ---------------------------------------------------------------------------
+# Visible-pixel bounds: where the artwork actually is inside its PNG, so a node
+# can be tightened to it instead of keeping a transparent margin that makes
+# snapping look off.
+# ---------------------------------------------------------------------------
+BOUNDS_ANALYSIS_SIZE = 1024
+VISIBLE_ALPHA = 16            # alpha above this counts as a visible pixel
+_BOUNDS_LOCK = threading.Lock()
+_BOUNDS: dict[str, list[float]] | None = None
+
+
+def _bounds_file() -> str:
+    return os.path.join(os.path.dirname(_thumb_dir()), "visible_bounds.json")
+
+
+def _bounds_key(path: str) -> str | None:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return hashlib.sha1(
+        f"{os.path.abspath(path)}|{stat.st_mtime_ns}|{stat.st_size}".encode(
+            "utf-8", "ignore")).hexdigest()
+
+
+def _load_bounds() -> dict:
+    global _BOUNDS
+    if _BOUNDS is None:
+        try:
+            with open(_bounds_file(), "r", encoding="utf-8") as handle:
+                _BOUNDS = json.load(handle)
+        except (OSError, ValueError):
+            _BOUNDS = {}
+    return _BOUNDS
+
+
+def _save_bounds():
+    try:
+        os.makedirs(os.path.dirname(_bounds_file()), exist_ok=True)
+        with open(_bounds_file(), "w", encoding="utf-8") as handle:
+            json.dump(_BOUNDS, handle)
+    except OSError:
+        pass
+
+
+def visible_bounds_for_image(image: QImage):
+    """(left, top, right, bottom) as 0..1 fractions of the visible pixels, or
+    None when the image has no visible pixels at all."""
+    from PIL import Image
+
+    if image.isNull():
+        return None
+    alpha = image.convertToFormat(QImage.Format.Format_Alpha8)
+    width, height = alpha.width(), alpha.height()
+    stride = alpha.bytesPerLine()
+    raw = bytes(alpha.constBits().asarray(stride * height))
+    mask = Image.frombuffer("L", (width, height), raw, "raw", "L", stride, 1)
+    box = mask.point(lambda a: 255 if a > VISIBLE_ALPHA else 0).getbbox()
+    if box is None:
+        return None
+    return (box[0] / width, box[1] / height, box[2] / width, box[3] / height)
+
+
+def peek_visible_bounds(path: str):
+    """Cached bounds for ``path`` or None if they have not been computed."""
+    key = _bounds_key(path)
+    if key is None:
+        return None
+    with _BOUNDS_LOCK:
+        value = _load_bounds().get(key)
+    return tuple(value) if value else None
+
+
+def visible_bounds_for_file(path: str):
+    """Visible-pixel bounds of an image file (cached on disk). Decoding a large
+    PNG takes seconds, so call this off the GUI thread."""
+    cached = peek_visible_bounds(path)
+    if cached is not None:
+        return cached
+    key = _bounds_key(path)
+    if key is None:
+        return None
+    bounds = visible_bounds_for_image(_read_scaled_image(path, BOUNDS_ANALYSIS_SIZE))
+    if bounds is not None:
+        with _BOUNDS_LOCK:
+            _load_bounds()[key] = list(bounds)
+            _save_bounds()
+    return bounds

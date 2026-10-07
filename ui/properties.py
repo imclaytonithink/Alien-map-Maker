@@ -386,6 +386,12 @@ class PropertiesPanel(QWidget):
         gf = QFormLayout(g)
         self.chk_grid = QCheckBox("Show grid"); self.chk_grid.toggled.connect(self._apply_grid)
         gf.addRow(self.chk_grid)
+        self.chk_centerlines = QCheckBox("Centerlines (through each square)")
+        self.chk_centerlines.setToolTip(
+            "Draw a faint dashed line through the middle of every grid square. "
+            "Node centers also snap to them.")
+        self.chk_centerlines.toggled.connect(self._apply_grid)
+        gf.addRow(self.chk_centerlines)
         self.sl_gop = QSlider(Qt.Orientation.Horizontal); self.sl_gop.setRange(0, 100); self.sl_gop.setValue(50)
         self.sl_gop.valueChanged.connect(self._apply_grid)
         gf.addRow("Grid opacity", self.sl_gop)
@@ -444,10 +450,12 @@ class PropertiesPanel(QWidget):
         self.sl_project_tint.setValue(int(round(project.tint_strength * 100)))
         self.sl_project_tint.blockSignals(False)
         self._update_project_tint_button()
-        grid_controls = (self.chk_grid, self.sl_gop, self.cmb_style, self.spin_major)
+        grid_controls = (self.chk_grid, self.chk_centerlines, self.sl_gop,
+                         self.cmb_style, self.spin_major)
         for control in grid_controls:
             control.blockSignals(True)
         self.chk_grid.setChecked(project.show_grid)
+        self.chk_centerlines.setChecked(project.show_centerlines)
         self.sl_gop.setValue(int(project.grid_opacity * 100))
         self.cmb_style.setCurrentText(project.grid_style)
         self.spin_major.setValue(project.grid_major)
@@ -1335,6 +1343,7 @@ class PropertiesPanel(QWidget):
         if not self.project:
             return
         self.project.show_grid = self.chk_grid.isChecked()
+        self.project.show_centerlines = self.chk_centerlines.isChecked()
         self.project.grid_opacity = self.sl_gop.value() / 100.0
         old_canvas_size = (self.project.canvas_w, self.project.canvas_h)
         self.project.grid_style = self.cmb_style.currentText()

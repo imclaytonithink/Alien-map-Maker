@@ -154,10 +154,8 @@ class MenuOverlay(QWidget):
 
         tog = QHBoxLayout()
         self.cb_scan = QCheckBox("Scanlines")
-        self.cb_boot = QCheckBox("Boot text")
-        for cb in (self.cb_scan, self.cb_boot):
-            cb.toggled.connect(self._toggle_flourish)
-            tog.addWidget(cb)
+        self.cb_scan.toggled.connect(self._toggle_flourish)
+        tog.addWidget(self.cb_scan)
         alien_layout.addLayout(tog)
         c3.addWidget(self.alien_controls)
 
@@ -385,19 +383,15 @@ class MenuOverlay(QWidget):
                 f"border:2px solid {colors['accent'] if active else colors['border']};")
         self.alien_controls.setVisible(is_alien)
         self.cb_scan.blockSignals(True)
-        self.cb_boot.blockSignals(True)
         self.sl_ts.blockSignals(True)
         self.cmb_autosave.blockSignals(True)
         self.cb_scan.setChecked(self.main.alien_scanlines)
-        self.cb_boot.setChecked(self.main.alien_boot_text)
         self.cb_scan.setEnabled(is_alien)
-        self.cb_boot.setEnabled(is_alien)
         self.sl_ts.setValue(int(round(proj.text_scale * 11)))
         save_index = self.cmb_autosave.findData(self.main.autosave_interval_minutes)
         if save_index >= 0:
             self.cmb_autosave.setCurrentIndex(save_index)
         self.cb_scan.blockSignals(False)
-        self.cb_boot.blockSignals(False)
         self.sl_ts.blockSignals(False)
         self.cmb_autosave.blockSignals(False)
         for hexc, btn in self._accent_btns.items():
@@ -412,8 +406,7 @@ class MenuOverlay(QWidget):
     def _toggle_flourish(self, *_):
         if self.main.theme_mode != "alien":
             return
-        self.main._set_alien_effects(self.cb_scan.isChecked(),
-                                     self.cb_boot.isChecked())
+        self.main._set_alien_effects(self.cb_scan.isChecked())
 
     def _text_scale(self, v):
         self.main.project.text_scale = v / 11.0

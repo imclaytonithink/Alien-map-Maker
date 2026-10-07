@@ -221,35 +221,57 @@ class LayersPanel(QWidget):
     def _build(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(2, 2, 2, 2)
+        top = QHBoxLayout()
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter layers…")
         self.filter.setClearButtonEnabled(True)
         self.filter.textChanged.connect(self._apply_filter)
-        root.addWidget(self.filter)
+        top.addWidget(self.filter, 1)
+        add_button = QPushButton("+")
+        add_button.setObjectName("PanelIconButton")
+        add_button.setFixedSize(38, 34)
+        add_button.setToolTip("Add a layer (right-click the list for more)")
+        add_button.setAccessibleName("Add a layer")
+        add_button.clicked.connect(self._add)
+        top.addWidget(add_button)
+        root.addLayout(top)
         self.list = ReorderList()
         self.list.setStyleSheet("QListWidget{border:none;}")
         self.list.orderChanged.connect(self._reordered)
         self.list.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list.setUniformItemSizes(True)
+        self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._list_menu)
         root.addWidget(self.list, 1)
-        row = QHBoxLayout()
-        actions = [
-            ("+", "Add a layer", self._add),
-            ("–", "Delete the active layer", self._del),
-            ("▲", "Move the active layer up", lambda: self._move(-1)),
-            ("▼", "Move the active layer down", lambda: self._move(1)),
-        ]
-        for label, tooltip, callback in actions:
-            button = QPushButton(label)
-            button.setObjectName("PanelIconButton")
-            button.setFixedSize(38, 34)
-            button.setToolTip(tooltip)
-            button.setAccessibleName(tooltip)
-            button.clicked.connect(callback)
-            row.addWidget(button)
-        row.addStretch(1)
-        root.addLayout(row)
+
+    def _list_menu(self, pos):
+        """Right-click on empty list space: add / delete / move the active layer."""
+        if self.level is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("Add layer", self._add)
+        index = self._selected_index()
+        delete = menu.addAction("Delete active layer", self._del)
+        delete.setEnabled(len(self.level.layers) > 1)
+        up = menu.addAction("Move active layer up", lambda: self._move(-1))
+        up.setEnabled(index > 0)
+        down = menu.addAction("Move active layer down", lambda: self._move(1))
+        down.setEnabled(0 <= index < len(self.level.layers) - 1)
+        menu.addSeparator()
+        menu.addAction("Show all layers", lambda: self._set_all("visible", True))
+        menu.addAction("Unlock all layers", lambda: self._set_all("locked", False))
+        menu.addAction("Clear solo", lambda: self._toggle_solo(self.canvas.solo_layer_id)
+                       if self.canvas.solo_layer_id else None)
+        menu.exec(self.list.viewport().mapToGlobal(pos))
+
+    def _set_all(self, attr: str, value: bool):
+        if not self.level or all(getattr(l, attr) == value for l in self.level.layers):
+            return
+        self.canvas.push_history("Layer visibility" if attr == "visible" else "Layer lock")
+        for layer in self.level.layers:
+            setattr(layer, attr, value)
+        self.rebuild(); self._changed()
 
     def set_theme(self, mode: str, accent: str):
         colors = theme_colors(mode, accent)
