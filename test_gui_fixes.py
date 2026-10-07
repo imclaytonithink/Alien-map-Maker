@@ -236,15 +236,17 @@ assert not failed_icon.isNull()
 assert "could not be generated" in model.data(model.index(0, 0), Qt.ItemDataRole.ToolTipRole)
 print("failed preview state ok")
 
-# ---- generator dialog shows only relevant options and never greys Output
+# ---- generator dialog: one window, options follow the chosen strategy
 from ui.generator_dialog import GeneratorDialog
 dlg = GeneratorDialog(project, win.library, canvas, lambda opts: {"pieces": []}, win)
 dlg.show(); app.processEvents()
-dlg.cmb_asset_mode.setCurrentIndex(0); app.processEvents()
-assert dlg.cmb_setting.isVisibleTo(dlg) and not dlg.cmb_geomorph_grid.isVisibleTo(dlg)
-dlg.cmb_asset_mode.setCurrentIndex(1); app.processEvents()
-assert dlg.cmb_geomorph_grid.isVisibleTo(dlg) and not dlg.cmb_setting.isVisibleTo(dlg)
-assert dlg.cmb_mode.isEnabled()
+dlg.strategy_radios["assembly"].setChecked(True); app.processEvents()
+assert dlg.cmb_packing.isVisibleTo(dlg) and not dlg.cmb_setting.isVisibleTo(dlg)
+dlg.strategy_radios["tiles"].setChecked(True); app.processEvents()
+assert dlg.cmb_setting.isVisibleTo(dlg) and not dlg.cmb_packing.isVisibleTo(dlg)
+dlg.strategy_radios["furnish"].setChecked(True); app.processEvents()
+assert dlg.cmb_scope.isVisibleTo(dlg) and not dlg.cmb_mode.isVisibleTo(dlg)
+dlg.strategy_radios["assembly"].setChecked(True)
 dlg.cmb_mode.setCurrentIndex(1)
 canvas.clear_selection()
 assert dlg._generate() is False and "Select" in dlg.lbl_status.text()

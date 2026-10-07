@@ -260,6 +260,17 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
         background: {c['accent']}; border: 1px solid {c['accent']};
     }}
     QCheckBox::indicator:hover {{ border-color: {c['border_hot']}; }}
+    QRadioButton {{ spacing: 6px; }}
+    QRadioButton::indicator {{
+        width: 14px; height: 14px; border: 2px solid {c['border_hot']};
+        border-radius: 9px; background: {c['panel2']};
+    }}
+    QRadioButton::indicator:checked {{
+        background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+            stop:0 {c['accent']}, stop:0.55 {c['accent']},
+            stop:0.6 {c['panel2']}, stop:1 {c['panel2']});
+        border: 2px solid {c['accent']};
+    }}
 
     QLabel {{ color: {c['text']}; background: transparent; }}
     QStatusBar {{ background: {c['panel']}; color: {c['muted']}; border-top: 1px solid {c['border']}; }}

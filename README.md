@@ -161,28 +161,38 @@ clearly reports skipped GUI checks.
 - **Arrow keys** nudge 1px; **Shift+arrows** move exactly one square.
 
 ### 4. Generate a map (Tools → Generate Map…)
-- Choose between two distinct **Generator** modes:
-  - **Tile-by-tile** classifies smaller floor, wall, corridor, door, fixture,
-    and hazard assets. Starship / Colony base / Research lab settings and the
-    Random / Corridors / Grid / Organic layouts shape the room network. Props
-    are placed on their matching surfaces. Small-tile maps are BFS-verified
-    for connectivity, with isolated areas automatically repaired.
-  - **Geomorph assembly** arranges imported 100x100 Core deck-plan modules.
-    A module's 20x20-square playable core is placed on a 20-square pitch; the
-    surrounding two-square transparent gutter is preserved so adjacent walls
-    align. Source dimensions determine scale (the high-resolution pack is
-    300 pixels per five-foot square). Modules rotate as complete pieces, and
-    matching `[Overlay]` images inherit their base module's placement, scale,
-    and rotation. Optional Symbols assets are size-scaled and scattered on a
-    separate editable layer.
-- **Geomorph layout** offers 2x2, 3x3, or 4x4 modules. At the default five-foot
-  grid, a 3x3 assembly covers 60x60 squares; a new map expands the default
-  30x30 canvas as needed. The Overlay / symbol density slider controls optional
-  dressing.
-- **Output**: *New level* or *Fill selected area* (select nodes first). Area
-  fills place only whole modules that fit the selection bounds.
-- **Seed** makes generated results reproducible/shareable; **Regenerate** rolls
-  a new seed and replaces the previous result for that output mode.
+One window, one set of options, top to bottom:
+1. **What to build**
+   - *Assemble a map from rooms and decks* packs full deck plans, 50 ft rooms
+     and empty rooms into a map of the size you choose. *Mixed sizes* fills the
+     area with whatever fits (50x50, 100x100, 200x100, 100x200…); *Uniform* uses
+     one size in a tidy grid. Optional hull parts (nose + matching
+     port/starboard) are added around the edge. Matching `[Overlay]` images
+     inherit their base module's placement, scale and rotation, and Symbols can
+     be scattered on a separate layer.
+   - *Build rooms and corridors from small tiles* is the classic floor / wall /
+     door builder (Starship / Colony base / Research lab, Random / Corridors /
+     Grid / Organic layouts, BFS-verified connectivity).
+   - *Furnish existing rooms* scatters interior parts inside the selected
+     nodes, or in every empty room on the level, with a wall margin and density.
+2. **Which assets to use** — tick the roles that feed it, with usable counts.
+3. **Size and placement** — a new level (size presets up to 160 x 160 squares,
+   or custom) or the area of the selected nodes. The canvas grows if the map
+   needs more room.
+4. **Style** — only the options that apply to the chosen strategy are shown.
+5. **Seed** — 12 random digits by default, or type any numbers/words. **🎲**
+   rolls a new random seed, **Copy** copies it, and **Regenerate** rolls a new
+   seed and replaces the previous result (tick *Keep this seed* to rebuild with
+   the same one). The same seed, settings and assets always give the same map.
+
+**Asset sorting.** Every asset has exactly one generator *role*: deck plan,
+room, empty room, ship part, corridor, build-it piece, floor tile, wall tile,
+door, interior part, overlay, symbol, terrain or unsorted. Roles come from the
+file name, folder, name-coded size (`[100x100]` is feet) and image size.
+Browse them under **Generator roles** in the library tree, right-click assets
+(select several) → *Set generator role*, or open **Check asset sorting…**
+(also in the library ☰ menu) to filter, review "Needs a look", and reassign in
+bulk. Your choices (★) are saved with the asset store and always win.
 
 ### 5. Floors / Levels
 - Tab bar above the canvas: add / remove / rename / reorder floors.
