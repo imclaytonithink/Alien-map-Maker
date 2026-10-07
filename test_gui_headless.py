@@ -14,7 +14,7 @@ from core import exporter
 
 size_dialog = CanvasSizeDialog()
 assert size_dialog.canvas_size() == {
-    "map_cols": 30, "map_rows": 30, "cell_size": 70
+    "map_cols": 60, "map_rows": 60, "cell_size": 70
 }
 size_dialog.spin_columns.setValue(40)
 size_dialog.spin_rows.setValue(25)

@@ -18,6 +18,7 @@ GUI_TESTS = [
     "test_gui2.py",
     "test_gui_headless.py",
     "test_gui_usability.py",
+    "test_gui_fixes.py",
     "test_library_virtualization.py",
     "test_headless.py",
 ]

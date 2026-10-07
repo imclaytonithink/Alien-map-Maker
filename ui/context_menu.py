@@ -43,6 +43,10 @@ def build_canvas_menu(main, hit_piece) -> QMenu:
                             ("Bottom", "bottom"), ("Center horizontally", "hcenter"),
                             ("Center vertically", "vcenter")):
             add(align, label, lambda k=kind: canvas.align(k), multi)
+        overlap = add(align, "Allow overlap", lambda: main._set_allow_overlap(
+            not canvas.allow_overlap))
+        overlap.setCheckable(True)
+        overlap.setChecked(canvas.allow_overlap)
         dist = menu.addMenu("Distribute")
         add(dist, "Horizontally", lambda: canvas.distribute("h"), len(sel) > 2)
         add(dist, "Vertically", lambda: canvas.distribute("v"), len(sel) > 2)

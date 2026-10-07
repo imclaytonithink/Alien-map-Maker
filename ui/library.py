@@ -8,7 +8,8 @@ from typing import Optional
 from PyQt6.QtCore import (Qt, QMimeData, QSize, QPoint, QModelIndex,
                           QAbstractListModel, QObject, QRunnable, QThread,
                           QThreadPool, pyqtSignal, QTimer)
-from PyQt6.QtGui import QDrag, QPixmap, QIcon, QMouseEvent, QCursor, QImage
+from PyQt6.QtGui import (QDrag, QPixmap, QIcon, QMouseEvent, QCursor, QImage,
+                         QPainter, QPen, QColor)
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QComboBox,
     QLabel, QSlider, QDialog, QFileDialog, QAbstractItemView,
@@ -114,8 +115,11 @@ class ThumbnailTask(QRunnable):
             image = load_scaled_image(self.path, self.size)
         except Exception:
             image = QImage()
-        self.signals.completed.emit(
-            self.path, self.size, self.generation, image)
+        try:
+            self.signals.completed.emit(
+                self.path, self.size, self.generation, image)
+        except RuntimeError:
+            pass   # the panel was torn down while this preview was decoding
 
 
 class AssetListModel(QAbstractListModel):
@@ -137,9 +141,10 @@ class AssetListModel(QAbstractListModel):
         self._attempted = set()
         self._pending = {}
         self._thread_pool = QThreadPool(self)
-        # A single decoder keeps peak memory predictable for very large PNGs;
-        # the editor remains responsive because QImageReader runs off-thread.
-        self._thread_pool.setMaxThreadCount(1)
+        # Two decoders balance speed against peak memory for very large PNGs;
+        # previews are also kept on disk (see image_utils) so each is slow only
+        # once. The editor stays responsive because decoding is off-thread.
+        self._thread_pool.setMaxThreadCount(2)
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.assets)
@@ -159,7 +164,8 @@ class AssetListModel(QAbstractListModel):
             icon = self._icons.get(asset.path)
             if icon is not None:
                 self._icons.move_to_end(asset.path)
-            return icon
+                return icon
+            return self._placeholder_icon()
         if role == Qt.ItemDataRole.ToolTipRole:
             tags = self.category_tags.get(asset.path, ())
             labels = sorted(CATEGORY_LABELS[tag] for tag in tags
@@ -173,6 +179,25 @@ class AssetListModel(QAbstractListModel):
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return int(Qt.AlignmentFlag.AlignHCenter)
         return None
+
+    def _placeholder_icon(self):
+        """Neutral tile shown until the real preview has been decoded."""
+        cached = getattr(self, "_placeholder", None)
+        if cached is not None and cached[0] == self.thumb_size:
+            return cached[1]
+        size = self.thumb_size
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        pen = QPen(QColor(128, 140, 155, 150))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.drawRect(2, 2, size - 5, size - 5)
+        painter.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "loading…")
+        painter.end()
+        icon = QIcon(pm)
+        self._placeholder = (size, icon)
+        return icon
 
     def set_assets(self, assets, category_tags=None, library=None):
         self.beginResetModel()
@@ -488,9 +513,13 @@ class LibraryPanel(QWidget):
         g_row.addWidget(self.group_tree, 1)
         g_btns = QVBoxLayout()
         self.b_group_up = QPushButton("▲")
+        self.b_group_up.setObjectName("PanelIconButton")
+        self.b_group_up.setFixedSize(38, 34)
         self.b_group_up.setToolTip("Move this folder earlier among its siblings")
         self.b_group_up.clicked.connect(self._group_up)
         self.b_group_down = QPushButton("▼")
+        self.b_group_down.setObjectName("PanelIconButton")
+        self.b_group_down.setFixedSize(38, 34)
         self.b_group_down.setToolTip("Move this folder later among its siblings")
         self.b_group_down.clicked.connect(self._group_down)
         g_btns.addWidget(self.b_group_up)

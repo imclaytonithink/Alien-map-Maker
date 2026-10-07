@@ -7,14 +7,14 @@ import os
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint, QEvent, QSettings, QStandardPaths
+from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint, QPointF, QEvent, QSettings, QStandardPaths
 from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QColor, QPixmap, QPainter, QPen, QCursor
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTabBar, QPushButton,
     QFileDialog, QInputDialog, QMessageBox, QLabel, QStatusBar, QToolBar,
     QTabWidget, QListWidget, QListWidgetItem, QGroupBox, QSlider, QCheckBox,
     QApplication, QDoubleSpinBox, QLineEdit, QTextEdit, QComboBox,
-    QAbstractSpinBox, QDialog, QSplitter,
+    QAbstractSpinBox, QDialog, QSplitter, QSplitterHandle,
 )
 
 from core.project import Project, Level, Piece, new_project, uuid
@@ -53,6 +53,32 @@ def save_recent(items: list):
             json.dump(items[:12], f)
     except Exception:
         pass
+
+
+class GripSplitterHandle(QSplitterHandle):
+    """Splitter bar with three grip dots so it is obviously draggable."""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        color = QColor(self.palette().color(self.palette().ColorRole.WindowText))
+        color.setAlpha(170)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        for i in (-1, 0, 1):
+            painter.drawEllipse(QPointF(cx, cy + i * 9), 1.6, 1.6)
+        painter.end()
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        hint.setWidth(10)
+        return hint
+
+
+class GripSplitter(QSplitter):
+    def createHandle(self):
+        return GripSplitterHandle(self.orientation(), self)
 
 
 class Minimap(QWidget):
@@ -176,28 +202,53 @@ class Minimap(QWidget):
         p.end()
 
 
-class HistoryPanel(QGroupBox):
+class HistoryPanel(QWidget):
+    """Undo/redo buttons plus a readable list of the steps on each stack."""
+
     def __init__(self, main, parent=None):
-        super().__init__("History", parent)
+        super().__init__(parent)
         self.main = main
         v = QVBoxLayout(self)
+        v.setContentsMargins(6, 8, 6, 6)
+        v.setSpacing(8)
         row = QHBoxLayout()
-        self.b_undo = QPushButton("Undo"); self.b_undo.clicked.connect(main.undo)
-        self.b_redo = QPushButton("Redo"); self.b_redo.clicked.connect(main.redo)
-        row.addWidget(self.b_undo); row.addWidget(self.b_redo)
+        self.b_undo = QPushButton("Undo")
+        self.b_undo.clicked.connect(main.undo)
+        self.b_redo = QPushButton("Redo")
+        self.b_redo.clicked.connect(main.redo)
+        for b in (self.b_undo, self.b_redo):
+            b.setMinimumHeight(34)
+        row.addWidget(self.b_undo)
+        row.addWidget(self.b_redo)
         v.addLayout(row)
-        self.label = QLabel("(no actions)")
+        self.label = QLabel("")
+        self.label.setWordWrap(True)
         v.addWidget(self.label)
+        self.steps = QListWidget()
+        self.steps.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.steps.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        v.addWidget(self.steps, 1)
         self.refresh()
 
     def refresh(self):
         h = self.main.history
         self.b_undo.setEnabled(h.can_undo())
         self.b_redo.setEnabled(h.can_redo())
-        if h.can_undo():
-            self.label.setText("Next undo: " + h.undos[-1][0])
+        undo_labels = [label for label, _ in h.undos]
+        redo_labels = [label for label, _ in h.redos]
+        if undo_labels:
+            self.label.setText(f"Next undo: {undo_labels[-1]}")
         else:
-            self.label.setText("(no actions)")
+            self.label.setText("Nothing to undo yet — edits will be listed here.")
+        self.steps.clear()
+        for label in reversed(redo_labels):
+            item = QListWidgetItem(f"↷  {label}")
+            item.setForeground(QColor("#808a96"))
+            item.setToolTip("Undone — Redo brings it back")
+            self.steps.addItem(item)
+        for i, label in enumerate(reversed(undo_labels)):
+            item = QListWidgetItem(("●  " if i == 0 else "○  ") + label)
+            self.steps.addItem(item)
 
 
 class LevelBar(QWidget):
@@ -226,7 +277,7 @@ class LevelBar(QWidget):
         for label, tooltip, callback in level_actions:
             button = QPushButton(label)
             button.setObjectName("PanelIconButton")
-            button.setFixedSize(30, 28)
+            button.setFixedSize(38, 34)
             button.setToolTip(tooltip)
             button.setAccessibleName(tooltip)
             button.clicked.connect(callback)
@@ -362,9 +413,9 @@ class MainWindow(QMainWindow):
         root = QHBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         self._panel_memory: dict[int, int] = {}
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = GripSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(True)
-        self.splitter.setHandleWidth(5)
+        self.splitter.setHandleWidth(10)
         root.addWidget(self.splitter)
 
         self.library = LibraryPanel()
@@ -425,6 +476,9 @@ class MainWindow(QMainWindow):
         right.addTab(self.zones, "Zones")
         right.addTab(self.hist, "History")
         right.setMinimumWidth(220)
+        right.tabBar().setUsesScrollButtons(False)
+        right.tabBar().setExpanding(True)
+        right.tabBar().setElideMode(Qt.TextElideMode.ElideNone)
         self.splitter.addWidget(right)
 
         self.splitter.setStretchFactor(0, 0)
@@ -549,6 +603,10 @@ class MainWindow(QMainWindow):
         e.addAction("Select similar", self._select_similar)
         e.addAction("Copy style…", self._start_copy_style)
         e.addAction("Replace selected image…", self._replace_selected_image)
+        self.act_allow_overlap = QAction("Allow overlap when aligning / distributing", self)
+        self.act_allow_overlap.setCheckable(True)
+        self.act_allow_overlap.toggled.connect(self._set_allow_overlap)
+        e.addAction(self.act_allow_overlap)
         e.addAction(self._act("Free transform", self._toggle_free_transform, "Ctrl+T"))
         e.addAction("Rotate 90°", lambda: self._rotate_sel(90))
         e.addAction("Group rotate…", self._toggle_group_rotate)
@@ -710,6 +768,7 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(self.lbl_zoom, 0)
         self.status.addPermanentWidget(self.lbl_hist, 1)
         self.canvas.colorPickStateChanged.connect(self._on_color_pick_state)
+        self.canvas.statusMessage.connect(lambda msg: self.status.showMessage(msg, 5000))
 
     def _on_color_pick_state(self, active: bool):
         if active:
@@ -1498,6 +1557,15 @@ class MainWindow(QMainWindow):
     def _discard_last_history(self):
         self.history.drop_last()
         self._resync_history()
+
+    def _set_allow_overlap(self, on: bool):
+        self.canvas.allow_overlap = bool(on)
+        self.props.chk_allow_overlap.blockSignals(True)
+        self.props.chk_allow_overlap.setChecked(bool(on))
+        self.props.chk_allow_overlap.blockSignals(False)
+        self.act_allow_overlap.blockSignals(True)
+        self.act_allow_overlap.setChecked(bool(on))
+        self.act_allow_overlap.blockSignals(False)
 
     def _toggle_free_transform(self):
         if self.canvas.free_transform:

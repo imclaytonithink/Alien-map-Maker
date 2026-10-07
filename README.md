@@ -229,7 +229,16 @@ clearly reports skipped GUI checks.
   box on long lists. **S** solos a layer for editing only (never saved or exported).
 - Continuous edits (sliders, spin boxes, held arrow keys) collapse into one
   undo step; snapshots are stored compressed with embedded images shared.
-- The canvas only paints pieces inside the visible area.
+- The canvas only paints pieces inside the visible area. The map edge is drawn
+  as a bold frame with a hatched, dimmed pasteboard outside it (off-canvas nodes
+  are kept but clipped in exports).
+- Align and Distribute never leave nodes overlapping unless **Allow overlap** is
+  ticked (Edit menu or the multi-select panel); colliding nodes are stacked
+  instead. Moving and resizing snap any edge to grid lines and to neighbors'
+  sides, corners and centers.
+- Library tiles named in feet (e.g. `[100x100]`) are scaled to your square size
+  on placement, so a 100x100 ft tile is 20x20 squares. New maps default to
+  60x60 squares. Library previews are cached on disk after the first decode.
 
 ### Keyboard reference
 | Key | Action |
