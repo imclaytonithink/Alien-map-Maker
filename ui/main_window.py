@@ -71,8 +71,17 @@ def destroy_before_qt_exits(window) -> None:
             return
         try:
             from PyQt6 import sip
-            if not sip.isdeleted(alive):
-                sip.delete(alive)
+            if sip.isdeleted(alive):
+                return
+            # Drain background workers first: see _drain_background_work for
+            # why sip.delete() below cannot be trusted to do this safely on
+            # its own (a worker mid-run when a widget is deleted deadlocks
+            # against the thread doing the deleting).
+            try:
+                alive._drain_background_work()
+            except Exception:
+                pass
+            sip.delete(alive)
         except (ImportError, RuntimeError, TypeError):
             pass
     atexit.register(destroy)
@@ -3085,11 +3094,27 @@ class MainWindow(QMainWindow):
         if self._dirty and not self._confirm_discard():
             e.ignore()
             return
-        # ZIP intake runs off the GUI thread; join it before its owning panel is
-        # destroyed so closing during a large import cannot tear down a live thread.
-        if hasattr(self, "library") and hasattr(self.library, "wait_for_zip_import"):
-            self.library.wait_for_zip_import()
+        self._drain_background_work()
         e.accept()
+
+    def _drain_background_work(self):
+        """Finish any in-flight background worker (ZIP import, thumbnail
+        decode, image-bounds calc) before this window's widgets are torn down.
+
+        Several widgets own a QThreadPool (or QThread) as a Qt child object.
+        If one is destroyed while a worker is still mid-run, Qt's own child
+        teardown cascade calls that pool's blocking destructor deep inside a
+        chain of nested C++ destructors, with no chance for PyQt to release
+        the GIL first; the worker thread can then never reacquire the GIL to
+        finish, and the thread doing the deleting waits for it forever. Each
+        ``drain_background_work`` below makes an explicit, outer Python call
+        instead, which uses the ordinary GIL-releasing path and so cannot
+        deadlock against its own worker.
+        """
+        if hasattr(self, "library") and hasattr(self.library, "drain_background_work"):
+            self.library.drain_background_work()
+        if hasattr(self, "canvas") and hasattr(self.canvas, "drain_background_work"):
+            self.canvas.drain_background_work()
 
     def _about(self):
         product = ALIEN_NAME if self.theme_mode == "alien" else APP_NAME
