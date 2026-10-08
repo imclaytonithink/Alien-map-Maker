@@ -1996,6 +1996,22 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
             piece.id, path, piece.embedded, self._bounds_signals))
         return True
 
+    def drain_background_work(self):
+        """Finish any in-flight bounds-calc work before this widget is torn down.
+
+        ``_bounds_pool`` is a QThreadPool parented to this widget, so Qt
+        destroys it as part of the normal child-teardown cascade when the
+        widget (or an ancestor) is deleted. That destructor calls
+        ``waitForDone()`` deep inside a chain of nested C++ destructors with
+        no opportunity for PyQt to release the GIL first — if the pool's one
+        worker thread is mid-run on a Python-level task, it can never
+        reacquire the GIL to finish, and the deleting thread waits for it
+        forever. Draining explicitly from Python here uses the normal,
+        GIL-releasing call path and avoids that deadlock.
+        """
+        self._bounds_pool.clear()
+        self._bounds_pool.waitForDone()
+
     def tighten_selected(self, options: dict | None = None) -> int:
         """Trim every selected image node to its visible pixels."""
         count = 0

@@ -284,6 +284,20 @@ class AssetListModel(QAbstractListModel):
             key=asset.path))
         return True
 
+    def drain_background_work(self):
+        """Finish any in-flight thumbnail decoding before teardown.
+
+        ``_thread_pool`` is a QThreadPool parented to this model, itself
+        parented into the asset-list's widget tree, so Qt's normal child
+        teardown cascade destroys it as a nested step of a C++ destructor
+        chain with the GIL held throughout. If a worker is mid-run at that
+        point it can never reacquire the GIL to finish, deadlocking against
+        the thread doing the deleting. Draining explicitly from Python here
+        uses the ordinary GIL-releasing call path instead.
+        """
+        self._thread_pool.clear()
+        self._thread_pool.waitForDone()
+
     def _thumbnail_ready(self, path: str, size: int, generation: int,
                          image: QImage):
         self._pending.pop((generation, path), None)
@@ -475,6 +489,9 @@ class AssetList(QListView):
                 drag.setPixmap(pixmap)
         drag.exec(Qt.DropAction.CopyAction)
         self._press_index = QModelIndex()
+
+    def drain_background_work(self):
+        self.asset_model.drain_background_work()
 
 
 class LibraryPanel(QWidget):
@@ -1304,6 +1321,16 @@ class LibraryPanel(QWidget):
         worker = self._zip_worker
         if worker and worker.isRunning():
             worker.wait()
+
+    def drain_background_work(self):
+        """Finish ZIP import and thumbnail-decode work before teardown.
+
+        See ``AssetListModel.drain_background_work`` / ``Canvas.drain_background_
+        work`` for why this must happen before the widget tree is torn down
+        rather than inside a QThreadPool's own (nested, GIL-holding) destructor.
+        """
+        self.wait_for_zip_import()
+        self.list.drain_background_work()
 
     def _ensure_store(self):
         app_data_dir = getattr(self.window(), "_app_data_dir", "")
