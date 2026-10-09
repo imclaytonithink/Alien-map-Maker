@@ -8,6 +8,12 @@
 - Assets keep the folder layout they arrived with: a ZIP's own directories are
   preserved, and the library browses that structure as-is. Assets are never
   re-sorted, re-filed or renamed by the app.
+- Only one copy of a name is shown: a picture whose name is already in the
+  library is omitted (``hidden_duplicates`` remembers what was folded away).
+- Files that cannot be read as an image are omitted during import/install
+  (``skipped_unreadable``), so the library never lists broken tiles.
+- ``remove_paths`` deletes tiles (and the folders that become empty) from the
+  store, for tidying the pool or removing your own uploads again.
 """
 from __future__ import annotations
 
@@ -94,9 +100,43 @@ def _image_dimensions(path: str) -> tuple[int, int]:
                     return width, height
             if head[:2] == b"\xff\xd8":
                 return _jpeg_dimensions(fh)
+            if head[:4] in (b"II*\x00", b"MM\x00*"):
+                return _tiff_dimensions(fh)
     except (OSError, ValueError, struct.error):
         pass
     return 0, 0
+
+
+def _tiff_dimensions(fh) -> tuple[int, int]:
+    """Read ImageWidth/ImageLength from the first TIFF IFD (either endianness)."""
+    fh.seek(0)
+    head = fh.read(8)
+    if len(head) < 8:
+        return 0, 0
+    endian = "little" if head[:4] == b"II*\x00" else "big"
+    fh.seek(int.from_bytes(head[4:8], endian))
+    count_bytes = fh.read(2)
+    if len(count_bytes) != 2:
+        return 0, 0
+    width = height = 0
+    for _ in range(min(int.from_bytes(count_bytes, endian), 1024)):
+        entry = fh.read(12)
+        if len(entry) != 12:
+            break
+        tag = int.from_bytes(entry[0:2], endian)
+        if tag not in (0x0100, 0x0101):
+            continue
+        typ = int.from_bytes(entry[2:4], endian)
+        if int.from_bytes(entry[4:8], endian) != 1:
+            continue
+        value = int.from_bytes(entry[8:10] if typ == 3 else entry[8:12], endian)
+        if tag == 0x0100:
+            width = value
+        else:
+            height = value
+        if width and height:
+            return width, height
+    return width, height
 
 
 def _webp_dimensions(head: bytes) -> tuple[int, int]:
@@ -219,6 +259,12 @@ class AssetLibrary:
         self.root = root
         self.assets: list[Asset] = []
         self._by_path: dict[str, Asset] = {}
+        self._by_name: dict[str, str] = {}
+        # Same-named pictures: only one copy is shown; the others stay on disk
+        # but are hidden, remembered here as (hidden_path, shown_path).
+        self.hidden_duplicates: list[tuple[str, str]] = []
+        # Images that could not be read at all are omitted from the library.
+        self.skipped_unreadable = 0
         self._scan_complete = False
         self._scan_revision = 0
 
@@ -229,6 +275,9 @@ class AssetLibrary:
         self.root = root
         self.assets = []
         self._by_path = {}
+        self._by_name = {}
+        self.hidden_duplicates = []
+        self.skipped_unreadable = 0
         if not root or not os.path.isdir(root):
             self._scan_complete = True
             return
@@ -249,6 +298,9 @@ class AssetLibrary:
         self.root = snapshot.root
         self.assets = snapshot.assets
         self._by_path = snapshot._by_path
+        self._by_name = snapshot._by_name
+        self.hidden_duplicates = snapshot.hidden_duplicates
+        self.skipped_unreadable = snapshot.skipped_unreadable
         self._scan_complete = True
         self._scan_revision += 1
 
@@ -263,25 +315,67 @@ class AssetLibrary:
                      size=size, is_overlay=is_overlay,
                      width=width, height=height)
 
+    def _register(self, asset: Asset, *, record_hidden: bool = True) -> str:
+        """Decide whether a freshly-made Asset joins the visible library.
+
+        Returns ``"added"``, ``"unreadable"`` (the image header could not be
+        read, so the file cannot be imported) or ``"duplicate"`` (another shown
+        asset already has the same name, and only one copy is shown).
+        """
+        if asset.width <= 0 or asset.height <= 0:
+            self.skipped_unreadable += 1
+            return "unreadable"
+        kept = self._by_name.get(asset.name.casefold())
+        if kept is not None:
+            if record_hidden:
+                self.hidden_duplicates.append((asset.path, kept))
+            return "duplicate"
+        self._by_name[asset.name.casefold()] = asset.path
+        return "added"
+
     def _add(self, full: str, rel_folder: str):
         a = self._make_asset(full, rel_folder)
+        if self._register(a) != "added":
+            return                      # omitted: unreadable or a repeat name
         self.assets.append(a)
         self._by_path[a.path] = a
 
-    def _index_file(self, full: str) -> str:
+    def _index_file(self, full: str) -> Optional[str]:
         """Add one file inside the store to the index without rescanning the
-        whole store, in the place a full scan would list it. Returns its
-        store-relative path."""
+        whole store, in the place a full scan would list it. Returns the
+        store-relative path the file is shown under, or None when the file
+        cannot be shown (unreadable, or a name that is already shown).
+
+        A copied file that ends up hidden is removed again, so the store never
+        accumulates pictures the library does not show."""
         rel = os.path.relpath(full, self.root).replace(os.sep, "/")
         if rel in self._by_path:
             return rel
         asset = self._make_asset(full, os.path.dirname(rel) or ".")
+        status = self._register(asset, record_hidden=False)
+        if status == "duplicate":
+            shown = self._by_name.get(asset.name.casefold(), rel)
+            try:
+                os.remove(full)
+            except OSError:
+                pass
+            try:
+                os.removedirs(os.path.dirname(full))
+            except OSError:
+                pass                      # the folder still holds other files
+            return shown
+        if status == "unreadable":
+            try:
+                os.remove(full)
+            except OSError:
+                pass
+            return None
         key = _scan_order_key(asset)
         position = next((i for i, other in enumerate(self.assets)
                          if _scan_order_key(other) > key), len(self.assets))
         self.assets.insert(position, asset)
         self._by_path[rel] = asset
-        self._scan_revision += 1            # groups, counts and roles refresh
+        self._scan_revision += 1            # groups and counts refresh
         return rel
 
     def store_path_of(self, path: str) -> Optional[str]:
@@ -401,8 +495,18 @@ class AssetLibrary:
         return count
 
     def import_file(self, src: str) -> Optional[str]:
-        if not self.root or not src.lower().endswith(SUPPORTED_EXTS):
+        """Copy one image into the store and show it.
+
+        Returns the store-relative path the picture is shown under, or None
+        when it is not a supported, readable image. A picture whose name is
+        already shown is not copied at all (one copy of a name is all that is
+        shown); the path of the shown copy is returned."""
+        if (not self.root or not src.lower().endswith(SUPPORTED_EXTS)
+                or not os.path.isfile(src)):
             return None
+        inside = self.store_path_of(src)
+        if inside is not None:
+            return self._index_file(os.path.join(self.root, *inside.split("/")))
         fn = os.path.basename(src)
         dest = os.path.join(self.root, fn)
         # avoid clobbering
@@ -412,8 +516,7 @@ class AssetLibrary:
             dest = os.path.join(self.root, f"{base}_{i}{ext}")
             i += 1
         shutil.copy2(src, dest)
-        self.scan(self.root)
-        return os.path.relpath(dest, self.root).replace(os.sep, "/")
+        return self._index_file(dest)
 
     def import_zip(self, archive_path: str, *, rescan: bool = True) -> ZipImportReport:
         """Import supported images from a ZIP without trusting its paths.
@@ -614,3 +717,42 @@ class AssetLibrary:
         self.root = root
         os.makedirs(root, exist_ok=True)
         self.scan(root)
+
+    # ---- removing tiles from the pool ------------------------------------
+    def remove_paths(self, paths) -> int:
+        """Delete store files (and any folders that become empty) and rescan.
+
+        Only files inside the store are touched; anything else is ignored.
+        Returns how many files were removed."""
+        removed = 0
+        touched_dirs = set()
+        for rel in list(paths):
+            if not rel:
+                continue
+            full = self.abs_path(rel)
+            if self.store_path_of(full) is None:
+                continue
+            try:
+                os.remove(full)
+                removed += 1
+                touched_dirs.add(os.path.dirname(full))
+            except OSError:
+                continue
+        for directory in touched_dirs:
+            # Folders that end up empty are gone from the library too.
+            try:
+                while directory and os.path.isdir(directory) and \
+                        os.path.commonpath((os.path.realpath(directory),
+                                            os.path.realpath(self.root))) == \
+                        os.path.realpath(self.root) and \
+                        directory != os.path.realpath(self.root):
+                    if os.listdir(directory):
+                        break
+                    parent = os.path.dirname(directory)
+                    os.rmdir(directory)
+                    directory = parent
+            except OSError:
+                pass
+        if removed:
+            self.scan(self.root)
+        return removed

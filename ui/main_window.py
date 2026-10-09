@@ -1911,11 +1911,26 @@ class MainWindow(QMainWindow):
             new_level = False
         else:
             new_level = True
-            cols, rows = opts.get("size") or (self.project.map_cols,
-                                              self.project.map_rows)
-            region = (0, 0, int(cols) - 1, int(rows) - 1)
+            if opts.get("auto_size"):
+                # Size the map to the selection so large rooms always fit.
+                region = mapbuilder.suggest_region(dict(opts, cell_size=cs))
+                opts = dict(opts, quiet_unused=True)
+            else:
+                cols, rows = opts.get("size") or (self.project.map_cols,
+                                                  self.project.map_rows)
+                region = (0, 0, int(cols) - 1, int(rows) - 1)
 
         result = mapbuilder.build_map(dict(opts, cell_size=cs, region=region))
+        if opts.get("auto_size"):
+            # Random scatter can still drop a piece; grow the automatic area
+            # until everything the user picked actually lands.
+            for _growth in range(4):
+                if not (result.get("counts") or {}).get("skipped"):
+                    break
+                region = (0, 0, int((region[2] + 1) * 1.5) - 1,
+                          int((region[3] + 1) * 1.5) - 1)
+                result = mapbuilder.build_map(
+                    dict(opts, cell_size=cs, region=region))
         if not isinstance(result, dict):
             raise TypeError("The map generator returned an invalid result.")
         pieces = result.get("pieces") or []

@@ -122,9 +122,13 @@ class ThumbnailTask(QRunnable):
 
 
 class AssetListModel(QAbstractListModel):
-    """Small model for arbitrarily large libraries; no widget per asset."""
+    """Small model for arbitrarily large libraries; no widget per asset.
+
+    Every row carries a checkbox: ticking assets (or whole folders in the
+    tree) is what picks them for the map generator."""
 
     thumbnailLoaded = pyqtSignal()
+    pickToggled = pyqtSignal(str, bool)     # asset path, now picked?
     MAX_CACHED_ICONS = 96
     MAX_PENDING_THUMBNAILS = 12
 
@@ -132,6 +136,7 @@ class AssetListModel(QAbstractListModel):
         super().__init__(parent)
         self.assets = []
         self.library = None
+        self.picked_contains = None         # callable(path) -> bool, set by panel
         self.thumb_size = 56
         self._generation = 0
         self._path_to_row = {}
@@ -148,10 +153,31 @@ class AssetListModel(QAbstractListModel):
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.assets)
 
+    def flags(self, index):
+        base = super().flags(index)
+        if index.isValid():
+            base |= Qt.ItemFlag.ItemIsUserCheckable
+        return base
+
+    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
+        if not index.isValid() or role != Qt.ItemDataRole.CheckStateRole:
+            return False
+        asset = self.assets[index.row()]
+        checked = value == Qt.CheckState.Checked
+        # The panel owns the picked set; it echoes the change back through
+        # dataChanged so the checkbox repaints.
+        self.pickToggled.emit(asset.path, checked)
+        return True
+
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or not 0 <= index.row() < len(self.assets):
             return None
         asset = self.assets[index.row()]
+        if role == Qt.ItemDataRole.CheckStateRole:
+            picked = self.picked_contains(asset.path) \
+                if callable(self.picked_contains) else False
+            return (Qt.CheckState.Checked if picked
+                    else Qt.CheckState.Unchecked)
         if role == Qt.ItemDataRole.DisplayRole:
             label = asset.name
             if asset.size:
@@ -482,6 +508,7 @@ class LibraryPanel(QWidget):
     swapAllRequested = pyqtSignal(str)         # swap every copy of the selected image
     backdropRequested = pyqtSignal(str, bool)  # asset path, all levels?
     generateRequested = pyqtSignal(list)       # build a map from these asset paths
+    pickChanged = pyqtSignal()                 # the generator pick set changed
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -496,6 +523,9 @@ class LibraryPanel(QWidget):
         self._folder_groups = []
         self._zip_worker = None
         self._zip_import_target_root = ""
+        self._picked: set = set()      # asset paths ticked for the generator
+        self._syncing_tree = False
+        self._count_base = ""
         self.stamp_labels = None    # callable -> names on the stamp keys 1-9
         self.canvas_swap_info = None  # callable -> (selected map images, first's path)
         self._build_ui()
@@ -516,6 +546,20 @@ class LibraryPanel(QWidget):
         search_row = QHBoxLayout()
         search_row.setSpacing(4)
         search_row.addWidget(self.search, 1)
+        # One obvious way to grow the pool with your own art.
+        self.btn_add = QToolButton()
+        self.btn_add.setText("＋ Add tiles")
+        self.btn_add.setToolTip(
+            "Add your own tiles to the pool: a whole folder, single image "
+            "files, or ZIP archives. Anything that is not a readable image is "
+            "left out during the import.")
+        self.btn_add.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        add_menu = QMenu(self.btn_add)
+        add_menu.addAction("Folder…", self._import_folder)
+        add_menu.addAction("Image files…", self._import_file)
+        add_menu.addAction("ZIP archive(s)…", self._import_zip)
+        self.btn_add.setMenu(add_menu)
+        search_row.addWidget(self.btn_add)
         self.btn_menu = QToolButton()
         self.btn_menu.setText("☰")
         self.btn_menu.setObjectName("LibraryMenuButton")
@@ -563,6 +607,7 @@ class LibraryPanel(QWidget):
         self.b_group_down.hide()
         self.group_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.group_tree.customContextMenuRequested.connect(self._tree_menu)
+        self.group_tree.itemChanged.connect(self._on_tree_check)
         self.group_tree_box = QWidget()
         box_layout = QVBoxLayout(self.group_tree_box)
         box_layout.setContentsMargins(0, 0, 0, 0)
@@ -592,6 +637,10 @@ class LibraryPanel(QWidget):
         self._build_library_menu()
 
         self.list = AssetList()
+        # Ticking thumbnails (or folders in the tree) picks them for the
+        # generator; the panel owns the picked set.
+        self.list.asset_model.picked_contains = lambda p: p in self._picked
+        self.list.asset_model.pickToggled.connect(self._on_pick_toggled)
         self.list.doubleClicked.connect(self._asset_double_clicked)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._ctx_menu)
@@ -706,6 +755,9 @@ class LibraryPanel(QWidget):
     def _new_tree_item(self, parent, label: str, token: str):
         item = QTreeWidgetItem([label])
         item.setToolTip(0, label)
+        # Folders are pickable too: ticking one picks every asset inside it.
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(0, Qt.CheckState.Unchecked)
         if parent is None:
             self.group_tree.addTopLevelItem(item)
         else:
@@ -750,10 +802,14 @@ class LibraryPanel(QWidget):
             0, "The asset store's own folder structure - the same layout the "
                "ZIP archive (or the folder you imported) had. Nothing is "
                "re-sorted, re-filed or renamed.")
+        loose = self._folder_counts.get(".", 0)
         root_item = self._new_tree_item(
-            folders_root, f"Loose files in the store root ({self._folder_counts.get('.', 0):,})",
+            folders_root, f"Loose files in the store root ({loose:,})",
             "folder:.")
-        folder_items = {".": root_item}
+        # An empty folder is never shown; with no loose files the top-level
+        # folders hang straight off "Folders".
+        root_item.setHidden(loose == 0)
+        folder_items = {".": folders_root if loose == 0 else root_item}
         for group in groups:
             folder = group.replace("\\", "/").strip("/")
             if folder in ("", "."):
@@ -774,6 +830,7 @@ class LibraryPanel(QWidget):
         root_item.setExpanded(self._folder_counts.get(".", 0) > 0)
         self.group_tree.setCurrentItem(all_item)
         self.group_tree.blockSignals(False)
+        self._sync_tree_checks()
         self._view = ("all", None)
         self._update_folder_reorder_buttons()
 
@@ -889,6 +946,129 @@ class LibraryPanel(QWidget):
     def _group_down(self):
         self._move_group(1)
 
+    # -- picking assets for the generator (checkboxes) ----------------------
+    def _paths_for_token(self, token: str) -> list[str]:
+        """Every asset path a tree checkbox covers."""
+        if token in ("all", "folder-root"):
+            return [a.path for a in self.library.assets]
+        if token.startswith("folder:"):
+            folder = token.split(":", 1)[1]
+            if folder == ".":
+                return [a.path for a in self.library.assets
+                        if a.folder.replace("\\", "/").strip("/") in ("", ".")]
+            prefix = folder.rstrip("/") + "/"
+            return [a.path for a in self.library.assets
+                    if a.folder == folder or a.folder.startswith(prefix)]
+        return []
+
+    def _on_pick_toggled(self, path: str, checked: bool):
+        """A thumbnail's checkbox was clicked."""
+        if checked:
+            self._picked.add(path)
+        else:
+            self._picked.discard(path)
+        model = self.list.asset_model
+        row = model._path_to_row.get(path)
+        if row is not None:
+            index = model.index(row, 0)
+            model.dataChanged.emit(
+                index, index, [int(Qt.ItemDataRole.CheckStateRole)])
+        self._sync_tree_checks()
+        self._update_pick_label()
+        self.pickChanged.emit()
+
+    def _on_tree_check(self, item, column: int):
+        """A folder checkbox was clicked: pick/unpick everything inside it."""
+        if column != 0 or self._syncing_tree:
+            return
+        token = item.data(0, Qt.ItemDataRole.UserRole) or ""
+        if not token:
+            return
+        checked = item.checkState(0) != Qt.CheckState.Unchecked
+        paths = self._paths_for_token(token)
+        if checked:
+            self._picked.update(paths)
+        else:
+            self._picked.difference_update(paths)
+        self._sync_list_checks()
+        self._sync_tree_checks()
+        self._update_pick_label()
+        self.pickChanged.emit()
+
+    def _sync_list_checks(self):
+        model = self.list.asset_model
+        if model.rowCount():
+            model.dataChanged.emit(
+                model.index(0, 0), model.index(model.rowCount() - 1, 0),
+                [int(Qt.ItemDataRole.CheckStateRole)])
+
+    def _sync_tree_checks(self):
+        """Reflect the picked set in every folder checkbox (some = partial)."""
+        self._syncing_tree = True
+        try:
+            for token, item in self._tree_items.items():
+                paths = self._paths_for_token(token)
+                if not paths:
+                    state = Qt.CheckState.Unchecked
+                else:
+                    have = sum(1 for p in paths if p in self._picked)
+                    if have == 0:
+                        state = Qt.CheckState.Unchecked
+                    elif have == len(paths):
+                        state = Qt.CheckState.Checked
+                    else:
+                        state = Qt.CheckState.PartiallyChecked
+                if item.checkState(0) != state:
+                    item.setCheckState(0, state)
+        finally:
+            self._syncing_tree = False
+
+    def _update_pick_label(self):
+        if not hasattr(self, "count_label"):
+            return
+        extra = (f" · {len(self._picked):,} picked for the generator"
+                 if self._picked else "")
+        self.count_label.setText(self._count_base + extra)
+
+    def _set_count(self, text: str):
+        """Replace the status line, remembering it as the new base."""
+        self._count_base = text
+        self._update_pick_label()
+
+    def clear_picks(self):
+        if not self._picked:
+            return
+        self._picked.clear()
+        self._sync_list_checks()
+        self._sync_tree_checks()
+        self._update_pick_label()
+        self.pickChanged.emit()
+
+    def _remove_assets(self, paths, label: str):
+        """Delete pool tiles after a confirmation. Map nodes that used them
+        will afterwards show as missing images."""
+        paths = [p for p in paths if p]
+        if not paths or not self.project:
+            return
+        from PyQt6.QtWidgets import QMessageBox
+        used = {p for p in paths}
+        in_use = sum(1 for level in self.project.levels
+                     for piece in level.pieces if piece.asset_path in used)
+        text = (f"Remove {len(paths):,} tile(s) — {label} — from the asset "
+                "pool? The files are deleted from the store.")
+        if in_use:
+            text += (f"\n\n{in_use} node(s) on the map currently use them and "
+                     "will show as missing images afterwards.")
+        answer = QMessageBox.question(self, "Remove tiles", text)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        removed = self.library.remove_paths(paths)
+        self._picked.difference_update(used)
+        self._rebuild_groups()
+        self.refresh()
+        self.collectionsChanged.emit()
+        self.count_label.setText(f"Removed {removed:,} tile(s) from the pool.")
+
     # ------------------------------------------------------------------
     def refresh(self):
         mode, val = self._view
@@ -928,7 +1108,15 @@ class LibraryPanel(QWidget):
         count_text = f"{len(assets):,} asset(s) · {scope}"
         if query:
             count_text += f" · search: {query}"
-        self.count_label.setText(count_text)
+        hidden = len(self.library.hidden_duplicates)
+        if hidden:
+            count_text += (f" · {hidden:,} same-named cop(y/ies) hidden — "
+                           "one copy of a name is shown")
+        if self.library.skipped_unreadable:
+            count_text += (f" · {self.library.skipped_unreadable:,} unreadable "
+                           "file(s) left out")
+        self._count_base = count_text
+        self._update_pick_label()
         self._schedule_visible_thumbnails()
 
     def _schedule_visible_thumbnails(self, *_args):
@@ -1004,6 +1192,8 @@ class LibraryPanel(QWidget):
                        self._add_to_collection)
         coll.addAction("Remove selected asset from the chosen collection",
                        self._remove_from_collection)
+        menu.addSeparator()
+        menu.addAction("Clear generator picks", self.clear_picks)
         menu.addSeparator()
 
         size_menu = menu.addMenu("Thumbnail size")
@@ -1082,6 +1272,15 @@ class LibraryPanel(QWidget):
         menu.addSeparator()
         menu.addAction("Expand all", self.group_tree.expandAll)
         menu.addAction("Collapse all", self.group_tree.collapseAll)
+        token = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else ""
+        if token.startswith("folder:"):
+            folder = token.split(":", 1)[1]
+            label = "the store root" if folder == "." else folder
+            remove = menu.addAction(f"Remove folder “{label}” from the pool…")
+            remove.setToolTip("Deletes every file in this folder from the store.")
+            remove.triggered.connect(
+                lambda checked=False, t=token, lbl=label:
+                self._remove_assets(self._paths_for_token(t), lbl))
         menu.exec(self.group_tree.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------
@@ -1110,15 +1309,16 @@ class LibraryPanel(QWidget):
             self._after_import(n)
 
     def _import_file(self):
-        fn, _ = QFileDialog.getOpenFileName(self, "Import image",
-                                           self._import_start_dir(),
-                                           "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tiff)")
-        self._remember_import_dir(fn)
-        if fn and self.project:
+        fns, _ = QFileDialog.getOpenFileNames(
+            self, "Import images", self._import_start_dir(),
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tiff)")
+        if fns:
+            self._remember_import_dir(fns[0])
+        if fns and self.project:
             self._ensure_store()
             self.library.root = self.project.asset_store
-            rel = self.library.import_file(fn)
-            self._after_import(1 if rel else 0)
+            added = sum(1 for fn in fns if self.library.import_file(fn))
+            self._after_import(added)
 
     def _import_zip(self):
         if not self.project or (self._zip_worker and self._zip_worker.isRunning()):
@@ -1361,18 +1561,48 @@ class LibraryPanel(QWidget):
             "Nothing else from the library is used.")
         generate.triggered.connect(
             lambda checked=False, ps=selected: self.generateRequested.emit(list(ps)))
+        menu.addSeparator()
+        if all(p in self._picked for p in selected):
+            unpick = menu.addAction(
+                "Untick for the generator" if count == 1
+                else f"Untick these {count} for the generator")
+            unpick.triggered.connect(
+                lambda checked=False, ps=selected:
+                [self._on_pick_toggled(p, False) for p in ps])
+        else:
+            pick = menu.addAction(
+                "Tick for the generator" if count == 1
+                else f"Tick these {count} for the generator")
+            pick.setToolTip(
+                "Ticked assets are what the map generator builds from.")
+            pick.triggered.connect(
+                lambda checked=False, ps=selected:
+                [self._on_pick_toggled(p, True) for p in ps])
+        remove = menu.addAction(
+            "Remove this tile from the pool…" if count == 1
+            else f"Remove these {count} tiles from the pool…")
+        remove.setToolTip("Deletes the file(s) from the asset store.")
+        remove.triggered.connect(
+            lambda checked=False, ps=selected:
+            self._remove_assets(list(ps), "selected tiles"))
         menu.exec(self.list.mapToGlobal(pos))
 
     # -- selection (used by the generator) -----------------------------------
     def selected_paths(self) -> list[str]:
-        """Store-relative paths of the assets selected in the list, in view order."""
+        """What the generator will use: the ticked assets (individual pictures
+        or whole folders), in library order. With nothing ticked yet, the
+        current highlight in the list is used, so selecting-and-generating
+        still works without the checkboxes."""
+        if self._picked:
+            return [asset.path for asset in self.library.assets
+                    if asset.path in self._picked]
         model = self.list.asset_model
         chosen = {index.data(Qt.ItemDataRole.UserRole)
                   for index in self.list.selectionModel().selectedIndexes()}
         return [asset.path for asset in model.assets if asset.path in chosen]
 
     def selected_assets(self) -> list:
-        """The selected Asset objects, in view order."""
+        """The selected Asset objects, in library order."""
         chosen = set(self.selected_paths())
         return [asset for asset in self.library.assets if asset.path in chosen]
 
@@ -1381,18 +1611,17 @@ class LibraryPanel(QWidget):
         return list(getattr(self, "_visible_assets", None) or self.library.assets)
 
     def select_paths(self, paths) -> int:
-        """Select exactly these assets in the list and report how many were found."""
-        wanted = list(paths)
-        model = self.list.asset_model
-        selection = self.list.selectionModel()
-        from PyQt6.QtCore import QItemSelectionModel
-        selection.clearSelection()
-        found = 0
-        for row, asset in enumerate(model.assets):
-            if asset.path in wanted:
-                selection.select(model.index(row, 0),
-                                 QItemSelectionModel.SelectionFlag.Select)
-                found += 1
+        """Pick exactly these assets — as if their checkboxes were ticked —
+        and report how many of them exist in the library."""
+        wanted = set(paths)
+        found = sum(1 for asset in self.library.assets
+                    if asset.path in wanted)
+        self._picked = {asset.path for asset in self.library.assets
+                        if asset.path in wanted}
+        self._sync_list_checks()
+        self._sync_tree_checks()
+        self._update_pick_label()
+        self.pickChanged.emit()
         return found
 
     def _view_large(self, asset):

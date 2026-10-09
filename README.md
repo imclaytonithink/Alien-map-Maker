@@ -78,8 +78,9 @@ same required-GUI test command. A separate `real-pack-integration` job
 retrieves the three published high-resolution geomorph, custom-tile, and
 Symbols ZIPs into the runner's temporary directory (never into Git), imports
 their actual contents, checks that every image lands at the path its archive
-gave it, and then builds maps from a selection of the real assets (a 3x3 of
-Core modules, a rotated scatter, and a Symbols fill). Add
+gave it (a repeated filename is shown once, never lost), and then builds maps
+from a selection of the real assets (a 3x3 of Core modules, a rotated scatter,
+and a Symbols fill). Add
 `[asset-inventory-audit]` to a commit message to publish a folder-by-folder
 inventory of the real packs. If Qt runtime libraries are unavailable, plain
 `python run_tests.py` still runs the pure-Python checks and clearly reports
@@ -119,6 +120,13 @@ skipped GUI checks.
   supported-file filter when adding those packs manually.
 - **Custom single PNGs** dragged straight onto the canvas are *embedded*
   inside the saved `.bmap` file, so that map is portable on its own.
+- **＋ Add tiles** (next to the search box) is the quick way to grow the pool
+  with your own art — a whole folder, single image files, or ZIP archives.
+  Right-click tiles (or a folder in the tree) and choose *Remove … from the
+  pool* to delete them from the store again; the confirmation tells you if map
+  nodes currently use them. While importing, anything that is not a readable
+  image is left out, only one copy of a name is ever shown (repeats are folded
+  away, not re-filed), and folders that end up empty are never listed.
 
 ### 2. Browse & preview
 - Search by name or size (e.g. `40x120`).
@@ -127,6 +135,10 @@ skipped GUI checks.
 - Drag an asset onto the canvas, or double-click to drop at center.
 - While you drag, the canvas lights up the **exact landing cell(s)** under
   the incoming node (calibrated to where it will snap, not the raw cursor).
+- Every tile and every folder has a **checkbox**: ticking is how you pick what
+  the generator builds from. Tick a folder to take everything inside it (a
+  half-ticked folder shows a partial mark); tick single pictures for precise
+  control. *Clear generator picks* in the library menu (☰) starts over.
 - Thumbnail size slider on the left.
 
 ### 3. Build the map
@@ -288,16 +300,20 @@ skipped GUI checks.
 - **Arrow keys** nudge 1px; **Shift+arrows** move exactly one square.
 
 ### 4. Generate a map (Tools → Generate Map…)
-**The map is built from the assets you selected — nothing else.** There is no
-keyword classifier, no automatic sorting and no strategy to choose: select the
-pictures you want in the library (Shift-click, Ctrl-click, or drag a marquee),
-open **Generate**, and it lays exactly those assets out on the grid.
+**The map is built from the assets you ticked — nothing else.** There is no
+keyword classifier, no automatic sorting and no strategy to choose: tick the
+pictures and folders you want in the library (their checkboxes), open
+**Generate**, and it lays exactly those assets out on the grid. Every option
+carries a plain-language tooltip and a one-line explanation, so each control
+says what it does.
 
-1. **The assets to use** — the selection, listed with the footprint each one
-   will have on the map. **Refresh from the library** re-reads the selection;
-   **Use everything shown** takes the whole folder you are browsing (with any
-   search applied). Right-clicking assets in the library also offers *Generate
-   a map from these N assets…*, which opens the generator with exactly those.
+1. **The assets to use** — the ticked assets (individual pictures or whole
+   folders), listed with the footprint each one will have on the map.
+   **Refresh from the library** re-reads the ticks (ticking while the dialog is
+   open updates it live); **Use everything shown** takes the whole folder you
+   are browsing (with any search applied). Right-clicking assets in the library
+   also offers *Generate a map from these N assets…*, which opens the generator
+   with exactly those.
 2. **How to lay them out**
    - *Tidy rows* — left to right, wrapping like text. Predictable and easy to
      tidy up afterwards.
@@ -309,9 +325,12 @@ open **Generate**, and it lays exactly those assets out on the grid.
    size** percentage (100% is the size the asset gets when you drag it onto the
    canvas yourself), **allow 90° rotations**, and **shuffle the placement
    order**.
-3. **Size and placement** — a new level (presets up to 160 x 160 squares, or
-   custom) or the area of the nodes you have selected on the canvas. The canvas
-   grows if the map needs more room.
+3. **Size and placement** — a new level or the area of the nodes you have
+   selected on the canvas. The default size, **Automatic**, makes the map just
+   big enough to hold everything you picked, so large rooms always fit; fixed
+   presets (up to 160 x 160 squares) or custom sizes are there when you want an
+   exact footprint, and anything too big for a fixed area is listed and left
+   out instead of being squeezed. The canvas grows if the map needs more room.
 4. **Seed** — 12 random digits by default, or type any numbers/words. **🎲**
    rolls a new seed, **Copy** copies it, and **Regenerate** rolls a new seed and
    replaces the previous result (tick *Keep this seed* to rebuild with the same

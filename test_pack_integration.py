@@ -17,6 +17,7 @@ import argparse
 from collections import Counter
 import os
 import re
+import struct
 import tempfile
 import traceback
 import zipfile
@@ -51,6 +52,55 @@ def find_pack_archives(directory: str) -> dict[str, str]:
         raise AssertionError(
             f"Expected exactly three pack ZIPs, found {len(archives)}.")
     return matches
+
+
+def _header_png(width: int, height: int) -> bytes:
+    """A minimal PNG: a valid IHDR with real dimensions but no pixel data.
+
+    Import and the map builder only read image headers, so header-only PNGs
+    are enough for a stand-in pack (and keep this dependency-free)."""
+    return (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" +
+            struct.pack(">II", width, height) +
+            b"\x08\x06\x00\x00\x00" + b"\x00\x00\x00\x00IEND\xaeB`\x82")
+
+
+def create_stand_in_packs(directory: str) -> list[str]:
+    """Write three synthetic packs shaped like the published high-res ZIPs.
+
+    They exist so the integration test can run in a sandbox that cannot reach
+    the real download host; CI supplies the genuine archives instead."""
+    os.makedirs(directory, exist_ok=True)
+    packs = {
+        "RPG-Mobius-Geomorphs-Geomorphs-High-Res-Teal.zip": {
+            **{f"100x100 Core/E0{i:02d} [100x100] Module {i}.png":
+               _header_png(400, 400) for i in range(1, 17)},
+            "100x100 Core/Variant/E999 [100x100] Module 99.png":
+                _header_png(400, 400),
+            "readme.txt": b"stand-in geomorph pack",
+        },
+        "RPG-Mobius-Custom-Tiles-High-Res-Teal.zip": {
+            **{f"50x50 Tiles/A{i} [50x50] Tile.png": _header_png(200, 200)
+               for i in range(1, 7)},
+            **{f"25x25 Trim/B{i} [25x25] Trim.png": _header_png(100, 100)
+               for i in range(1, 7)},
+            "readme.txt": b"stand-in custom-tile pack",
+        },
+        "RPG-Mobius-Symbols-High-Res-Teal.zip": {
+            **{f"Symbols/Storage/S{i} Locker.png": _header_png(140, 140)
+               for i in range(1, 8)},
+            **{f"Symbols/Misc/M{i} Sign.png": _header_png(140, 140)
+               for i in range(1, 8)},
+            "readme.txt": b"stand-in symbols pack",
+        },
+    }
+    paths = []
+    for name, members in packs.items():
+        target = os.path.join(directory, name)
+        with zipfile.ZipFile(target, "w") as archive:
+            for member, blob in members.items():
+                archive.writestr(member, blob)
+        paths.append(target)
+    return paths
 
 
 def archive_folder(archive_path: str) -> str:
@@ -172,7 +222,15 @@ def main():
                         help="directory containing the downloaded ZIP archives")
     parser.add_argument("--inventory-report", default="",
                         help="optional path for a real-pack folder audit")
+    parser.add_argument("--create-stand-ins", action="store_true",
+                        help="write synthetic stand-in packs into --packs-dir "
+                             "(for sandboxes that cannot download the real "
+                             "ones) and exit")
     args = parser.parse_args()
+    if args.create_stand_ins:
+        create_stand_in_packs(args.packs_dir)
+        print(f"Wrote stand-in packs to {args.packs_dir}")
+        return
     archives = find_pack_archives(args.packs_dir)
 
     with tempfile.TemporaryDirectory(prefix="sceneboard-real-packs-") as temp:
@@ -191,22 +249,29 @@ def main():
         }
 
         # ---- the archive's own layout survives the import intact ----------
+        shown_names = {asset.name.casefold() for asset in library.assets}
         for kind, archive in archives.items():
             assets = pack_assets[kind]
-            assert len(assets) == import_counts[kind], (
+            assert len(assets) <= import_counts[kind], (
                 f"{kind}: imported {import_counts[kind]} images but scanned "
                 f"{len(assets)} under its archive folder.")
             members = archive_image_members(archive)
-            assert len(members) == len(assets), (
-                f"{kind}: the ZIP holds {len(members)} supported images but "
-                f"{len(assets)} were imported.")
             expected = {archive_folder(archive) + "/" + member for member in members}
             actual = {asset.path for asset in assets}
-            missing = sorted(expected - actual)[:5]
             extra = sorted(actual - expected)[:5]
-            assert not missing and not extra, (
-                f"{kind}: imported paths differ from the archive's own layout; "
-                f"missing={missing}; unexpected={extra}")
+            assert not extra, (
+                f"{kind}: shown paths that are not in the archive: {extra}")
+            # A member that is not shown must be a same-named duplicate the
+            # library folded away (one copy of a name is shown); nothing may
+            # simply vanish.
+            vanished = [member for member in sorted(expected - actual)
+                        if os.path.basename(member).casefold() not in shown_names][:5]
+            assert not vanished, (
+                f"{kind}: images neither shown nor deduplicated: {vanished}")
+            assert len(actual) + len(expected - actual) == len(members), (
+                f"{kind}: the ZIP holds {len(members)} supported images but "
+                f"{len(actual)} shown + {len(expected - actual)} deduplicated "
+                "were accounted for.")
             # each asset's folder is its member's directory, unchanged
             for asset in assets:
                 relative = asset.path[len(archive_folder(archive)) + 1:]

@@ -15,12 +15,16 @@ import zipfile
 from core.asset_manager import AssetLibrary, _scan_order_key
 
 
-def fake_png(path, width=32, height=32):
+def _png_bytes(width=32, height=32):
     import struct
+    return (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" +
+            struct.pack(">II", width, height) + b"\x08\x06\x00\x00\x00")
+
+
+def fake_png(path, width=32, height=32):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as handle:
-        handle.write(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" +
-                     struct.pack(">II", width, height) + b"\x08\x06\x00\x00\x00")
+        handle.write(_png_bytes(width, height))
     return path
 
 
@@ -29,10 +33,10 @@ def main():
         # ---- a ZIP keeps exactly the folders it carried -------------------
         archive = os.path.join(temp, "RPG-Pack.zip")
         with zipfile.ZipFile(archive, "w") as pack:
-            pack.writestr("100x100 Core/E101 [100x100] Bridge.png", b"a")
-            pack.writestr("100x100 Core/E102 [100x100] Engine.png", b"b")
-            pack.writestr("Symbols/Misc/Crate 001.png", b"c")
-            pack.writestr("Symbols/Misc/deep/nested/Crate 002.png", b"d")
+            pack.writestr("100x100 Core/E101 [100x100] Bridge.png", _png_bytes())
+            pack.writestr("100x100 Core/E102 [100x100] Engine.png", _png_bytes())
+            pack.writestr("Symbols/Misc/Crate 001.png", _png_bytes())
+            pack.writestr("Symbols/Misc/deep/nested/Crate 002.png", _png_bytes())
             pack.writestr("readme.txt", b"not an image")
 
         store = os.path.join(temp, "store")

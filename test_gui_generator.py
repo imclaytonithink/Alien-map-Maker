@@ -115,7 +115,7 @@ assert len(dlg.assets) == 3, "Use everything shown takes the whole folder"
 # nothing selected -> a clear refusal, not a invented map
 dlg.set_selection([])
 assert dlg._generate() is False
-assert "No assets are selected" in dlg.lbl_status.text()
+assert "No assets are ticked" in dlg.lbl_status.text()
 print("dialog selection ok")
 
 # ---- build a new level from the selection --------------------------------

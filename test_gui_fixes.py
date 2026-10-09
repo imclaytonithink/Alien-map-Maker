@@ -256,7 +256,7 @@ assert dlg._generate() is False and "Select" in dlg.lbl_status.text()
 # and building needs a selection in the library
 dlg.cmb_mode.setCurrentIndex(0)
 dlg.set_selection([])
-assert dlg._generate() is False and "No assets are selected" in dlg.lbl_status.text()
+assert dlg._generate() is False and "No assets are ticked" in dlg.lbl_status.text()
 dlg.close()
 print("generator dialog ok")
 

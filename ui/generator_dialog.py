@@ -25,7 +25,8 @@ from ui import theme as thememod
 from ui.branding import ALIEN_NAME, APP_NAME
 from ui.image_utils import load_scaled_pixmap
 
-MAP_PRESETS = (("Small — 30 × 30 squares", (30, 30)),
+MAP_PRESETS = (("Automatic — just big enough for the result", "auto"),
+               ("Small — 30 × 30 squares", (30, 30)),
                ("Medium — 60 × 60 squares", (60, 60)),
                ("Large — 100 × 100 squares", (100, 100)),
                ("Huge — 160 × 160 squares", (160, 160)),
@@ -71,9 +72,19 @@ class GeneratorDialog(QDialog):
         self.resize(700, 820)
         self.assets = []
         self._build()
+        if self.panel is not None:
+            # Ticking assets or folders in the library while the dialog is open
+            # updates the selection live.
+            try:
+                self.panel.pickChanged.connect(self._panel_pick_changed)
+            except (AttributeError, TypeError):
+                pass
         self.set_selection(selection if selection is not None
                            else self._panel_selection())
         self._on_layout_changed()
+
+    def _panel_pick_changed(self):
+        self.set_selection(self._panel_selection())
 
     # ------------------------------------------------------------------
     # layout
@@ -138,8 +149,9 @@ class GeneratorDialog(QDialog):
     def _build_selection_section(self):
         layout, self.selection_box = self._section(
             "1 · The assets to use",
-            "These are the assets selected in the library panel. Select more "
-            "(Shift-click or drag a marquee) and press “Refresh from the "
+            "These are the assets ticked in the library — individual pictures "
+            "or whole folders (tick a folder's checkbox to take everything in "
+            "it). Tick more, or change the tick, and press “Refresh from the "
             "library” to bring them in.")
         self.selection_list = QListWidget()
         self.selection_list.setIconSize(QSize(44, 44))
@@ -231,7 +243,12 @@ class GeneratorDialog(QDialog):
         self.cmb_preset = QComboBox()
         for label, size in MAP_PRESETS:
             self.cmb_preset.addItem(label, size)
-        self.cmb_preset.setCurrentIndex(1)
+        self.cmb_preset.setCurrentIndex(0)
+        self.cmb_preset.setToolTip(
+            "Automatic sizes the map so everything you picked fits - the safe "
+            "choice, especially for large rooms. Pick a fixed size (or Custom) "
+            "if you want the map exactly that big; anything too large for it "
+            "is then listed and left out instead of being squeezed.")
         self.cmb_preset.currentIndexChanged.connect(self._preset_changed)
         self.size_form.addRow("Map size", self.cmb_preset)
 
@@ -362,9 +379,9 @@ class GeneratorDialog(QDialog):
         self.lbl_selection.setText(
             f"{total:,} asset(s) selected · together they cover about "
             f"{squares:,} grid squares at 100% size." if total
-            else "Nothing is selected yet. Pick assets in the library panel "
-                 "(Shift-click for several), then press “Refresh from the "
-                 "library” — or use “Use everything shown”.")
+            else "Nothing is ticked yet. In the library, tick pictures or "
+                 "whole folders (their checkboxes), then press “Refresh from "
+                 "the library” — or use “Use everything shown”.")
         self.selection_box.setTitle(
             f"1 · The assets to use ({total:,})" if total
             else "1 · The assets to use — nothing selected yet")
@@ -397,15 +414,20 @@ class GeneratorDialog(QDialog):
         self._update_size_hint()
 
     def _preset_changed(self, *_):
-        size = self.cmb_preset.currentData()
-        if size:
-            for spin, value in ((self.spin_cols, size[0]), (self.spin_rows, size[1])):
+        data = self.cmb_preset.currentData()
+        auto = data == "auto"
+        for spin in (self.spin_cols, self.spin_rows):
+            spin.setEnabled(not auto)
+        if data and not auto:
+            for spin, value in ((self.spin_cols, data[0]), (self.spin_rows, data[1])):
                 spin.blockSignals(True)
                 spin.setValue(value)
                 spin.blockSignals(False)
         self._update_size_hint()
 
     def _custom_size_changed(self, *_):
+        if self.cmb_preset.currentData() == "auto":
+            return
         for index in range(self.cmb_preset.count()):
             if self.cmb_preset.itemData(index) == (self.spin_cols.value(),
                                                    self.spin_rows.value()):
@@ -421,6 +443,11 @@ class GeneratorDialog(QDialog):
 
     def _update_size_hint(self):
         cs = max(1, int(getattr(self.project, "cell_size", 70)))
+        if self.cmb_preset.currentData() == "auto":
+            self.lbl_size_hint.setText(
+                "The map is made just big enough to hold everything you "
+                "picked, so large rooms always fit.")
+            return
         cols, rows = self.spin_cols.value(), self.spin_rows.value()
         text = (f"{cols} × {rows} squares = {cols * cs:,} × {rows * cs:,} px "
                 f"at {cs} px per square.")
@@ -466,6 +493,7 @@ class GeneratorDialog(QDialog):
             "shuffle": self.chk_shuffle.isChecked(),
             "mode": self.cmb_mode.currentData(),
             "size": (self.spin_cols.value(), self.spin_rows.value()),
+            "auto_size": self.cmb_preset.currentData() == "auto",
             "replace_prev": bool(replace_previous),
         }
 
@@ -490,9 +518,9 @@ class GeneratorDialog(QDialog):
         self.edit_seed.setText(clean_seed(self.edit_seed.text()))
         if not self.assets:
             return self._problem(
-                "No assets are selected. Pick them in the library panel and "
-                "press “Refresh from the library”, or use “Use everything "
-                "shown”.")
+                "No assets are ticked. Tick pictures or folders in the "
+                "library and press “Refresh from the library”, or use “Use "
+                "everything shown”.")
         if self.cmb_mode.currentData() == "area" and not self.canvas.selected_pieces():
             return self._problem(
                 "Select the nodes whose area you want to fill on the canvas "

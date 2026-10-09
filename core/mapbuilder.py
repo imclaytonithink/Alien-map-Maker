@@ -141,6 +141,64 @@ def _footprint(item: dict, rotation: int) -> tuple[int, int]:
             else (item["cells_w"], item["cells_h"]))
 
 
+def suggest_region(opts: dict, cap: int = 800) -> tuple[int, int, int, int]:
+    """A region big enough for the selection, so rooms and other large assets
+    always fit: the total footprint of every copy, with headroom for the
+    layout, and at least as wide/tall as the biggest single piece.
+
+    Used for the dialog's "automatic" size so the user never has to guess a
+    map size that fits their selection."""
+    cell = max(1.0, float(opts.get("cell_size", 70)))
+    fps = max(1, int(opts.get("feet_per_square", 5) or 5))
+    scale = min(MAX_SCALE, max(MIN_SCALE, float(opts.get("scale", 1.0) or 1.0)))
+    layout = opts.get("layout", "grid")
+    if layout not in LAYOUTS:
+        layout = "grid"
+    rotate = bool(opts.get("rotate", False))
+    rotations = ROTATIONS if rotate else (0,)
+    copies = max(1, int(opts.get("copies", 1) or 1)) if layout != "fill" else 1
+    gap = max(0, int(opts.get("gap", 0) or 0))
+
+    items = [item for item in
+             (make_item(entry, cell, fps, scale)
+              for entry in (opts.get("selection") or []))
+             if item is not None]
+    if not items:
+        return (0, 0, 29, 29)
+
+    total = 0
+    min_w = min_h = 1
+    for item in items:
+        spins = [_footprint(item, rotation) for rotation in rotations]
+        min_w = max(min_w, min(w for w, _h in spins))
+        min_h = max(min_h, min(h for _w, h in spins))
+        w, h = min(spins, key=lambda pair: pair[0] * pair[1])
+        total += w * h * copies
+        total += gap * max(w, h) * copies          # the gaps between pieces
+
+    if layout == "grid":
+        # Try the shelf packing once against a tall canvas and report exactly
+        # the rectangle it used - the automatic size then hugs the result.
+        cols = min(cap, max(min_w, 8, round((total * 1.6) ** 0.5)))
+        placements, _skipped, _full = pack_rows(
+            list(items) * copies, 0, 0, cols, cap, gap, rotations)
+        if placements:
+            used_w = max(cx + _footprint(item, rotation)[0]
+                         for item, cx, _cy, rotation in placements)
+            used_h = max(cy + _footprint(item, rotation)[1]
+                         for item, _cx, cy, rotation in placements)
+            return (0, 0, min(cap, used_w) - 1, min(cap, used_h) - 1)
+        layout = "scatter"        # fall through to the area estimate
+
+    margin = {"scatter": 1.7, "fill": 1.05}.get(layout, 1.7)
+    area = int(total * margin) + 16
+    cols = max(min_w, round((area * 1.6) ** 0.5))
+    rows = max(min_h, -(-area // max(1, cols)))
+    cols = min(cap, max(8, cols))
+    rows = min(cap, max(8, rows))
+    return (0, 0, cols - 1, rows - 1)
+
+
 # ---------------------------------------------------------------------------
 # Packing
 # ---------------------------------------------------------------------------
@@ -380,7 +438,8 @@ def build_map(opts: dict) -> dict:
                  for item, cx, _cy, rotation in placements)
     used_h = max(cy - y0 + _footprint(item, rotation)[1]
                  for item, _cx, cy, rotation in placements)
-    if layout != "fill" and (used_w < cols or used_h < rows):
+    if (layout != "fill" and not opts.get("quiet_unused")
+            and (used_w < cols or used_h < rows)):
         warnings.append(
             f"The assets cover {used_w} x {used_h} of the {cols} x {rows} "
             "square area; the rest was left empty.")

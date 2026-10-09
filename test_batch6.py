@@ -34,8 +34,8 @@ def main():
             link.create_system = 3
             link.external_attr = (stat.S_IFLNK | 0o777) << 16
             archive.writestr(link, "somewhere-else.png")
-            archive.writestr(r"custom\duplicate.png", b"first image payload")
-            archive.writestr("custom/duplicate.png", b"second image payload")
+            archive.writestr(r"custom\duplicate.png", fake_png_header(40, 40))
+            archive.writestr("custom/duplicate.png", fake_png_header(40, 40))
 
         library = AssetLibrary(store)
         report = library.import_zip(archive_path)
@@ -66,7 +66,7 @@ def main():
 
         second_path = os.path.join(temp, "Another Pack.zip")
         with zipfile.ZipFile(second_path, "w") as archive:
-            archive.writestr("100x100 Core\\same.png", b"same name, different pack")
+            archive.writestr("100x100 Core\\same.png", fake_png_header(24, 24))
         second = library.import_zip(second_path)
         assert second.imported == 1
         assert library.get("Another Pack/100x100 Core/same.png") is not None
