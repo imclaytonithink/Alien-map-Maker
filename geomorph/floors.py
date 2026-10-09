@@ -158,3 +158,47 @@ def solid_depth(rows, side, lo, hi, limit=12, none_if_empty=False):
     if best is None:
         return None if none_if_empty else 0.0
     return min(limit, best / SUB)
+
+
+def hall_bands(rows, depth=4, door_clear=6, min_open=200):
+    """Wall-hugging strips in a big open hall that has no free room floor.
+
+    Promenades, command centres and the like are mostly open floor, so the normal
+    free-rectangle search finds nothing. This marks the floor within ``depth``
+    cells (2 squares) of a wall as usable, except near the tile's edge doors, so
+    furniture lines the walls and the middle of the hall stays clear. Returns
+    rectangles in cells, like :func:`free_rects`."""
+    H = len(rows)
+    W = len(rows[0]) if H else 0
+    open_cells = sum(1 for r in rows for ch in r if ch in "cr")
+    if open_cells < min_open:
+        return []
+    INF = 10 ** 6
+    dist = [[INF] * W for _ in range(H)]
+    from collections import deque
+    dq = deque()
+    for y in range(H):
+        for x in range(W):
+            if rows[y][x] == "#":
+                dist[y][x] = 0
+                dq.append((x, y))
+    while dq:
+        x, y = dq.popleft()
+        if dist[y][x] >= depth:
+            continue
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < W and 0 <= ny < H and dist[ny][nx] > dist[y][x] + 1:
+                dist[ny][nx] = dist[y][x] + 1
+                dq.append((nx, ny))
+    doors = [(x, y) for y in range(H) for x in range(W)
+             if rows[y][x] in "cr" and (x in (0, W - 1) or y in (0, H - 1)
+                                        or any(0 <= x + dx < W and 0 <= y + dy < H and rows[y + dy][x + dx] == "o"
+                                               for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))))]
+    mask = [["x"] * W for _ in range(H)]
+    for y in range(H):
+        for x in range(W):
+            if rows[y][x] in "cr" and 0 < dist[y][x] <= depth:
+                if all(max(abs(x - dx), abs(y - dy)) > door_clear for dx, dy in doors):
+                    mask[y][x] = "."
+    return free_rects(["".join(r) for r in mask], min_side=4, limit=8, chars=(".",))

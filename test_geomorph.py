@@ -505,8 +505,13 @@ def check_decor_stays_indoors():
                     x0, y0 = (it["cx"] - w / 2 - p.x) * 2, (it["cy"] - h / 2 - p.y) * 2
                     xs = range(int(x0 + 1e-3), int(x0 + w * 2 - 1e-3) + 1)
                     ys = range(int(y0 + 1e-3), int(y0 + h * 2 - 1e-3) + 1)
+                    hall_rects = floors.hall_bands(grid) if it.get("hall") else []
                     for y in ys:
                         for x in xs:
+                            if it.get("hall"):          # a big open hall: only the strips along its walls
+                                assert any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in hall_rects), \
+                                    (name, s.name, "hall item outside the wall strips")
+                                continue
                             assert 0 <= y < len(grid) and 0 <= x < len(grid[0]) and grid[y][x] in allowed, \
                                 (name, s.name, grid[y][x] if 0 <= y < len(grid) and 0 <= x < len(grid[0]) else "off tile")
                     total += 1
@@ -1055,6 +1060,54 @@ def check_quality():
     print("quality panel numbers ok")
 
 
+def check_overlooks():
+    from geomorph import render
+    reg = Registry.load()
+    found = None
+    for arch in ("Prison / penal colony", "Xeno-biology containment lab", "Research facility"):
+        for sd in range(8):
+            r = pipeline.generate(reg, dict(kind="site", seed=sd, archetype=arch, scale="large"))
+            if r.layout.volumes:
+                found = r
+                break
+        if found:
+            break
+    assert found is not None, "an archetype with a tall room"
+    for v in found.layout.volumes:
+        for lvl in range(v["level"] - v.get("height", 2) + 1, v["level"]):
+            assert any(e["level"] == lvl and e["title"].startswith("Overlook") for e in found.key), "overlook key entry"
+    # renders on every level without tiles available (boxes), including the overlook level
+    images = render.TileImages(None)
+    for g in found.grids:
+        render.render_level(found, g.index, images, pps=6)
+    print("overlooks ok")
+
+
+def check_hall_decor():
+    """Big open halls (promenade, command centre...) get furniture along their walls, never in the middle,
+    and never on campuses or streets where an open area may be a yard."""
+    from geomorph import decor, floors, symbols
+    F = decor.tile_floors()
+    syms = symbols.load()
+    hall_items = 0
+    for name in ("Space station (ring / spindle / cylinder / modular)", "Research facility", "Prison / penal colony",
+                 "Spaceport / starport", "Military base / garrison"):
+        for seed in range(1, 9):
+            res = pipeline.generate(REG, {"kind": "site", "archetype": name, "scale": "large", "seed": seed,
+                                          "decor": {"enabled": True, "density": 0.9}}, ARCH)
+            halls = [i for i in res.decor if i.get("hall")]
+            if res.layout.topology in ("street", "campus"):
+                assert not halls, "no hall decor outdoors"
+            for it in halls:
+                p = next(q for q in res.grids[it["level"]].placed if (q.x, q.y, q.tile.id) == (it["tx"], it["ty"], it["tile"]))
+                grid = floors.transform(floors.decode(F[p.tile.id]), p.o.rot, p.o.mirror)
+                assert not floors.free_rects(grid, chars=(".", "r")), "only halls with no normal free floor"
+                assert floors.hall_bands(grid), "strips exist"
+                hall_items += 1
+    assert hall_items > 0, "some hall got furnished along its walls"
+    print("hall decor ok:", hall_items, "items")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1064,6 +1117,7 @@ def main():
     check_ship_part_options()
     check_decor()
     check_decor_stays_indoors()
+    check_hall_decor()
     check_walkways_and_exteriors()
     check_exterior_and_cargo()
     check_grouping_and_smart_decor()
@@ -1078,6 +1132,7 @@ def main():
     check_reroll_and_gaps()
     check_keyed_notes_and_rerolls()
     check_quality()
+    check_overlooks()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")

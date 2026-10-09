@@ -81,20 +81,20 @@
   "tiles": 12
  },
  "site mine": {
-  "decor": 95,
+  "decor": 97,
   "filler": 15,
-  "hash": "db07ce4c1d2ff77d",
+  "hash": "ecbee0cf3d6aee63",
   "issues": 0,
   "key": 10,
   "levels": 4,
   "tiles": 9
  },
  "site prison": {
-  "decor": 61,
-  "filler": 255,
-  "hash": "5ac7f78716b6e341",
+  "decor": 65,
+  "filler": 252,
+  "hash": "c9469cfbae1c56b5",
   "issues": 0,
-  "key": 37,
+  "key": 38,
   "levels": 4,
   "tiles": 35
  },
