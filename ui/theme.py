@@ -150,11 +150,11 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
         margin-right: 6px;
     }}
     QSpinBox, QDoubleSpinBox {{
-        padding-right: 34px; min-height: 22px;
+        padding-right: 26px; min-height: 22px;
     }}
     QSpinBox::up-button, QDoubleSpinBox::up-button,
     QSpinBox::down-button, QDoubleSpinBox::down-button {{
-        subcontrol-origin: border; width: 30px;
+        subcontrol-origin: border; width: 24px;
         background: {c['panel3']}; border-left: 1px solid {c['border']};
     }}
     QSpinBox::up-button, QDoubleSpinBox::up-button {{
