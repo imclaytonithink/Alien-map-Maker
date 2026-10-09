@@ -152,7 +152,7 @@ def check_placement():
     # hull sides: edge tiles have exactly one, corners two, ends three
     for tile in REG.tiles.values():
         n = len(hull_sides(tile))
-        assert n == {"standard": 0, "megamorph": 0, "wing": 0, "edge": 1, "corner": 2, "end": 3}[tile.type], tile.id
+        assert n == {"standard": 0, "megamorph": 0, "wing": 0, "trans": 2, "edge": 1, "corner": 2, "end": 3}[tile.type], tile.id
     # a standard tile has orientation variants and sizes swap on 90 degrees
     e = REG.tiles[[k for k, v in REG.tiles.items() if v.type == "edge"][0]]
     dims = {(o.w, o.h) for o in orientations(e)}
@@ -233,6 +233,35 @@ def check_ships():
             assert (a.w, a.h, a.y) == (b.w, b.h, b.y)
             mid = ship.PAD + 36 + (ship.choose_dims(2000, True)[0] * 20) / 2
             assert abs((a.x + a.w / 2) + (b.x + b.w / 2) - 2 * mid) < 1e-6, "mirrored about the centre line"
+    # RULES: exactly one nose (bridge) and one tail (engineering) on the centre line; with the transition chain
+    # a transition sits between hull and nose; fuel-scoop wings need a fuel nose or tail; mirror files are used
+    # (not flipped copies) when the pack has them.
+    chains = 0
+    for seed in range(40):
+        r = pipeline.generate(REG, {"kind": "ship", "ship_type": "Merchant", "tonnage": 1500, "seed": seed})
+        g = r.grids[0]
+        ends = [p for p in g.placed if p.tile.type == "end"]
+        assert sorted(p.zone.split("#")[0] for p in ends) == ["bridge", "engineering"], [p.zone for p in ends]
+        c = ship.choose_dims(1500, True)[0]
+        mid = ship.PAD + 36 + c * 10
+        for p in ends:
+            assert abs(p.x + p.w / 2 - mid) < 1e-6, "nose and tail sit on the centre line"
+        trans = [p for p in g.placed if p.tile.type == "trans"]
+        if trans:
+            chains += 1
+            assert len(trans) == 2
+            for t in trans:
+                assert any(e.x < t.x + t.w and t.x < e.x + e.w and abs((e.y + e.h) - t.y) < 1e-6 or abs(e.y - (t.y + t.h)) < 1e-6
+                           for e in ends), "transition touches its nose or tail"
+            wing = [p for p in g.placed if p.tile.type == "wing"][0]
+            if wing.tile.tags.get("fuel", 0) >= 0.5:
+                assert any(t.tile.tags.get("fuel", 0) >= 0.5 for t in trans), "fuel-scoop wings need a fuel nose or tail"
+        for p in g.placed:                      # a mirror file is never also flipped
+            if p.tile.mirror_of:
+                assert not p.o.mirror or p.tile.type in ("edge", "corner", "standard", "end")
+    assert chains >= 5, chains
+    twin = ship.mirror_twin(REG, REG.tiles["502"])
+    assert twin is not None and twin.mirror_of == "502" and ship.mirror_twin(REG, twin).id == "502"
     no_fins = pipeline.generate(REG, {"kind": "ship", "tonnage": 2000, "seed": 1, "fins": False})
     assert not [p for p in no_fins.grids[0].placed if p.tile.type == "wing"]
     c, rws = ship.choose_dims(1000)

@@ -161,14 +161,27 @@ def scan_tiles(tiles_dir, table=None) -> list:
     return list(tiles.values())
 
 
-WING_RE = re.compile(r"^(?P<num>A\d+)\s*\[(?P<w>\d+)[xX](?P<h>\d+)\]\s*(?:\((?P<var>\d+)\)\s*)?(?P<side>Port|Starboard)\s*(?P<rest>.*)\.png$")
+WING_RE = re.compile(r"^(?P<num>AF?\d+)\s*\[(?P<w>\d+)[xX](?P<h>\d+)\]\s*(?:\((?P<var>\d+)\)\s*)?(?:(?P<color>Gray|White),\s*)?(?P<side>Port|Starboard)\s*(?P<rest>.*)\.png$")
+TRANS_RE = re.compile(r"Transition Corridor", re.I)
+NOSE_DIRS = (("Bridge", "bridge"), ("Engineering", "engineering"))
+UNSUPPORTED_WINGS = ("AF09",)       # needs a root transition piece whose attach geometry is not modelled yet
+
+
+def _plan_box(im):
+    from PIL import Image
+    a = im.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 8 else 0)
+    bb = a.getbbox()
+    if not bb:
+        return None
+    S = PX_PER_SQUARE
+    return [bb[0] // S, bb[1] // S, -(-bb[2] // S), -(-bb[3] // S)]
 
 
 def scan_wings(tiles_dir, table=None) -> list:
-    """Aerofin wing tiles from the Custom Tiles pack (``Misc/A###`` Port/Starboard files).
+    """Aerofin wings (``Misc/A###`` and ``Misc/AF##`` Port/Starboard files).
 
-    A wing is not a rectangle with a clear border, so its plan box is measured from the
-    image. Port and starboard files with the same number and variant are paired.
+    A wing is not a rectangle with a clear border, so its plan box is measured from the image.
+    Port and starboard files with the same number, variant and colour are paired.
     """
     from PIL import Image
     Image.MAX_IMAGE_PIXELS = None
@@ -177,30 +190,72 @@ def scan_wings(tiles_dir, table=None) -> list:
     out = {}
     for f in sorted(d.glob("*.png")) if d.is_dir() else []:
         m = WING_RE.match(f.name)
-        if not m or "overlay" in f.name.lower():
+        if not m or "overlay" in f.name.lower() or m["num"] in UNSUPPORTED_WINGS:
             continue
         side = "P" if m["side"] == "Port" else "S"
-        wid = f"{m['num']}{('-' + m['var']) if m['var'] else ''}{side}"
+        color = (m["color"] or "")[:1]
+        wid = f"{m['num']}{('-' + m['var']) if m['var'] else ''}{color}{side}"
         im = Image.open(f)
-        px = im.size
-        a = im.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 8 else 0)
-        bb = a.getbbox()
-        if not bb:
+        box = _plan_box(im)
+        if not box:
             continue
-        S = PX_PER_SQUARE
-        box = [bb[0] // S, bb[1] // S, -(-bb[2] // S), -(-bb[3] // S)]
         rest = m["rest"].strip(" ()")
         rooms = [x.strip() for x in rest.split(",") if x.strip()]
         w, h = box[2] - box[0], box[3] - box[1]
         edges = {s: {"cls": [0] * (w if s in "NS" else h), "raw": [0.0] * (w if s in "NS" else h), "conf": 1.0}
                  for s in SIDES}
-        out[wid] = Tile(id=wid, number=m["num"], type="wing", w=w, h=h, title=f"Wing {m['side']} {rest}".strip(),
-                        rooms=rooms, tags=derive_tags(rest, rooms, table), image=f"Misc/{f.name}", px=px,
+        out[wid] = Tile(id=wid, number=m["num"], type="wing", w=w, h=h,
+                        title=f"Wing {m['side']} {m['color'] or ''} {rest}".replace("  ", " ").strip(),
+                        rooms=rooms, tags=derive_tags(rest, rooms, table), image=f"Misc/{f.name}", px=im.size,
                         edges=edges, bbox=box)
     for wid, t in out.items():
         other = wid[:-1] + ("S" if wid.endswith("P") else "P")
         if other in out:
             t.pair = other
+    return list(out.values())
+
+
+def scan_noses(tiles_dir, table=None) -> list:
+    """Nose/tail pieces from the Custom Tiles pack.
+
+    * ``Bridge/**`` and ``Engineering/**`` 50x50 End tiles (bridge nose, engineering tail), 10x10 squares;
+    * ``Misc`` ``[100x50] ... Transition Corridor`` pieces: 20x10, wide side to the hull, narrow side to a nose.
+    Overlays (turret art) are ignored; ``[Mirror]`` files are linked to their original via ``mirror_of``.
+    """
+    table = table or tag_table()
+    root = Path(tiles_dir)
+    out = {}
+    for folder, role in NOSE_DIRS:
+        for f in sorted((root / folder).rglob("*.png")):
+            info = parse_name(f.name)
+            if not info or info["overlay"] or (info["w_ft"], info["h_ft"]) != (50, 50):
+                continue
+            rel = f.relative_to(root).as_posix()
+            variant = f.parent.name
+            key = f"{role[0]}{info['number']}:{variant}"
+            mirror_of = key.replace(" [Mirror]", "") if "[Mirror]" in variant else ""
+            rooms = info["rooms"] or [info["title"]]
+            tags = derive_tags(info["title"] + " " + variant, rooms, table)
+            tags[role] = 1.0
+            if role == "engineering":
+                tags["power"] = 1.0
+            t = Tile(id=key, number=info["number"], type="end", w=10, h=10, title=f"{role.title()} end {info['title']} ({variant})".strip(),
+                     rooms=rooms, tags=tags, image=rel, mirror_of=mirror_of)
+            out[key] = t
+    mpath = root / "Misc"
+    for f in sorted(mpath.glob("*.png")) if mpath.is_dir() else []:
+        if not TRANS_RE.search(f.name) or "overlay" in f.name.lower():
+            continue
+        info = parse_name(f.name.replace("[Mirror] ", "").replace("[Mirror]", ""))
+        if not info:
+            continue
+        mir = "[mirror]" in f.name.lower()
+        key = f"{info['number']}{('-' + info['variant']) if info['variant'] else ''}{'m' if mir else ''}"
+        rest = info["title"] + " " + " ".join(info["rooms"])
+        t = Tile(id=key, number=info["number"], type="trans", w=20, h=10, title=f"Nose transition {info['title']}".strip(),
+                 rooms=info["rooms"], tags=derive_tags(rest, info["rooms"], table), image=f"Misc/{f.name}",
+                 mirror_of=(key[:-1] if mir else ""))
+        out[key] = t
     return list(out.values())
 
 

@@ -38,6 +38,8 @@ def hull_sides(tile: Tile) -> set:
     """
     if tile.type in ("standard", "megamorph", "wing") or not tile.edges:
         return set()
+    if tile.type == "trans":          # nose transition: wide side to the hull, narrow side to the nose
+        return {"E", "W"} if tile.w >= tile.h else {"N", "S"}
     avg = {s: sum(tile.edges[s]["raw"]) / max(1, len(tile.edges[s]["raw"])) for s in SIDES}
     doors = {s: sum(1 for c in tile.edges[s]["cls"] if c == DOOR) for s in SIDES}
     voids = {s: sum(1 for v in tile.edges[s]["raw"] if v >= 0.6) for s in SIDES}

@@ -31,7 +31,7 @@ LONG_PREF = {"bridge": 0.0, "sensors": 0.1, "weapons": 0.3, "office": 0.25, "sta
 PAD = 6
 
 
-def hull_slots(C, R, fins=True):
+def hull_slots(C, R, fins=True, chain=False):
     """All slots of a C x R ship: standard block, edge ring, corners, ends, fins."""
     S = 20
     ox, oy = PAD + 36, PAD + 20      # left margin leaves room for wings
@@ -58,10 +58,21 @@ def hull_slots(C, R, fins=True):
                              (ox - 10, oy + R * S, {"S", "W"}, -1), (ox + C * S, oy + R * S, {"S", "E"}, C)):
         out.append({"kind": "corner", "x": cx, "y": cy, "w": 10, "h": 10, "out": o,
                     "row": 0.0 if "N" in o else 1.0, "col": col})
-    out.append({"kind": "end", "x": ox + cb * S, "y": oy - 20, "w": 20, "h": 20, "out": {"N", "E", "W"}, "conn": "S",
-                "row": 0.0, "col": cb, "role": "bow"})
-    out.append({"kind": "end", "x": ox + cb * S, "y": oy + R * S, "w": 20, "h": 20, "out": {"S", "E", "W"}, "conn": "N",
-                "row": 1.0, "col": cb, "role": "stern"})
+    if chain:
+        # bow: transition (20x10, wide side to the hull) + 10x10 bridge nose; stern the same with an engineering tail
+        out.append({"kind": "trans", "x": ox + cb * S, "y": oy - 10, "w": 20, "h": 10, "out": {"E", "W"}, "row": 0.0,
+                    "col": cb, "role": "bow_t"})
+        out.append({"kind": "end", "x": ox + cb * S + 5, "y": oy - 20, "w": 10, "h": 10, "out": {"N", "E", "W"},
+                    "conn": "S", "row": 0.0, "col": cb, "role": "bow"})
+        out.append({"kind": "trans", "x": ox + cb * S, "y": oy + R * S, "w": 20, "h": 10, "out": {"E", "W"}, "row": 1.0,
+                    "col": cb, "role": "stern_t"})
+        out.append({"kind": "end", "x": ox + cb * S + 5, "y": oy + R * S + 10, "w": 10, "h": 10, "out": {"S", "E", "W"},
+                    "conn": "N", "row": 1.0, "col": cb, "role": "stern"})
+    else:
+        out.append({"kind": "end", "x": ox + cb * S, "y": oy - 20, "w": 20, "h": 20, "out": {"N", "E", "W"}, "conn": "S",
+                    "row": 0.0, "col": cb, "role": "bow"})
+        out.append({"kind": "end", "x": ox + cb * S, "y": oy + R * S, "w": 20, "h": 20, "out": {"S", "E", "W"}, "conn": "N",
+                    "row": 1.0, "col": cb, "role": "stern"})
     if fin_row is not None:
         out.append({"kind": "end", "x": ox - 20, "y": oy + fin_row * S, "w": 20, "h": 20, "out": {"N", "S", "W"},
                     "conn": "E", "row": (fin_row + 0.5) / R, "col": -2, "role": "fin"})
@@ -143,15 +154,26 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
         ship_type = "Merchant"
     C, R = choose_dims(tonnage, symmetric, fins)
     pairs = registry.wing_pairs() if fins else []
-    slots = hull_slots(C, R, fins and not pairs)
+    wing = _choose_wings(rng, pairs, ship_type) if pairs else None
+    have_chain = any(t.type == "trans" for t in registry.tiles.values()) and \
+        any(t.type == "end" and t.w == 10 for t in registry.tiles.values())
+    chain = have_chain and rng.random() < 0.5
+    slots = hull_slots(C, R, fins and not pairs, chain)
+    # RULE: fuel-scoop wings need a fuel nose or tail (a fuel-tagged transition on the bow or stern)
+    fuel_end = None
+    if chain and wing is not None and wing[0].tags.get("fuel", 0) >= 0.5:
+        fuel_end = rng.choice(("bow_t", "stern_t"))
     picker = TilePicker(registry, rng)
     grid = LevelGrid(0, "Main deck", cols=PAD * 2 + 72 + 20 * (C + 4) + 20, rows=PAD * 2 + 20 * (R + 4) + 80)
     if mode == "random":
         tags = {i: None for i in range(len(slots))}
     else:
         tags = tags_for_slots(slots, ship_type, rng, mode)
+    for i, sl in enumerate(slots):
+        if sl.get("role") in ("bow_t", "stern_t"):
+            tags[i] = ["fuel"] if (fuel_end == sl["role"] and mode != "random") else ([] if mode == "random" else ["multipurpose"])
     # placement order: inner block first (centre outwards), then ring, then ends
-    order = sorted(range(len(slots)), key=lambda i: ({"standard": 0, "edge": 1, "corner": 2, "end": 3}[slots[i]["kind"]],
+    order = sorted(range(len(slots)), key=lambda i: ({"standard": 0, "edge": 1, "corner": 2, "trans": 3, "end": 4}[slots[i]["kind"]],
                                                      abs(slots[i].get("col", 0) - C / 2)))
     placed = {}
     issues = []
@@ -161,8 +183,8 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
         s = slots[i]
         t = tags[i] or []
         allowed = _allowed(s)
-        if s["kind"] == "end":
-            ttype = "end"
+        if s["kind"] in ("end", "trans"):
+            ttype = s["kind"]
             allowed = _end_allowed(s)
         else:
             ttype = s["kind"]
@@ -174,16 +196,20 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
             if partner is not None and partner in placed:
                 p0 = placed[partner]
                 best = None
-                for o in orientations(p0.tile):
-                    if (o.w, o.h) != (s["w"], s["h"]) or o.mirror == p0.o.mirror:
-                        continue
-                    if allowed is not None and not allowed(p0.tile, o):
-                        continue
-                    f = grid.fit(s["x"], s["y"], o, p0.tile.type)
-                    if f.ok and (best is None or f.score() > best[0]):
-                        best = (f.score(), o, f)
+                # RULE: when the pack has a [Mirror] file for the tile, use it (not a flipped copy) so labels read correctly
+                twin = mirror_twin(registry, p0.tile)
+                for tile2, want_flip in ((twin, False), (p0.tile, True)) if twin else ((p0.tile, True),):
+                    for o in orientations(tile2):
+                        if (o.w, o.h) != (s["w"], s["h"]) or (o.mirror == p0.o.mirror) == want_flip:
+                            continue
+                        if allowed is not None and not allowed(tile2, o):
+                            continue
+                        f = grid.fit(s["x"], s["y"], o, tile2.type)
+                        sc = f.score() + (0.5 if tile2 is twin else 0)
+                        if f.ok and (best is None or sc > best[0]):
+                            best = (sc, o, f, tile2)
                 if best is not None:
-                    pick = (p0.tile, best[1], best[2])
+                    pick = (best[3], best[1], best[2])
         if pick is None:
             if mode == "selective":
                 pick = _selective_pick(picker, grid, s, t, ttype, allowed, rng)
@@ -196,8 +222,9 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
         tile, o, f = pick
         placed[i] = grid.place(tile, s["x"], s["y"], o, zone=(t[0] if t else ""))
     if pairs:
-        _place_wings(grid, registry, rng, pairs, ship_type, C, R, issues)
-    info = {"C": C, "R": R, "tonnage_target": tonnage, "ship_type": ship_type, "mode": mode,
+        _place_wings(grid, wing, C, R, issues)
+    info = {"nose_chain": chain, "wings": [t.id for t in wing] if wing else [], "fuel_end": fuel_end,
+            "C": C, "R": R, "tonnage_target": tonnage, "ship_type": ship_type, "mode": mode,
             "symmetric": symmetric, "issues": issues}
     info["tonnage"] = round(sum(p.w * p.h for p in grid.placed) / 2)
     if mode == "movie":
@@ -214,15 +241,16 @@ WING_PREF = {"Military": "weapons", "Merchant": "cargo", "Luxury Liner": "passen
              "Research": "lab", "Colony / Generational": "cargo", "Medical / Rescue": "medical"}
 
 
-def _place_wings(grid, registry, rng, pairs, ship_type, C, R, issues):
-    """RULE: wings come as a Port + Starboard pair (same A-number and variant), mirrored about the centre line.
-
-    The port wing sits on the left of a bow-up ship, the starboard on the right, each flush against the hull
-    ring and centred along the hull.
-    """
+def _choose_wings(rng, pairs, ship_type):
     pref = WING_PREF.get(ship_type, "cargo")
-    weights = [0.3 + sum(p.tags.get(t, 0) for t in (pref,)) + 0.2 * (len(p.tags) > 0) for p, s in pairs]
-    port, star = rng.choices(pairs, weights=weights)[0]
+    weights = [0.3 + p.tags.get(pref, 0) + 0.2 * (len(p.tags) > 0) for p, s in pairs]
+    return rng.choices(pairs, weights=weights)[0]
+
+
+def _place_wings(grid, wing, C, R, issues):
+    """RULE: wings come as a Port + Starboard pair (same number, variant and colour), mirrored about the
+    centre line. Port is on the left of a bow-up ship, starboard on the right, flush against the hull ring."""
+    port, star = wing
     ox, oy = PAD + 36, PAD + 20
     mid_y = oy + R * 10
     for tile, x in ((port, ox - 10 - port.w), (star, ox + C * 20 + 10)):
@@ -231,7 +259,17 @@ def _place_wings(grid, registry, rng, pairs, ship_type, C, R, issues):
         if not grid.fit(x, y, o, "wing").ok:
             issues.append(f"wing {tile.id} does not fit")
             continue
-        grid.place(tile, x, y, o, zone=tile.tags and max(tile.tags, key=tile.tags.get) or "wing")
+        grid.place(tile, x, y, o, zone=max(tile.tags, key=tile.tags.get) if tile.tags else "wing")
+
+
+def mirror_twin(registry, tile):
+    """The pack's own [Mirror] version of ``tile`` (or the original if ``tile`` is the mirror)."""
+    if tile.mirror_of and tile.mirror_of in registry.tiles:
+        return registry.tiles[tile.mirror_of]
+    for t in registry.tiles.values():
+        if t.mirror_of == tile.id:
+            return t
+    return None
 
 
 def _partner(slots, i, C):
