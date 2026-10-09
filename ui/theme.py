@@ -364,7 +364,9 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
 
 def apply_stylesheet(app: QApplication, accent: str, text_scale: float,
                      mode: str = "alien"):
-    app.setStyleSheet(build_stylesheet(accent, text_scale, mode))
+    sheet = build_stylesheet(accent, text_scale, mode)
+    if app.styleSheet() != sheet:          # re-parsing an identical sheet costs ~0.2 s
+        app.setStyleSheet(sheet)
 
 
 class ScanlineOverlay(QWidget):

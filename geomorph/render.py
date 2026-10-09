@@ -51,6 +51,22 @@ class TileImages:
                 self.tiles_dir = saved
         return self.thumb(_T)
 
+    def cache_path(self, tile) -> Path:
+        return self.cache / (tile.id.replace("/", "_").replace(":", "_") + ".png")
+
+    def is_cached(self, tile) -> bool:
+        return tile.id in self._mem or self.cache_path(tile).exists()
+
+    def prefetch(self, tiles, workers=4):
+        """Prepare the thumbnails of many tiles at once (PIL releases the GIL
+        while decoding and shrinking, so threads give a real speed-up)."""
+        todo = {t.id: t for t in tiles if t.id not in self._mem}
+        if len(todo) < 2 or self.loader is not None:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            list(ex.map(self.thumb, todo.values()))
+
     def thumb(self, tile) -> Image.Image | None:
         if tile.id in self._mem:
             return self._mem[tile.id]
@@ -58,11 +74,13 @@ class TileImages:
         if self.loader is not None:
             im = self.loader(tile)
         else:
-            safe = tile.id.replace("/", "_").replace(":", "_")
-            cp = self.cache / f"{safe}.png"
+            cp = self.cache_path(tile)
             if cp.exists():
-                im = Image.open(cp).convert("RGBA")
-            elif self.tiles_dir is not None and (self.tiles_dir / tile.image).exists():
+                try:
+                    im = Image.open(cp).convert("RGBA")
+                except (OSError, SyntaxError):
+                    im = None             # half-written by another thread: rebuild
+            if im is None and self.tiles_dir is not None and (self.tiles_dir / tile.image).exists():
                 src = Image.open(self.tiles_dir / tile.image)
                 src.load()
                 k = PX_PER_SQUARE // THUMB_PPS
@@ -70,7 +88,9 @@ class TileImages:
                 im = rgba.reduce(k)
                 try:
                     self.cache.mkdir(parents=True, exist_ok=True)
-                    im.save(cp)
+                    tmp = cp.with_name(f"{cp.stem}.{os.getpid()}.{id(im)}.tmp.png")
+                    im.save(tmp)
+                    os.replace(tmp, cp)
                 except OSError:
                     pass
         self._mem[tile.id] = im
@@ -129,6 +149,8 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
     for f in below:
         draw_box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
         F.draw_filler(d, f["kind"], draw_box, pps, f.get("rot", 0), f.get("label", "") if f["kind"] in ("building", "pad", "pit") else "")
+    if hasattr(images, "prefetch"):
+        images.prefetch([p.tile for p in g.placed])
     for p in g.placed:
         th = images.thumb(p.tile)
         bx0, by0 = px(p.x, x0), px(p.y, y0)

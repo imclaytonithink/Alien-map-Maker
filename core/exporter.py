@@ -69,10 +69,10 @@ class PixmapCache(OrderedDict):
         return value
 
 
-def _scaled_pixmap_from_reader(reader: QImageReader, target_size) -> QPixmap:
+def _scaled_image_from_reader(reader: QImageReader, target_size) -> QImage:
     source = reader.size()
     if not source.isValid() or source.width() <= 0 or source.height() <= 0:
-        return QPixmap()
+        return QImage()
     if target_size is None:
         max_w = max_h = 2048
     else:
@@ -83,8 +83,55 @@ def _scaled_pixmap_from_reader(reader: QImageReader, target_size) -> QPixmap:
         reader.setScaledSize(QSize(max(1, round(source.width() * factor)),
                                    max(1, round(source.height() * factor))))
     with decode_guard(source.width(), source.height()):
-        image = reader.read()
+        return reader.read()
+
+
+def _scaled_pixmap_from_reader(reader: QImageReader, target_size) -> QPixmap:
+    image = _scaled_image_from_reader(reader, target_size)
     return QPixmap.fromImage(image) if not image.isNull() else QPixmap()
+
+
+# ---- decoded-size disk cache: big tile PNGs decode once, then load in ms ----
+DISK_CACHE_MAX_SIDE = 2048
+
+
+def decode_cache_dir() -> str:
+    return os.environ.get("SCENEBOARD_PX_CACHE") or os.path.join(
+        os.path.expanduser("~"), ".cache", "sceneboard_px")
+
+
+def file_image(path: str, target_size) -> QImage:
+    """Scaled decode of an image file, thread-safe, using the on-disk cache.
+
+    Safe to call from a worker thread (returns a QImage, never a QPixmap)."""
+    import hashlib
+    try:
+        st = os.stat(path)
+    except OSError:
+        return QImage()
+    size = (max(1, int(target_size[0])), max(1, int(target_size[1])))
+    cacheable = max(size) <= DISK_CACHE_MAX_SIDE and st.st_size > 256 * 1024
+    cp = ""
+    if cacheable:
+        digest = hashlib.sha1(
+            f"{os.path.abspath(path)}|{st.st_mtime_ns}|{st.st_size}|{size[0]}x{size[1]}".encode()
+        ).hexdigest()
+        cp = os.path.join(decode_cache_dir(), digest[:2], digest + ".png")
+        if os.path.isfile(cp):
+            cached = QImage(cp)
+            if not cached.isNull():
+                return cached
+    reader = QImageReader(path)
+    reader.setAutoTransform(True)
+    image = _scaled_image_from_reader(reader, size)
+    if cp and not image.isNull():
+        try:
+            os.makedirs(os.path.dirname(cp), exist_ok=True)
+            image.save(cp + ".tmp.png", "PNG", 1)
+            os.replace(cp + ".tmp.png", cp)
+        except OSError:
+            pass
+    return image
 
 
 def _cache_remember(cache: dict, key, pixmap: QPixmap):
@@ -140,9 +187,8 @@ def piece_pixmap(piece: Piece, project: Project, cache: dict,
         else:
             pm = QPixmap()
     else:
-        reader = QImageReader(source)
-        reader.setAutoTransform(True)
-        pm = _scaled_pixmap_from_reader(reader, requested_size)
+        image = file_image(source, requested_size)
+        pm = QPixmap.fromImage(image) if not image.isNull() else QPixmap()
     _cache_remember(cache, key, pm)
     return pm
 

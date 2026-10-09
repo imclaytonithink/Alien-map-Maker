@@ -21,6 +21,7 @@ GUI_TESTS = [
     "test_gui_fixes.py",
     "test_gui_generator.py",
     "test_gui_geomorph.py",
+    "test_gui_warmup.py",
     "test_gui_guides.py",
     "test_gui_tools.py",
     "test_gui_edit.py",

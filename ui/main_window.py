@@ -474,6 +474,9 @@ class MainWindow(QMainWindow):
         self._show_launch()
         QTimer.singleShot(0, self._install_bundled_asset_packs)
         QTimer.singleShot(1500, self._sync_legend)
+        from ui.warmup import Warmup
+        self._warmup = Warmup(self, lambda text, ms=0: self.status.showMessage(text, ms))
+        QTimer.singleShot(50, self._start_warmup)
 
     # ------------------------------------------------------------------
     def _build_ui(self):
@@ -1231,6 +1234,12 @@ class MainWindow(QMainWindow):
         else:
             QTimer.singleShot(0, self.overlay.open_menu)
 
+    def _start_warmup(self):
+        """Build the slow one-time caches (tile previews, image sizes) off the
+        GUI thread; a loading screen shows only when there is real work."""
+        if getattr(self, "_warmup", None) is not None and self.project.asset_store:
+            self._warmup.start(self.project.asset_store)
+
     def _bundled_pack_is_installed(self, archive_path: str) -> bool:
         """Avoid re-extracting a bundled pack after its first successful import."""
         store = self.project.asset_store
@@ -1295,6 +1304,7 @@ class MainWindow(QMainWindow):
                         for report in reports)
             self.status.showMessage(
                 f"Built-in high-resolution assets ready ({count:,} images).", 12000)
+            self._start_warmup()
 
     def _offer_recovery(self):
         if not os.path.isfile(self._recovery_file):
@@ -3020,6 +3030,8 @@ class MainWindow(QMainWindow):
         self.scanlines.setGeometry(self.rect())
         if hasattr(self, "overlay") and self.overlay.isVisible():
             self.overlay.setGeometry(self.rect())
+        if getattr(self, "_warmup", None) is not None and self._warmup.overlay.isVisible():
+            self._warmup.overlay.fit()
 
     def keyPressEvent(self, e):
         if self.canvas.handle_cutout_key(e) or self.canvas.handle_clone_key(e):
@@ -3089,6 +3101,8 @@ class MainWindow(QMainWindow):
         instead, which uses the ordinary GIL-releasing path and so cannot
         deadlock against its own worker.
         """
+        if getattr(self, "_warmup", None) is not None:
+            self._warmup.drain()
         if hasattr(self, "library") and hasattr(self.library, "drain_background_work"):
             self.library.drain_background_work()
         if hasattr(self, "canvas") and hasattr(self.canvas, "drain_background_work"):
