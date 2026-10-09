@@ -1129,6 +1129,136 @@ def check_hall_decor():
     print("hall decor ok:", hall_items, "items")
 
 
+def check_atmosphere():
+    """Rooms with the power out go dark with red lamps over their doors; lockdown shutters are GM-only; quarantine gets
+    a hazard border; the same overlay goes onto the canvas on its own layers."""
+    import tempfile
+    from geomorph import atmosphere, canvas_export, render
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="site", seed="atmo", archetype="Research facility", scale="medium",
+                                      overlays=["lockdown", "power_failure", "quarantine"], intensity=1.0))
+    ov = res.overlays
+    assert ov["power_failure"] and ov["lockdown"] and ov["quarantine"]
+    from PIL import Image
+    images = render.TileImages(None, loader=lambda t: Image.new(
+        "RGBA", ((t.w + 4) * render.THUMB_PPS, (t.h + 4) * render.THUMB_PPS), (200, 200, 200, 255)))   # pale tiles
+    def level_with(state):
+        return next(g.index for g in res.grids if any(state in r["states"] for r in atmosphere.affected(res, g)))
+
+    def look(lvl, gm_view, states=True):
+        saved = res.overlays
+        if not states:
+            res.overlays = {}
+        try:
+            return render.render_level(res, lvl, images, pps=10, gm=gm_view, title=False)
+        finally:
+            res.overlays = saved
+    x0, y0, _x1, _y1 = render.shared_bounds(res)
+
+    def median(im, p):
+        box = (int((p.x - x0) * 10) + 4, int((p.y - y0) * 10) + 4, int((p.x + p.w - x0) * 10) - 4, int((p.y + p.h - y0) * 10) - 4)
+        px = sorted(sum(c) / 3 for c in im.convert("RGB").crop(box).getdata())
+        return px[len(px) // 2]                              # median: the red lamps do not skew it
+    dlvl = level_with("power_failure")
+    gm, plain = look(dlvl, True), look(dlvl, True, states=False)
+    dark = [r for r in atmosphere.affected(res, res.grids[dlvl]) if "power_failure" in r["states"]]
+    for room in dark:
+        assert median(gm, room["tile"]) < median(plain, room["tile"]) * 0.9 or atmosphere.shadow_fraction(room) is None, \
+            "dark rooms are dimmer overall"
+    # lamps light what they can see, and leave real shadow: lit pools are bright, the rest stays dark
+    lit_lum = shade_lum = n_lit = n_shade = 0
+    shadows = []
+    for g2 in res.grids:
+        for rm in atmosphere.affected(res, g2):
+            if "power_failure" not in rm["states"]:
+                continue
+            tp = rm["tile"]
+            rows = atmosphere._floor(tp)
+            sf = atmosphere.shadow_fraction(rm)
+            if rows is None or sf is None:
+                continue
+            shadows.append(sf)
+            W_, H_ = int(tp.w * 10), int(tp.h * 10)
+            light, _spots = atmosphere._light_map(tp, rows, W_, H_, 10, atmosphere.LIGHT_RADIUS)
+            lp = light.load()
+            img = look(g2.index, True).convert("L").load()
+            for cy, row in enumerate(rows):
+                for cx, ch in enumerate(row):
+                    if ch not in "c.r":
+                        continue
+                    sx, sy = cx * 5 + 2, cy * 5 + 2
+                    lum = img[int((tp.x - x0) * 10) + sx, int((tp.y - y0) * 10) + sy]
+                    if lp[sx, sy] >= 200:
+                        lit_lum += lum
+                        n_lit += 1
+                    elif lp[sx, sy] <= 5:
+                        shade_lum += lum
+                        n_shade += 1
+    assert shadows and n_lit and n_shade, (len(shadows), n_lit, n_shade)
+    assert lit_lum / n_lit > 1.8 * shade_lum / n_shade, "lit pools are much brighter than the shadows"
+    assert all(0.03 <= f <= 0.9 for f in shadows), ("some light and some shadow in every dark room", sorted(shadows)[:3], sorted(shadows)[-3:])
+    assert 0.2 < sum(shadows) / len(shadows) < 0.7, "about half the floor is in shadow"
+    llvl = level_with("lockdown")
+    red = lambda im: sum(1 for (r, g_, b, a) in im.getdata() if r > 235 and 40 < g_ < 90 and 30 < b < 80)
+    gm_l, pl_l = look(llvl, True), look(llvl, False)
+    assert red(gm_l) > red(pl_l) + 20, "lockdown shutters show in the GM view only"
+    assert gm_l.tobytes() != look(llvl, True, states=False).tobytes()
+    # the overlay itself: lamps over real doors; shutters only in the GM part
+    room = next(r for r in atmosphere.affected(res, res.grids[llvl]) if "lockdown" in r["states"])
+    pub, gmo = atmosphere.room_overlay(room, 20, "public"), atmosphere.room_overlay(room, 20, "gm")
+    assert pub.getbbox() is not None
+    if atmosphere.door_points(room["tile"]):
+        assert gmo.getbbox() is not None
+    assert all(a < 200 or not (r > 240 and g_ < 80) for (r, g_, b, a) in pub.getdata()), "no shutters in the public part"
+    # lamps touch a wall, and nothing is drawn outside the building or through a wall
+    checked = lamps_seen = 0
+    for g2 in res.grids:
+        for rm in atmosphere.affected(res, g2):
+            tp = rm["tile"]
+            rows = atmosphere._floor(tp)
+            if rows is None:
+                continue
+            for cx, cy, wall in atmosphere._lamps(tp, rows):
+                dx, dy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
+                assert rows[cy][cx] in "c.r" and rows[cy + dy][cx + dx] == "#", "a lamp sits on floor against a wall"
+                lamps_seen += 1
+            im = atmosphere.room_overlay(rm, 10, "public")
+            al = im.getchannel("A").load()
+            for cy, row in enumerate(rows):
+                for cx, ch in enumerate(row):
+                    if ch == "o":
+                        assert al[cx * 5 + 2, cy * 5 + 2] == 0, "the effect stays inside the building"
+            checked += 1
+    assert checked >= 3 and lamps_seen >= 3, (checked, lamps_seen)
+    # light does not pass through a wall: a lamp's visible cells never include a cell behind a wall in a straight line
+    for g2 in res.grids:
+        for rm in atmosphere.affected(res, g2):
+            tp = rm["tile"]
+            rows = atmosphere._floor(tp)
+            if rows is None or "power_failure" not in rm["states"]:
+                continue
+            for cx, cy, wall in atmosphere._lamps(tp, rows)[:2]:
+                vis = atmosphere._light_mask(rows, cx, cy, 5, len(rows[0]), len(rows)).load()
+                for ty in range(len(rows)):
+                    for tx in range(len(rows[0])):
+                        if vis[tx, ty] == 255 and max(abs(tx - cx), abs(ty - cy)) > 1:
+                            n = max(abs(tx - cx), abs(ty - cy))
+                            for k in range(1, n):
+                                assert rows[round(cy + (ty - cy) * k / n)][round(cx + (tx - cx) * k / n)] not in "#o"
+    # placing on the canvas: atmosphere on its own layer, shutters on the GM layer, none in a player build
+    cell = 70.0
+    out_gm = canvas_export.to_canvas(res, cell, None, images, tempfile.mkdtemp(prefix="atmo-"), gm=True)
+    out_pl = canvas_export.to_canvas(res, cell, None, images, tempfile.mkdtemp(prefix="atmo-"), gm=False)
+    names_gm = {p.get("layer_name") for lv in out_gm["levels"] for p in lv["pieces"]}
+    names_pl = {p.get("layer_name") for lv in out_pl["levels"] for p in lv["pieces"]}
+    assert canvas_export.LAYER_ATMO in names_gm and canvas_export.LAYER_ATMO in names_pl
+    gm_pieces = [p for lv in out_gm["levels"] for p in lv["pieces"] if p.get("layer_name") == canvas_export.LAYER_GM
+                 and p.get("name", "").startswith(canvas_export.LAYER_GM)]
+    assert gm_pieces and not [p for lv in out_pl["levels"] for p in lv["pieces"] if p.get("name", "").startswith(canvas_export.LAYER_GM)]
+    assert all(p.get("embedded") for p in gm_pieces)
+    print("atmosphere ok")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1154,6 +1284,7 @@ def main():
     check_keyed_notes_and_rerolls()
     check_quality()
     check_overlooks()
+    check_atmosphere()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")

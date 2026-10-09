@@ -403,9 +403,14 @@ class GeomorphDialog(QDialog):
         self.ck_show_decor.setChecked(True)
         self.ck_show_decor.setToolTip("Show the symbols and outdoor features in the preview, or the bare layout.")
         self.ck_show_decor.toggled.connect(lambda _c: self._show_level())
+        self.ck_atmo = QCheckBox("Atmosphere")
+        self.ck_atmo.setChecked(True)
+        self.ck_atmo.setToolTip("Dim rooms with the power out, red emergency lamps over their doors, a red shutter "
+                                "across locked-down doors (GM view only) and hazard borders on quarantined rooms.")
+        self.ck_atmo.toggled.connect(lambda _c: self._show_level())
         self.ck_live = QCheckBox("Live preview")
         self.ck_live.setToolTip("Regenerate automatically a moment after any option changes.")
-        for wdg in (self.btn_gen, self.btn_regen, self.ck_live, QLabel("Level"), self.cb_level, self.ck_gm, self.ck_show_decor):
+        for wdg in (self.btn_gen, self.btn_regen, self.ck_live, QLabel("Level"), self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo):
             top.addWidget(wdg)
         top.addStretch(1)
         right.addLayout(top)
@@ -649,7 +654,7 @@ class GeomorphDialog(QDialog):
         self._live_timer.setSingleShot(True)
         self._live_timer.setInterval(600)
         self._live_timer.timeout.connect(self._live_fire)
-        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
+        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
         for w in self.findChildren(QWidget):
             if w in skip or w.parent() is None:
                 continue
@@ -903,8 +908,8 @@ class GeomorphDialog(QDialog):
         from geomorph import render
         res._previews = {}
         for g in res.grids:
-            res._previews[(g.index, True, True)] = render.render_level(res, g.index, self.images, pps=8, gm=True)
-            res._previews[(g.index, False, True)] = render.render_level(res, g.index, self.images, pps=8, gm=False)
+            res._previews[(g.index, True, True, True)] = render.render_level(res, g.index, self.images, pps=8, gm=True)
+            res._previews[(g.index, False, True, True)] = render.render_level(res, g.index, self.images, pps=8, gm=False)
 
     def _generated(self, res, err):
         if err:
@@ -952,7 +957,7 @@ class GeomorphDialog(QDialog):
         res = self.result
         if res is None:
             return
-        key = (self.level_index, self.ck_gm.isChecked(), self.ck_show_decor.isChecked())
+        key = (self.level_index, self.ck_gm.isChecked(), self.ck_show_decor.isChecked(), self.ck_atmo.isChecked())
         previews = getattr(res, "_previews", None)
         if previews is None:
             previews = res._previews = {}
@@ -960,7 +965,7 @@ class GeomorphDialog(QDialog):
         if pv is None:
             from geomorph import render
             pv = previews[key] = render.render_level(res, self.level_index, self.images, pps=8,
-                                                     gm=key[1], decor=key[2])
+                                                     gm=key[1], decor=key[2], atmosphere=key[3])
         pv = self._mark_tiles(pv)
         self.preview.setPixmap(pil_to_pixmap(pv))
         self.preview.resize(pv.size[0], pv.size[1])

@@ -292,6 +292,9 @@ assert dlg.lbl_score.text().isdigit()
 dlg.ck_show_decor.setChecked(False)
 assert not dlg.preview.pixmap().isNull()
 dlg.ck_show_decor.setChecked(True)
+dlg.ck_atmo.setChecked(False)                       # the atmosphere effect can be switched off in the preview
+assert not dlg.preview.pixmap().isNull()
+dlg.ck_atmo.setChecked(True)
 # gap warning label follows the result
 res.gaps = {"Test zone": "no tile"}
 dlg._generated(res, None)

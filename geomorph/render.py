@@ -197,7 +197,7 @@ def _draw_overlooks(res, g, layer, images, x0, y0, pps, px):
 
 
 def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=True,
-                 bounds=None, title=True, shared=True, decor=True) -> Image.Image:
+                 bounds=None, title=True, shared=True, decor=True, atmosphere=True) -> Image.Image:
     g = res.grids[level_index]
     x0, y0, x1, y1 = bounds or (shared_bounds(res) if shared else level_bounds(res, level_index))
     W, H = int((x1 - x0) * pps), int((y1 - y0) * pps)
@@ -235,7 +235,7 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
         if f["kind"] in TOP_KINDS or f["kind"] == "void":
             box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
             F.draw_filler(d, f["kind"], box, pps, f.get("rot", 0), f.get("label", "") if f["kind"] in ("void", "airlock") else "")
-    _overlays(res, g, layer, x0, y0, pps, gm)
+    _overlays(res, g, layer, x0, y0, pps, gm, atmosphere)
     _markers(res, g, layer, x0, y0, pps, gm, numbers)
     tilt = res.meta.get("tilt")
     if tilt:                               # a crashed wreck sits at an angle
@@ -310,8 +310,12 @@ def _paste_clipped(dst, src, x, y):
     dst.alpha_composite(src.crop((l - x, t - y, rr - x, bb - y)), (l, t))
 
 
-def _overlays(res, g, layer, x0, y0, pps, gm):
+def _overlays(res, g, layer, x0, y0, pps, gm, atmosphere=True):
     ov = res.overlays or {}
+    if atmosphere:                          # dim rooms, red emergency lamps, shutters (GM), hazard borders
+        from . import atmosphere as A
+        A.paint(res, g, layer, x0, y0, pps, gm)
+        return
     over = Image.new("RGBA", layer.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(over)
     zone_boxes = {}
@@ -326,6 +330,8 @@ def _overlays(res, g, layer, x0, y0, pps, gm):
             d.rectangle(((p.x - x0) * pps, (p.y - y0) * pps, (p.x + p.w - x0) * pps, (p.y + p.h - y0) * pps),
                         outline=(240, 200, 60, 255), width=max(2, int(pps * 0.2)))
     for zid in ov.get("lockdown", []):
+        if not gm:
+            continue                        # a lockdown is the GM's knowledge
         for p in zone_boxes.get(zid, []):
             d.rectangle(((p.x - x0) * pps, (p.y - y0) * pps, (p.x + p.w - x0) * pps, (p.y + p.h - y0) * pps),
                         outline=(230, 70, 60, 255), width=max(2, int(pps * 0.15)))
