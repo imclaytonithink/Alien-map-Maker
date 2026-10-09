@@ -377,31 +377,84 @@ def _entrance(res: Result, arch, env):
 
 
 def _perimeter(res: Result, arch, env, ctx):
+    """Exterior elements, only where they would realistically exist.
+
+    * a dome only for domed towns (which need no wall as well);
+    * a fence only in a breathable atmosphere (in vacuum or toxic air it keeps nothing out), a blast wall for
+      military/prison style compounds anywhere with an atmosphere (never in vacuum);
+    * the single gate sits on the side nearest the entrance (an airlock when the environment needs one) and a road
+      runs from it straight to the entrance when nothing is in the way.
+    Sealed walkways, airlocks at the entrance and landing pads come from the layout and the archetype's zones.
+    """
     box = ctx.get("perimeter_box")
-    perim = arch.get("perimeter") or ("wall" if arch.get("dome") else None)
-    if not box and not arch.get("dome"):
-        return
     g = res.grids[0]
+    envt = _env_table(env)
+    if arch.get("dome") and box:
+        x0, y0, x1, y1 = box
+        m = 3
+        g.filler.append(F.piece("dome", 0, x0 - m - 2, y0 - m - 2, x1 - x0 + 2 * m + 4, y1 - y0 + 2 * m + 4))
+        res.layout.notes.append("The settlement sits under a dome.")
+        return
+    perim = arch.get("perimeter")
+    if not box or not perim:
+        return
+    if perim == "fence" and env != "breathable":
+        res.layout.notes.append("No perimeter fence: it would keep nothing out in this environment; buildings are "
+                                "linked by sealed walkways.")
+        return
+    if perim == "wall" and env == "vacuum":
+        return
     x0, y0, x1, y1 = box
     m = 3
     kind = "fence" if perim == "fence" else "wall"
+    bx0, by0, bx1, by1 = x0 - m, y0 - m, x1 + m, y1 + m
     ent = res.layout.entrance or {}
-    gate_y = y1 + m
-    gx = (x0 + x1) // 2
-    if arch.get("dome"):
-        g.filler.append(F.piece("dome", 0, x0 - m - 2, y0 - m - 2, x1 - x0 + 2 * m + 4, y1 - y0 + 2 * m + 4))
-    if perim:
-        w = x1 - x0 + 2 * m
-        h = y1 - y0 + 2 * m
-        t = 0.5
-        g.filler.append(F.piece(kind, 0, x0 - m, y0 - m, w, t))
-        g.filler.append(F.piece(kind, 0, x0 - m, y0 - m + h - t, gx - 2 - (x0 - m), t))
-        g.filler.append(F.piece(kind, 0, gx + 2, y0 - m + h - t, (x0 - m + w) - (gx + 2), t))
-        g.filler.append(F.piece(kind, 0, x0 - m, y0 - m, t, h))
-        g.filler.append(F.piece(kind, 0, x0 - m + w - t, y0 - m, t, h))
-        gate_kind = "airlock" if _env_table(env).get("airlocks") else "door"
-        g.filler.append(F.piece(gate_kind, 0, gx - 2, y0 - m + h - 1, 4, 1.5, label="Gate"))
-        res.layout.notes.append("Perimeter " + ("fence" if kind == "fence" else "wall") + " with a single gate.")
+    ex, ey = ent.get("x", (x0 + x1) / 2), ent.get("y", y1)
+    sides = {"N": abs(ey - by0), "S": abs(ey - by1), "W": abs(ex - bx0), "E": abs(ex - bx1)}
+    side = min(sides, key=sides.get)
+    gw = 4
+    t = 0.5
+    if side in ("N", "S"):
+        gx = min(max(ex - gw / 2, bx0 + 1), bx1 - gw - 1)
+        gy = by0 if side == "N" else by1 - t
+        g.filler.append(F.piece(kind, 0, bx0, by0, bx1 - bx0, t) if side != "N" else F.piece(kind, 0, bx0, by0, gx - bx0, t))
+        if side == "N":
+            g.filler.append(F.piece(kind, 0, gx + gw, by0, bx1 - gx - gw, t))
+            g.filler.append(F.piece(kind, 0, bx0, by1 - t, bx1 - bx0, t))
+        else:
+            g.filler.append(F.piece(kind, 0, bx0, by1 - t, gx - bx0, t))
+            g.filler.append(F.piece(kind, 0, gx + gw, by1 - t, bx1 - gx - gw, t))
+        g.filler.append(F.piece(kind, 0, bx0, by0, t, by1 - by0))
+        g.filler.append(F.piece(kind, 0, bx1 - t, by0, t, by1 - by0))
+        gate = (gx, gy - (0.5 if side == "N" else 0.5), gw, 1.5)
+        axis_x = gx + gw / 2
+        road = ((axis_x - 1, by0 + 1, 2, ey - by0 - 1) if side == "N" else (axis_x - 1, ey, 2, by1 - ey - 1))
+    else:
+        gy = min(max(ey - gw / 2, by0 + 1), by1 - gw - 1)
+        gx = bx0 if side == "W" else bx1 - t
+        if side == "W":
+            g.filler.append(F.piece(kind, 0, bx0, by0, t, gy - by0))
+            g.filler.append(F.piece(kind, 0, bx0, gy + gw, t, by1 - gy - gw))
+            g.filler.append(F.piece(kind, 0, bx1 - t, by0, t, by1 - by0))
+        else:
+            g.filler.append(F.piece(kind, 0, bx1 - t, by0, t, gy - by0))
+            g.filler.append(F.piece(kind, 0, bx1 - t, gy + gw, t, by1 - gy - gw))
+            g.filler.append(F.piece(kind, 0, bx0, by0, t, by1 - by0))
+        g.filler.append(F.piece(kind, 0, bx0, by0, bx1 - bx0, t))
+        g.filler.append(F.piece(kind, 0, bx0, by1 - t, bx1 - bx0, t))
+        gate = (gx - 0.5, gy, 1.5, gw)
+        axis_y = gy + gw / 2
+        road = ((bx0 + 1, axis_y - 1, ex - bx0 - 1, 2) if side == "W" else (ex, axis_y - 1, bx1 - ex - 1, 2))
+    gate_kind = "airlock" if envt.get("airlocks") else "door"
+    g.filler.append(F.piece(gate_kind, 0, *gate, label="Gate"))
+    rx, ry, rw, rh = road
+    clear = rw > 0.5 and rh > 0.5 and not any(
+        (cx, cy) in g.occ for cx in range(int(rx), int(rx + rw)) for cy in range(int(ry), int(ry + rh)))
+    if clear and env == "breathable":
+        g.filler.insert(0, F.piece("road", 0, rx, ry, rw, rh))
+    res.layout.notes.append(f"Perimeter {'fence' if kind == 'fence' else 'wall'} with a single gate on the {side} side, "
+                            "nearest the entrance.")
+    res.layout.gate = {"side": side, "box": [bx0, by0, bx1, by1], "kind": gate_kind, "x": gate[0], "y": gate[1]}
 
 
 def _env_table(env):

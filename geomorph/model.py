@@ -79,6 +79,7 @@ class Layout:
     bounds: tuple = (0, 0, 0, 0)
     topology: str = ""
     notes: list = field(default_factory=list)
+    gate: dict = field(default_factory=dict)
 
 
 @dataclass

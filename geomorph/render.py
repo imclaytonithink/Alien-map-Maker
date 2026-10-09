@@ -125,6 +125,7 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
     def px(v, o):
         return int(round((v - o) * pps))
     below = [f for f in g.filler if f["kind"] not in TOP_KINDS and f["kind"] != "void" and not f.get("decor")]
+    below.sort(key=lambda f: f["kind"] not in ("ground", "rock", "water"))      # terrain first, then what stands on it
     for f in below:
         draw_box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
         F.draw_filler(d, f["kind"], draw_box, pps, f.get("rot", 0), f.get("label", "") if f["kind"] in ("building", "pad", "pit") else "")

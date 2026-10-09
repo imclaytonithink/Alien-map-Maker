@@ -509,6 +509,68 @@ def check_decor_stays_indoors():
     print("decor stays indoors ok:", total, "items checked")
 
 
+def check_walkways_and_exteriors():
+    """Walkways are straight corridors square to both walls with a door at each end; exterior elements appear only
+    where they make sense (no fence in vacuum or toxic air, a gate nearest the entrance, a dome only for domed towns)."""
+    seen = 0
+    for name in ("Frontier colony outpost", "Spaceport / starport", "Military base / garrison", "Agricultural / hydroponics colony",
+                 "Surface mining operation", "Factory / shipyard / ship-breaking yard"):
+        for seed in (1, 2, 3):
+            res = pipeline.generate(REG, {"kind": "site", "archetype": name, "scale": "medium", "seed": seed}, ARCH)
+            lay = res.layout
+            g = res.grids[0]
+            for l in lay.links:
+                if l.kind != "walkway" or l.sealed or lay.slots[l.a].level != 0 or lay.slots[l.b].level != 0:
+                    continue
+                sa, sb = lay.slots[l.a], lay.slots[l.b]
+                segs = [f for f in g.filler if f["kind"] == "walkway" and set(f.get("zones", [])) ==
+                        {sa.zone.id if sa.zone else "", sb.zone.id if sb.zone else ""}]
+                assert len(segs) == 1, ("aligned neighbours get one straight corridor", name, len(segs))
+                w = segs[0]
+                horiz = w["w"] > w["h"]
+                if horiz:
+                    assert w["h"] == 2 and (sa.y < w["y"] + 2 and w["y"] < sa.y + sa.h)
+                    left, right = sorted((sa, sb), key=lambda s: s.x)
+                    assert abs(w["x"] - (left.x + left.w)) < 1e-6 and abs(w["x"] + w["w"] - right.x) < 1e-6, "corridor meets both walls"
+                else:
+                    assert w["w"] == 2
+                    top, bot = sorted((sa, sb), key=lambda s: s.y)
+                    assert abs(w["y"] - (top.y + top.h)) < 1e-6 and abs(w["y"] + w["h"] - bot.y) < 1e-6
+                seen += 1
+    assert seen > 15, seen
+    env_of = lambda r: r.meta["environment"]
+    for env, fence in (("breathable", True), ("hostile", False), ("vacuum", False)):
+        r = pipeline.generate(REG, {"kind": "site", "archetype": "Frontier colony outpost", "scale": "medium", "seed": 2,
+                                    "environment": env}, ARCH)
+        kinds = {f["kind"] for f in r.grids[0].filler}
+        assert ("fence" in kinds) == fence, (env, kinds)
+        if fence:
+            gate = r.layout.gate
+            ent = r.layout.entrance
+            bx0, by0, bx1, by1 = gate["box"]
+            dist = {"N": abs(ent["y"] - by0), "S": abs(ent["y"] - by1), "W": abs(ent["x"] - bx0), "E": abs(ent["x"] - bx1)}
+            assert gate["side"] == min(dist, key=dist.get), "gate is on the side nearest the entrance"
+    mil = pipeline.generate(REG, {"kind": "site", "archetype": "Military base / garrison", "scale": "medium", "seed": 2,
+                                  "environment": "vacuum"}, ARCH)
+    assert not {"fence", "wall"} & {f["kind"] for f in mil.grids[0].filler}, "no compound wall in vacuum"
+    town = pipeline.generate(REG, {"kind": "site", "archetype": "Domed or underground town", "scale": "small", "seed": 2,
+                                   "environment": "breathable"}, ARCH)
+    kinds = {f["kind"] for f in town.grids[0].filler}
+    assert "dome" in kinds and not {"fence", "wall"} & kinds
+    other = pipeline.generate(REG, {"kind": "site", "archetype": "Company town", "scale": "small", "seed": 2}, ARCH)
+    assert "dome" not in {f["kind"] for f in other.grids[0].filler}
+    # a landing pad is drawn on top of the ground (terrain first)
+    images = render.TileImages(None, loader=fake_loader)
+    pad = pipeline.generate(REG, {"kind": "site", "archetype": "Frontier colony outpost", "scale": "small", "seed": 2}, ARCH)
+    pf = [f for f in pad.grids[0].filler if f["kind"] == "pad"][0]
+    im = render.render_level(pad, 0, images, pps=8)
+    x0, y0, _x1, _y1 = render.shared_bounds(pad)
+    corner = im.getpixel((int((pf["x"] + 1 - x0) * 8), int((pf["y"] + 1 - y0) * 8) + 24))
+    ground = im.getpixel((int((pf["x"] - 2 - x0) * 8), int((pf["y"] + 10 - y0) * 8) + 24))
+    assert corner != ground, "the pad is visible, not painted over by the ground"
+    print("walkways + exteriors ok:", seen, "corridors checked")
+
+
 def check_archetype_files():
     assert len(ARCH) >= 25, len(ARCH)
     groups = {a["group"] for a in ARCH.values()}
@@ -839,6 +901,7 @@ def main():
     check_ship_part_options()
     check_decor()
     check_decor_stays_indoors()
+    check_walkways_and_exteriors()
     check_grouping_and_smart_decor()
     check_archetype_files()
     check_sites()

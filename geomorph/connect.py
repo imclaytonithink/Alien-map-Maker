@@ -92,10 +92,12 @@ def patch_pieces(level, side, coords, a: Placed):
 
 
 def walkway_between(grid: LevelGrid, a: Placed, b: Placed, kind="walkway", width=2):
-    """Draw a corridor from a door of ``a`` to a door of ``b`` (they do not touch).
+    """Draw a straight corridor between two tiles that do not touch.
 
-    Picks the facing sides, the door squares nearest each other and joins them
-    with an axis-aligned path (one elbow at most). Returns the pieces added.
+    The corridor runs square to both facing walls at a position where the two tiles overlap, preferring a spot
+    where both walls already have a door; where a wall has none a door is cut into it (a door glyph on the wall).
+    Tiles that do not overlap at all (diagonal neighbours) are joined with a single elbow.
+    Returns ``(pieces, (side_a, coord_a), (side_b, coord_b))``.
     """
     acx, acy = a.x + a.w / 2, a.y + a.h / 2
     bcx, bcy = b.x + b.w / 2, b.y + b.h / 2
@@ -104,45 +106,68 @@ def walkway_between(grid: LevelGrid, a: Placed, b: Placed, kind="walkway", width
         sa, sb = ("E", "W") if dx > 0 else ("W", "E")
     else:
         sa, sb = ("S", "N") if dy > 0 else ("N", "S")
-
-    def best_door(p, side, toward):
-        idxs = [i for i, c in enumerate(p.side_cls(side)) if c == DOOR]
-        if not idxs:
-            idxs = [len(p.side_cls(side)) // 2]
-        pts = []
-        for i in idxs:
-            coord = (p.y + i) if side in ("E", "W") else (p.x + i)
-            pts.append((coord, boundary_point(p, side, coord)))
-        return min(pts, key=lambda q: abs(q[1][0] - toward[0]) + abs(q[1][1] - toward[1]))
-    ca, pa = best_door(a, sa, (bcx, bcy))
-    cb, pb = best_door(b, sb, pa)
-    out = []
     lvl = a.level
+    out = []
+    horiz = sa in ("E", "W")                       # corridor runs left-right
+    if horiz:
+        lo, hi = max(a.y, b.y), min(a.y + a.h, b.y + b.h)
+    else:
+        lo, hi = max(a.x, b.x), min(a.x + a.w, b.x + b.w)
+
+    def door_coords(p, side):
+        cls = p.side_cls(side)
+        base = p.y if side in ("E", "W") else p.x
+        return {base + i for i, c in enumerate(cls) if c == DOOR}
+    da, db = door_coords(a, sa), door_coords(b, sb)
+    if hi - lo >= width:
+        best = None
+        for c in range(int(lo), int(hi) - width + 1):
+            span = set(range(c, c + width))
+            both = bool(span & da and span & db)
+            near = min([abs(c + (width - 1) / 2 - d) for d in (da | db)] or [99])
+            cost = (0 if both else 1, near + abs(c + width / 2 - (lo + hi) / 2) * 0.1)
+            if best is None or cost < best[0]:
+                best = (cost, c, both)
+        _, c, both = best
+        if horiz:
+            xa = a.x + a.w if sa == "E" else b.x + b.w
+            xb = b.x if sa == "E" else a.x
+            out.append(F.piece(kind, lvl, xa, c, max(0.5, xb - xa), width))
+            walls = ((a, sa, a.x + a.w if sa == "E" else a.x), (b, sb, b.x if sb == "W" else b.x + b.w))
+            for p, side, wx in walls:
+                if not (set(range(c, c + width)) & door_coords(p, side)):
+                    out.append(F.piece("door", lvl, wx - 0.5, c, 1, width))
+        else:
+            ya = a.y + a.h if sa == "S" else b.y + b.h
+            yb = b.y if sa == "S" else a.y
+            out.append(F.piece(kind, lvl, c, ya, width, max(0.5, yb - ya)))
+            walls = ((a, sa, a.y + a.h if sa == "S" else a.y), (b, sb, b.y if sb == "N" else b.y + b.h))
+            for p, side, wy in walls:
+                if not (set(range(c, c + width)) & door_coords(p, side)):
+                    out.append(F.piece("door", lvl, c, wy - 0.5, width, 1))
+        return out, (sa, c), (sb, c)
+
+    # no overlap: one elbow from a door of ``a`` to a door of ``b``
+    def pick(p, side, toward):
+        cs = door_coords(p, side) or {(p.y if side in ("E", "W") else p.x) + len(p.side_cls(side)) // 2}
+        pts = [(c, boundary_point(p, side, c)) for c in cs]
+        return min(pts, key=lambda q: abs(q[1][0] - toward[0]) + abs(q[1][1] - toward[1]))
+    ca, pa = pick(a, sa, (bcx, bcy))
+    cb, pb = pick(b, sb, pa)
 
     def seg(x0, y0, x1, y1):
-        # axis-aligned rectangle of ``width`` squares centred on the line
         if abs(x1 - x0) >= abs(y1 - y0):
-            xa, xb = sorted((x0, x1))
-            out.append(F.piece(kind, lvl, xa, y0 - width / 2, max(0.5, xb - xa), width))
+            xa_, xb_ = sorted((x0, x1))
+            out.append(F.piece(kind, lvl, xa_, y0 - width / 2, max(0.5, xb_ - xa_), width))
         else:
-            ya, yb = sorted((y0, y1))
-            out.append(F.piece(kind, lvl, x0 - width / 2, ya, width, max(0.5, yb - ya)))
-    if sa in ("E", "W"):
-        if abs(pa[1] - pb[1]) < 0.01:
-            seg(pa[0], pa[1], pb[0], pb[1])
-        else:
-            mx = (pa[0] + pb[0]) / 2
-            seg(pa[0], pa[1], mx, pa[1])
-            seg(mx, pa[1], mx, pb[1])
-            seg(mx, pb[1], pb[0], pb[1])
+            ya_, yb_ = sorted((y0, y1))
+            out.append(F.piece(kind, lvl, x0 - width / 2, ya_, width, max(0.5, yb_ - ya_)))
+    if horiz:
+        seg(pa[0], pa[1], pb[0], pa[1])
+        seg(pb[0], pa[1], pb[0], pb[1])
     else:
-        if abs(pa[0] - pb[0]) < 0.01:
-            seg(pa[0], pa[1], pb[0], pb[1])
-        else:
-            my = (pa[1] + pb[1]) / 2
-            seg(pa[0], pa[1], pa[0], my)
-            seg(pa[0], my, pb[0], my)
-            seg(pb[0], my, pb[0], pb[1])
+        seg(pa[0], pa[1], pa[0], pb[1])
+        seg(pa[0], pb[1], pb[0], pb[1])
     return out, (sa, ca), (sb, cb)
 
 
