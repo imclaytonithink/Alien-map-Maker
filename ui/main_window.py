@@ -46,7 +46,6 @@ from ui.color_picker import choose_color
 from ui.app_icon import app_icon
 from ui.stamp_bar import StampBar
 from ui.cutout_bar import CutoutBar
-from core import generator as gen
 
 # Older builds kept the recent-maps list beside this file. That works from a
 # source checkout, but a one-file EXE runs from a temporary folder that is
@@ -498,6 +497,7 @@ class MainWindow(QMainWindow):
         self.library.swapRequested.connect(self._swap_selected_to)
         self.library.swapAllRequested.connect(self._swap_every_copy_to)
         self.library.backdropRequested.connect(self._use_backdrop_texture)
+        self.library.generateRequested.connect(self._generate_from_paths)
         self.library.canvas_swap_info = self._canvas_swap_info
         self.splitter.addWidget(self.library)
 
@@ -1148,7 +1148,7 @@ class MainWindow(QMainWindow):
             ("group_rotate", "Group Rot", self._toggle_group_rotate,
              "Rotate a multi-node selection around its center."),
             ("generate", "Generate", self._open_generator,
-             "Generate a map from the asset library."),
+             "Build a map from the assets selected in the library."),
             ("import", "Import", self.library._import_folder,
              "Import an asset folder into the library."),
         ]
@@ -1848,10 +1848,27 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Bundle export failed", str(exc))
 
     # ------------------------------------------------------------------
-    def _open_generator(self):
+    def _open_generator(self, _checked=False, paths=None):
+        """Open the map generator for the assets selected in the library.
+
+        ``paths`` overrides that selection with an explicit list of asset
+        paths (the library's right-click menu uses it, so the entry works even
+        when the list has since been filtered to another folder).
+        """
+        selection = None
+        if paths:
+            wanted = set(paths)
+            selection = [asset for asset in self.library.library.assets
+                         if asset.path in wanted]
         dlg = GeneratorDialog(self.project, self.library, self.canvas,
-                             self._run_generator, self)
+                              self._run_generator, self, selection=selection)
         dlg.exec()
+
+    def _generate_from_paths(self, paths):
+        """Library right-click: build a map from exactly these assets."""
+        if paths:
+            self.library.select_paths(paths)
+        self._open_generator(paths=list(paths or ()))
 
     def _ensure_layer(self, level, name):
         for l in level.layers:
@@ -1862,55 +1879,58 @@ class MainWindow(QMainWindow):
         level.layers.append(l)
         return l.id
 
-    def _furnish_targets(self, opts) -> list[dict]:
-        """Visible bounds (world px) of the rooms the furnisher should fill."""
-        level = self.canvas.level
-        if level is None:
-            return []
-        if opts.get("scope") == "selected":
-            nodes = self.canvas.selected_pieces()
-        else:
-            roles = self.library.library.roles()
-            nodes = [p for p in level.pieces if p.asset_path
-                     and roles.get(p.asset_path)
-                     and roles[p.asset_path].role == "empty_room"]
-        targets = []
-        for node in nodes:
-            x0, y0, x1, y1 = self.canvas._aabb(node)
-            targets.append({"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0})
-        return targets
+    def _run_generator(self, opts) -> Optional[dict]:
+        """Build a map from the selected assets.
 
-    def _run_strategy(self, opts):
-        """Run one of the role-driven strategies (assembly / tiles / furnish)."""
-        from core import assembly
+        ``opts`` comes from the generator dialog: the selected assets, the
+        layout, the size and the seed. Generate keeps earlier generated
+        outputs; Regenerate sends ``replace_prev=True`` and replaces the output
+        tracked for that destination, but only after a non-empty new map has
+        been generated.
+        """
+        from core import mapbuilder
         from core.project import Piece
         cs = self.project.cell_size
-        strategy = opts["strategy"]
+        selection = opts.get("selection") or []
+        if not selection:
+            QMessageBox.warning(
+                self, "Generator",
+                "Select the assets you want on the map in the library panel "
+                "first.")
+            return None
+
         mode = opts.get("mode") or "new"
-        key = "furnish" if strategy == "furnish" else mode
-        run = dict(opts, cell_size=cs)
-        new_level = False
-        if strategy == "furnish":
-            run["targets"] = self._furnish_targets(opts)
-            level = self.canvas.level
+        sel = self.canvas.selected_pieces()
+        if mode == "area" and sel:
+            minx = min(min(p.x, p.x + p.vis_w) for p in sel)
+            maxx = max(max(p.x + p.vis_w, p.x) for p in sel)
+            miny = min(min(p.y, p.y + p.vis_h) for p in sel)
+            maxy = max(max(p.y + p.vis_h, p.y) for p in sel)
+            region = (int(math.floor(minx / cs)), int(math.floor(miny / cs)),
+                      int(math.floor(maxx / cs)), int(math.floor(maxy / cs)))
+            new_level = False
         else:
-            sel = self.canvas.selected_pieces()
-            if mode == "area" and sel:
-                minx = min(p.x for p in sel)
-                maxx = max(p.x + p.vis_w for p in sel)
-                miny = min(p.y for p in sel)
-                maxy = max(p.y + p.vis_h for p in sel)
-                region = (int(math.floor(minx / cs)), int(math.floor(miny / cs)),
-                          int(math.floor(maxx / cs)), int(math.floor(maxy / cs)))
+            new_level = True
+            if opts.get("auto_size"):
+                # Size the map to the selection so large rooms always fit.
+                region = mapbuilder.suggest_region(dict(opts, cell_size=cs))
+                opts = dict(opts, quiet_unused=True)
             else:
-                new_level = True
                 cols, rows = opts.get("size") or (self.project.map_cols,
                                                   self.project.map_rows)
                 region = (0, 0, int(cols) - 1, int(rows) - 1)
-            run["region"] = region
-            run["rooms"] = max(3, ((region[2] - region[0] + 1)
-                                   * (region[3] - region[1] + 1)) // 220)
-        result = assembly.generate_map(run)
+
+        result = mapbuilder.build_map(dict(opts, cell_size=cs, region=region))
+        if opts.get("auto_size"):
+            # Random scatter can still drop a piece; grow the automatic area
+            # until everything the user picked actually lands.
+            for _growth in range(4):
+                if not (result.get("counts") or {}).get("skipped"):
+                    break
+                region = (0, 0, int((region[2] + 1) * 1.5) - 1,
+                          int((region[3] + 1) * 1.5) - 1)
+                result = mapbuilder.build_map(
+                    dict(opts, cell_size=cs, region=region))
         if not isinstance(result, dict):
             raise TypeError("The map generator returned an invalid result.")
         pieces = result.get("pieces") or []
@@ -1918,12 +1938,12 @@ class MainWindow(QMainWindow):
             return result
 
         # Only now touch the project: a failed or empty run changes nothing.
-        self.canvas.push_history(f"Generate ({strategy})")
+        self.canvas.push_history("Generate map")
         if opts.get("replace_prev"):
-            self._discard_gen_output(key)
+            self._discard_gen_output(mode)
         if self._gen_output is None:
             self._gen_output = {}
-        self._gen_output.setdefault(key, {"ids": [], "levels": []})
+        self._gen_output.setdefault(mode, {"ids": [], "levels": []})
 
         if new_level:
             need_cols, need_rows = result.get("canvas_cells") or (0, 0)
@@ -1933,157 +1953,9 @@ class MainWindow(QMainWindow):
                 self.project.map_cols, self.project.map_rows = cols, rows
                 self.project._sync_canvas()
                 self.props.set_project(self.project)
-            base_name = f"{result.get('setting', 'Map')} {result.get('seed', '')}".strip()
-            existing = {lv.name for lv in self.project.levels}
-            name, suffix = base_name, 2
-            while name in existing:
-                name = f"{base_name} ({suffix})"
-                suffix += 1
-            level = self.project.add_level(name)
-            self.level_bar.refresh()
-            self.level_bar.tabs.setCurrentIndex(len(self.project.levels) - 1)
-            self.canvas.set_level(len(self.project.levels) - 1)
-            self.layers.set_project(
-                self.project, self.project.levels[self.canvas.level_index])
-        else:
-            self.project._sync_canvas()
-
-        layer_map = {"Base": "Floor", "Props": "Props", "Overlay": "Overlay",
-                     "Geomorphs": "Floor", "Overlays": "Overlay",
-                     "Symbols": "Symbols", "Hull": "Hull"}
-        layer_ids = {}
-        created = []
-        for data in pieces:
-            lname = data["layer_name"]
-            if lname not in layer_ids:
-                layer_ids[lname] = self._ensure_layer(level, layer_map.get(lname, lname))
-            piece = Piece(
-                asset_path=data["asset_path"], name=data["name"],
-                x=data["x"], y=data["y"], w=data["w"], h=data["h"],
-                scale=data["scale"], rotation=data["rotation"],
-                layer=layer_ids[lname], snap=True)
-            level.add(piece)
-            created.append(piece)
-        output = self._gen_output[key]
-        output["ids"].extend(piece.id for piece in created)
-        if new_level:
-            output.setdefault("levels", []).append(level)
-
-        if new_level:
-            self.canvas.fit_to_view()
-        self.level_bar.refresh()
-        self.layers.set_project(self.project, level)
-        self.zones.refresh_level()
-        self.canvas.update()
-        self._mark_dirty()
-        return result
-
-    def _run_generator(self, opts):
-        """Generate a map into a new level or the selection's area.
-
-        Generate keeps earlier generated outputs. Regenerate sends
-        ``replace_prev=True`` and replaces all tracked output for the selected
-        destination only after a non-empty new map has been generated.
-        """
-        if opts.get("strategy"):
-            return self._run_strategy(opts)
-        cs = self.project.cell_size
-        generator_mode = opts.get("generator_mode", "tiles")
-        geomorph_mode = generator_mode == "geomorph"
-        cats = opts.get("categories", {})
-        floor_pool = cats.get("floor", []) + cats.get("corridor", [])
-        if not geomorph_mode and not floor_pool:
-            QMessageBox.warning(self, "Generator",
-                                "No floor/room tiles detected. Import floor/room PNGs first.")
-            return None
-        geomorph_cats = opts.get("geomorph_categories", {})
-        if geomorph_mode and not geomorph_cats.get("core"):
-            QMessageBox.warning(self, "Generator",
-                                "No 100x100 Core geomorphs detected. Import the "
-                                "Geomorphs or Custom Tiles ZIP first.")
-            return None
-
-        # Capture the target region before replacement: it may include a
-        # selection on the output that Regenerate is about to remove.
-        mode = opts.get("mode") or "new"
-        sel = self.canvas.selected_pieces()
-        if mode == "area" and sel:
-            minx = min(min(p.x, p.x + p.vis_w) for p in sel)
-            maxx = max(max(p.x + p.vis_w, p.x) for p in sel)
-            miny = min(min(p.y, p.y + p.vis_h) for p in sel)
-            maxy = max(max(p.y + p.vis_h, p.y) for p in sel)
-            x0 = int(math.floor(minx / cs)); x1 = int(math.floor(maxx / cs))
-            y0 = int(math.floor(miny / cs)); y1 = int(math.floor(maxy / cs))
-            region = (x0, y0, x1, y1)
-            new_level = False
-        else:
-            new_level = True
-
-        # Geomorph assemblies can be larger than the current project canvas.
-        # Keep the original dimensions so a failed/empty generation is harmless.
-        old_map_size = (self.project.map_cols, self.project.map_rows)
-        if new_level and geomorph_mode:
-            grid = max(1, int(opts.get("geomorph_grid", 3) or 3))
-            core = geomorph_cats.get("core", [])
-            core_w = int(core[0].get("core_w", 20)) if core else 20
-            core_h = int(core[0].get("core_h", 20)) if core else 20
-            self.project.map_cols = max(self.project.map_cols, grid * core_w)
-            self.project.map_rows = max(self.project.map_rows, grid * core_h)
-            if old_map_size != (self.project.map_cols, self.project.map_rows):
-                self.project._sync_canvas()
-                self.props.set_project(self.project)
-        if new_level:
-            region = (0, 0, self.project.map_cols - 1,
-                      self.project.map_rows - 1)
-
-        W = region[2] - region[0] + 1
-        H = region[3] - region[1] + 1
-        rooms = max(3, (W * H) // 220)
-        opts2 = dict(opts)
-        opts2.update(cell_size=cs, region=region, rooms=rooms)
-        try:
-            result = (gen.generate_geomorphs(opts2) if geomorph_mode
-                      else gen.generate(opts2))
-        except Exception:
-            if old_map_size != (self.project.map_cols, self.project.map_rows):
-                self.project.map_cols, self.project.map_rows = old_map_size
-                self.project._sync_canvas()
-                self.props.set_project(self.project)
-            raise
-
-        if not isinstance(result, dict):
-            if old_map_size != (self.project.map_cols, self.project.map_rows):
-                self.project.map_cols, self.project.map_rows = old_map_size
-                self.project._sync_canvas()
-                self.props.set_project(self.project)
-            raise TypeError("The map generator returned an invalid result.")
-        pieces = result.get("pieces") or []
-        if not pieces:
-            if old_map_size != (self.project.map_cols, self.project.map_rows):
-                self.project.map_cols, self.project.map_rows = old_map_size
-                self.project._sync_canvas()
-                self.props.set_project(self.project)
-            return result
-
-        # Only discard the old result after generation succeeded. This keeps a
-        # working map intact if the new seed or asset set produces no output.
-        if opts.get("replace_prev"):
-            self._discard_gen_output(mode)
-        track_output = opts.get("replace_prev") is not None
-        if track_output:
-            if self._gen_output is None:
-                self._gen_output = {}
-            self._gen_output.setdefault(mode, {"ids": [], "levels": []})
-        else:
-            self._gen_output = None
-
-        if new_level:
-            setting = result.get("setting", opts.get("setting", "Map"))
-            seed = result.get("seed", opts.get("seed", ""))
-            base_name = f"{setting} {seed}".strip()
+            base_name = f"Generated {result.get('seed', '')}".strip()
             existing_names = {level.name for level in self.project.levels}
-            level_name = base_name
-            suffix = 2
+            level_name, suffix = base_name, 2
             while level_name in existing_names:
                 level_name = f"{base_name} ({suffix})"
                 suffix += 1
@@ -2097,36 +1969,32 @@ class MainWindow(QMainWindow):
             self.project._sync_canvas()
             level = self.canvas.level
 
-        layer_map = {"Base": "Floor", "Props": "Props", "Overlay": "Overlay",
-                     "Geomorphs": "Floor", "Overlays": "Overlay",
-                     "Symbols": "Symbols"}
-        output_layers = {piece["layer_name"] for piece in pieces}
-        lid = {}
-        for orig in ("Base", "Props", "Overlay", "Geomorphs", "Overlays", "Symbols"):
-            if orig in output_layers:
-                lid[orig] = self._ensure_layer(level, layer_map.get(orig, orig))
-
-        from core.project import Piece
+        layer_ids: dict[str, str] = {}
         created = []
         for data in pieces:
+            lname = data.get("layer_name") or "Generated"
+            if lname not in layer_ids:
+                layer_ids[lname] = self._ensure_layer(level, lname)
             piece = Piece(
                 asset_path=data["asset_path"], name=data["name"],
                 x=data["x"], y=data["y"], w=data["w"], h=data["h"],
                 scale=data["scale"], rotation=data["rotation"],
-                layer=lid[data["layer_name"]], snap=True)
+                flip_h=bool(data.get("flip_h", False)),
+                flip_v=bool(data.get("flip_v", False)),
+                layer=layer_ids[lname], snap=True)
             level.add(piece)
             created.append(piece)
 
-        if track_output:
-            output = self._gen_output[mode]
-            output["ids"].extend(piece.id for piece in created)
-            if new_level:
-                output.setdefault("levels", []).append(level)
+        output = self._gen_output[mode]
+        output["ids"].extend(piece.id for piece in created)
+        if new_level:
+            output.setdefault("levels", []).append(level)
 
         self.canvas.fit_to_view()
         self.level_bar.refresh()
         self.layers.set_project(self.project, level)
         self.zones.refresh_level()
+        self.canvas.update()
         self._mark_dirty()
         return result
 
@@ -2277,8 +2145,14 @@ class MainWindow(QMainWindow):
                 f"{index + 1}, then click the map to place it.", 7000)
 
     def _is_door_asset(self, path: str) -> bool:
-        info = getattr(self.library, "_roles", {}).get(path) if path else None
-        return bool(info and info.role == "door") or looks_like_door(path)
+        """Doors start out in door mode when pinned to a stamp key: they sit on
+        the nearest grid line and turn to match it. Recognised from the name,
+        which is all the app knows about an asset now (see core.stamps)."""
+        if not path:
+            return False
+        asset = self.library.library.get(path)
+        name = asset.name if asset else path.rsplit("/", 1)[-1]
+        return looks_like_door(name) or looks_like_door(path)
 
     def _pin_asset_stamp(self, index: int, path: str):
         asset = self.library.library.get(path) if path else None

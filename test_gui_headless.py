@@ -46,26 +46,23 @@ win.library.set_project(win.project, lib, win._add_at_center)
 paths = [a.path for a in lib.assets]
 assert paths, "no sample assets"
 
-# The library's QTreeWidget exposes both the smart taxonomy and the preserved
-# folder branch; selecting either view filters assets without changing paths.
+# The library's QTreeWidget is only "All assets" plus the store's own folders -
+# the organisation the assets arrived with. Picking a folder filters what is
+# shown without moving or re-filing anything.
 panel = win.library
-assert panel.group_tree.topLevelItemCount() == 4      # all, smart, roles, folders
-assert "category:other" in panel._tree_items
-assert "folder:floors" in panel._tree_items
-panel.group_tree.setCurrentItem(panel._tree_items["category:other"])
-assert panel._view == ("category", "other")
-assert panel.list.count() == sum(
-    "other" in categories for categories in panel._category_tags.values())
-assert "role:floor_tile" in panel._tree_items and "role:deck_plan" in panel._tree_items
-panel.group_tree.setCurrentItem(panel._tree_items["role:floor_tile"])
-assert panel._view == ("role", "floor_tile")
-assert panel.list.count() == sum(
-    info.role == "floor_tile" for info in panel._roles.values()) > 0
+assert panel.group_tree.topLevelItemCount() == 2      # all + folders
+assert not any(token.startswith(("category", "role", "smart"))
+               for token in panel._tree_items), "no invented organisation"
+assert "folder:floors" in panel._tree_items and "folder:walls" in panel._tree_items
+panel.group_tree.setCurrentItem(panel._tree_items["folder:floors"])
+assert panel._view == ("folder", "floors")
+assert panel.list.count() == sum(a.folder == "floors" for a in lib.assets) > 0
 panel.group_tree.setCurrentItem(panel._tree_items["folder:."])
 assert panel._view == ("folder", ".")
-assert panel.list.count() == len(lib.assets)
+assert panel.list.count() == sum(a.folder in (".", "") for a in lib.assets)
 panel._show_all_assets()
 panel.refresh()
+assert panel.list.count() == len(lib.assets)
 
 # place pieces
 win.canvas.add_asset(paths[0], 50, 50)

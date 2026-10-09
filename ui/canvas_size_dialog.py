@@ -54,7 +54,7 @@ class CanvasSizeDialog(QDialog):
         root.addWidget(self.lbl_dimensions)
         self.lbl_tip = QLabel(
             "Tip: a 100x100 ft deck-plan tile is 20x20 squares at 5 ft per "
-            "square, so 60x60 squares fits a 3x3 assembly. Library tiles named "
+            "square, so 60x60 squares fits a 3x3 of 100 ft modules. Tiles named "
             "in feet are scaled to your square size when you place them.")
         self.lbl_tip.setWordWrap(True)
         root.addWidget(self.lbl_tip)

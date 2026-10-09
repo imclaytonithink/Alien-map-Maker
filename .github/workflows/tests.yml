@@ -78,12 +78,12 @@ jobs:
             echo "::warning::Release $ASSET_RELEASE_TAG has no published asset packs; skipping the real-pack integration check. build.bat downloads from the same release, so Windows builds will fail too."
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Import real packs and generate a sample map
+      - name: Import real packs and build a map from a selection
         if: steps.packs.outputs.available == 'true'
         run: >-
           python test_pack_integration.py
           --packs-dir "$RUNNER_TEMP/sceneboard-packs"
-          --taxonomy-report "$RUNNER_TEMP/asset-taxonomy-report.md"
+          --inventory-report "$RUNNER_TEMP/asset-inventory-report.md"
       - name: Install Pillow for the visual audit
         if: success() && github.event_name == 'push' && steps.packs.outputs.available == 'true' && (contains(github.event.head_commit.message, '[asset-visual-audit]') || contains(github.event.head_commit.message, '[asset-large-visual-audit]'))
         run: python -m pip install --disable-pip-version-check 'Pillow>=9.0'
@@ -145,7 +145,7 @@ jobs:
                           if not selected:
                               raise RuntimeError(
                                   "No visual-review sheets matched the "
-                                  "recently refined taxonomy examples.")
+                                  "recently refined asset folders.")
                       else:
                           selected = sorted(sheets)
 
@@ -214,19 +214,19 @@ jobs:
           print(f"Published {len(encoded_chunks)} visual-review chunks "
                 f"(SHA-256 {digest}).")
           PY
-      - name: Upload the real-pack taxonomy audit
-        if: success() && steps.packs.outputs.available == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
+      - name: Upload the real-pack folder inventory
+        if: success() && steps.packs.outputs.available == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-inventory-audit]')))
         uses: actions/upload-artifact@v4
         with:
-          name: real-pack-taxonomy-audit
-          path: ${{ runner.temp }}/asset-taxonomy-report.md
+          name: real-pack-asset-inventory
+          path: ${{ runner.temp }}/asset-inventory-report.md
           if-no-files-found: error
           retention-days: 7
-      - name: Publish the taxonomy audit on this commit
-        if: success() && steps.packs.outputs.available == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-taxonomy-audit]')))
+      - name: Publish the folder inventory on this commit
+        if: success() && steps.packs.outputs.available == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[asset-inventory-audit]')))
         env:
           GH_TOKEN: ${{ github.token }}
-          REPORT_PATH: ${{ runner.temp }}/asset-taxonomy-report.md
+          REPORT_PATH: ${{ runner.temp }}/asset-inventory-report.md
         run: |
           report_body="$(cat "$REPORT_PATH")"
           gh api --method POST \

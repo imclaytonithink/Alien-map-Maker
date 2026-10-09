@@ -87,7 +87,7 @@ class MenuOverlay(QWidget):
             ("▣  Export project bundle / PNG pack…", self.main._export_bundle,
              "Package the project, its referenced assets, and PNG level renders"),
             ("#  Generate Map…", self.main._open_generator,
-             "Procedurally generate a map from your tiles"),
+             "Build a map from the assets you selected in the library"),
             ("×  Quit", self.main.close, "Exit the application"),
         ]:
             b = QPushButton(label)

@@ -226,7 +226,7 @@ def check_backdrop_upload():
         assert os.path.isfile(os.path.join(store, "Backdrops", "steel floor.png"))
         asset = library.get(rel)
         assert asset and asset.folder == "Backdrops" and (asset.width, asset.height) == (512, 256)
-        assert library._scan_revision > revision, "groups, counts and roles refresh"
+        assert library._scan_revision > revision, "groups and counts refresh"
         # listed where a full scan lists it (folder by folder, names sorted)
         order = [a.path for a in library.assets]
         library.scan(store)
@@ -253,13 +253,10 @@ def check_backdrop_upload():
         assert library.import_into_folder(os.path.join(outside, "gone.png"), BACKDROP_FOLDER) is None
         assert AssetLibrary().import_into_folder(steel, BACKDROP_FOLDER) is None, "no store"
 
-        # the generator leaves backdrop textures alone (until you give one a role)
-        roles = library.roles()
-        for path in (rel, "Backdrops/sand.png", "Backdrops/sub/deep.png"):
-            assert roles[path].role == "other" and roles[path].confidence == "high", path
-        assert "Backdrop texture" not in roles["Floors/grate.png"].reason
-        library.set_role([rel], "floor_tile")
-        assert library.roles()[rel].role == "floor_tile", "your choice still wins"
+        # uploaded textures stay exactly where they were put: the store's own
+        # folders are the only organisation the app offers
+        assert library.get(rel).folder == BACKDROP_FOLDER
+        assert BACKDROP_FOLDER in library.groups()
     print("backdrop textures uploaded from a file ok")
 
 

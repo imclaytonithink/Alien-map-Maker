@@ -236,20 +236,27 @@ assert not failed_icon.isNull()
 assert "could not be generated" in model.data(model.index(0, 0), Qt.ItemDataRole.ToolTipRole)
 print("failed preview state ok")
 
-# ---- generator dialog: one window, options follow the chosen strategy
+# ---- generator dialog: one window, the options follow the chosen layout
 from ui.generator_dialog import GeneratorDialog
 dlg = GeneratorDialog(project, win.library, canvas, lambda opts: {"pieces": []}, win)
 dlg.show(); app.processEvents()
-dlg.strategy_radios["assembly"].setChecked(True); app.processEvents()
-assert dlg.cmb_packing.isVisibleTo(dlg) and not dlg.cmb_setting.isVisibleTo(dlg)
-dlg.strategy_radios["tiles"].setChecked(True); app.processEvents()
-assert dlg.cmb_setting.isVisibleTo(dlg) and not dlg.cmb_packing.isVisibleTo(dlg)
-dlg.strategy_radios["furnish"].setChecked(True); app.processEvents()
-assert dlg.cmb_scope.isVisibleTo(dlg) and not dlg.cmb_mode.isVisibleTo(dlg)
-dlg.strategy_radios["assembly"].setChecked(True)
+dlg.set_selection(lib.assets)
+assert lib.assets and len(dlg.assets) == len(lib.assets)
+assert dlg.selection_list.count() == len(lib.assets)
+for index, key in enumerate(("grid", "scatter", "fill")):
+    dlg.cmb_layout.setCurrentIndex(index); app.processEvents()
+    assert dlg.layout_key == key
+    assert dlg.spin_copies.isEnabled() is (key != "fill")
+    assert dlg.lbl_layout_tip.text()
+dlg.cmb_layout.setCurrentIndex(0)
+# "inside the selected nodes' area" needs a selection on the canvas
 dlg.cmb_mode.setCurrentIndex(1)
 canvas.clear_selection()
 assert dlg._generate() is False and "Select" in dlg.lbl_status.text()
+# and building needs a selection in the library
+dlg.cmb_mode.setCurrentIndex(0)
+dlg.set_selection([])
+assert dlg._generate() is False and "No assets are ticked" in dlg.lbl_status.text()
 dlg.close()
 print("generator dialog ok")
 

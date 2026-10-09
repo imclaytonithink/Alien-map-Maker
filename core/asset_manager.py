@@ -5,7 +5,18 @@
 - Import ZIP copies supported images only, normalizes Windows-style archive
   separators, preserves the archive's folder layout, and never extracts paths
   outside the store. Original archives are left untouched.
-- Assets are auto-grouped by folder and auto-tagged by type + map size.
+- Assets keep the folder layout they arrived with: a ZIP's own directories are
+  preserved, and the library browses that structure as-is. Assets are never
+  re-sorted, re-filed or renamed by the app.
+- Only a verified duplicate is folded away: a picture with the same name AND
+  the same byte size as one already shown. Same-named pictures of a different
+  size are different art and are always shown. Folded copies stay on disk and
+  are remembered in ``hidden_duplicates``; ``set_show_duplicates(True)`` lists
+  them (tagged ``duplicate``) so they can be checked.
+- Files that cannot be read as an image are omitted during import/install
+  (``skipped_unreadable``), so the library never lists broken tiles.
+- ``remove_paths`` deletes tiles (and the folders that become empty) from the
+  store, for tidying the pool or removing your own uploads again.
 """
 from __future__ import annotations
 
@@ -59,6 +70,7 @@ class Asset:
     tags: list[str] = field(default_factory=list)
     width: int = 0            # source image pixels
     height: int = 0
+    duplicate_of: Optional[str] = None  # path of the shown copy, for a hidden duplicate
 
     def __post_init__(self):
         if not self.tags:
@@ -72,7 +84,7 @@ def _image_dimensions(path: str) -> tuple[int, int]:
     """Read common image dimensions from headers without decoding pixels.
 
     Large geomorph PNGs can be 7,199 x 7,199 pixels. Reading just their image
-    headers keeps library scans light and lets the generator avoid loading
+    headers keeps library scans light and lets the map builder avoid loading
     every full-resolution source merely to learn its dimensions.
     """
     try:
@@ -92,9 +104,43 @@ def _image_dimensions(path: str) -> tuple[int, int]:
                     return width, height
             if head[:2] == b"\xff\xd8":
                 return _jpeg_dimensions(fh)
+            if head[:4] in (b"II*\x00", b"MM\x00*"):
+                return _tiff_dimensions(fh)
     except (OSError, ValueError, struct.error):
         pass
     return 0, 0
+
+
+def _tiff_dimensions(fh) -> tuple[int, int]:
+    """Read ImageWidth/ImageLength from the first TIFF IFD (either endianness)."""
+    fh.seek(0)
+    head = fh.read(8)
+    if len(head) < 8:
+        return 0, 0
+    endian = "little" if head[:4] == b"II*\x00" else "big"
+    fh.seek(int.from_bytes(head[4:8], endian))
+    count_bytes = fh.read(2)
+    if len(count_bytes) != 2:
+        return 0, 0
+    width = height = 0
+    for _ in range(min(int.from_bytes(count_bytes, endian), 1024)):
+        entry = fh.read(12)
+        if len(entry) != 12:
+            break
+        tag = int.from_bytes(entry[0:2], endian)
+        if tag not in (0x0100, 0x0101):
+            continue
+        typ = int.from_bytes(entry[2:4], endian)
+        if int.from_bytes(entry[4:8], endian) != 1:
+            continue
+        value = int.from_bytes(entry[8:10] if typ == 3 else entry[8:12], endian)
+        if tag == 0x0100:
+            width = value
+        else:
+            height = value
+        if width and height:
+            return width, height
+    return width, height
 
 
 def _webp_dimensions(head: bytes) -> tuple[int, int]:
@@ -217,42 +263,17 @@ class AssetLibrary:
         self.root = root
         self.assets: list[Asset] = []
         self._by_path: dict[str, Asset] = {}
+        self._by_name: dict[tuple[str, int], str] = {}
+        # Verified duplicates (same name and same byte size): only one copy is
+        # shown; the others stay on disk but are hidden, remembered here as
+        # (hidden_path, shown_path) and as Asset objects in ``hidden_assets``.
+        self.hidden_duplicates: list[tuple[str, str]] = []
+        self.hidden_assets: list[Asset] = []
+        self.show_duplicates = False
+        # Images that could not be read at all are omitted from the library.
+        self.skipped_unreadable = 0
         self._scan_complete = False
         self._scan_revision = 0
-        self.role_overrides: dict[str, str] = {}   # asset path -> role id (yours)
-        self._override_revision = 0
-        self._roles_cache = None
-        self._roles_key = None
-
-    # ---- generator roles (see core/asset_roles.py) ----
-    def roles(self, tags_by_path: dict | None = None) -> dict:
-        """{asset path: RoleInfo}, cached until the library or an override changes."""
-        from core.asset_roles import classify_roles
-        key = (self._scan_revision, self._override_revision, len(self.assets))
-        if self._roles_cache is None or self._roles_key != key:
-            self._roles_cache = classify_roles(
-                self.assets, self.role_overrides, tags_by_path)
-            self._roles_key = key
-        return self._roles_cache
-
-    def set_role(self, paths, role: str | None) -> int:
-        """Give assets a role by hand (``None`` = back to automatic) and save it."""
-        from core.asset_roles import ROLE_IDS, save_overrides
-        changed = 0
-        for path in paths:
-            if path not in self._by_path:
-                continue
-            if role in ROLE_IDS:
-                if self.role_overrides.get(path) != role:
-                    self.role_overrides[path] = role
-                    changed += 1
-            elif path in self.role_overrides:
-                del self.role_overrides[path]
-                changed += 1
-        if changed:
-            self._override_revision += 1
-            save_overrides(self.root, self.role_overrides)
-        return changed
 
     # ---- scanning ----
     def scan(self, root: str) -> None:
@@ -261,9 +282,10 @@ class AssetLibrary:
         self.root = root
         self.assets = []
         self._by_path = {}
-        from core.asset_roles import load_overrides
-        self.role_overrides = load_overrides(root) if root else {}
-        self._override_revision += 1
+        self._by_name = {}
+        self.hidden_duplicates = []
+        self.hidden_assets = []
+        self.skipped_unreadable = 0
         if not root or not os.path.isdir(root):
             self._scan_complete = True
             return
@@ -275,6 +297,7 @@ class AssetLibrary:
             for fn in sorted(files):
                 if fn.lower().endswith(SUPPORTED_EXTS):
                     self._add(os.path.join(dirpath, fn), rel)
+        self._merge_hidden()
         self._scan_complete = True
 
     def adopt_scan(self, snapshot: "AssetLibrary") -> None:
@@ -284,9 +307,11 @@ class AssetLibrary:
         self.root = snapshot.root
         self.assets = snapshot.assets
         self._by_path = snapshot._by_path
-        from core.asset_roles import load_overrides
-        self.role_overrides = load_overrides(snapshot.root) if snapshot.root else {}
-        self._override_revision += 1
+        self._by_name = snapshot._by_name
+        self.hidden_duplicates = snapshot.hidden_duplicates
+        self.hidden_assets = snapshot.hidden_assets
+        self.skipped_unreadable = snapshot.skipped_unreadable
+        self._merge_hidden()
         self._scan_complete = True
         self._scan_revision += 1
 
@@ -301,25 +326,108 @@ class AssetLibrary:
                      size=size, is_overlay=is_overlay,
                      width=width, height=height)
 
+    def _name_key(self, asset: Asset, full: str) -> tuple[str, int]:
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            size = -1
+        return asset.name.casefold(), size
+
+    def _register(self, asset: Asset, full: str, *, record_hidden: bool = True) -> str:
+        """Decide whether a freshly-made Asset joins the visible library.
+
+        Returns ``"added"``, ``"unreadable"`` (the image header could not be
+        read, so the file cannot be imported) or ``"duplicate"`` (a shown asset
+        has the same name and the same byte size, so only one copy is shown).
+        """
+        if asset.width <= 0 or asset.height <= 0:
+            self.skipped_unreadable += 1
+            return "unreadable"
+        key = self._name_key(asset, full)
+        kept = self._by_name.get(key)
+        if kept is not None:
+            if record_hidden:
+                self.hidden_duplicates.append((asset.path, kept))
+                asset.duplicate_of = kept
+                if "duplicate" not in asset.tags:
+                    asset.tags.append("duplicate")
+                self.hidden_assets.append(asset)
+            return "duplicate"
+        self._by_name[key] = asset.path
+        return "added"
+
+    def set_show_duplicates(self, show: bool) -> bool:
+        """List the verified duplicates too (so they can be checked), or hide
+        them again. Returns True when the listing changed."""
+        show = bool(show)
+        if show == self.show_duplicates:
+            return False
+        self.show_duplicates = show
+        if show:
+            self._merge_hidden()
+        else:
+            hidden = {asset.path for asset in self.hidden_assets}
+            self.assets = [a for a in self.assets if a.path not in hidden]
+            for path in hidden:
+                self._by_path.pop(path, None)
+        self._scan_revision += 1
+        return True
+
+    def _merge_hidden(self):
+        if not self.show_duplicates:
+            return
+        added = False
+        for asset in self.hidden_assets:
+            if asset.path not in self._by_path:
+                self.assets.append(asset)
+                self._by_path[asset.path] = asset
+                added = True
+        if added:
+            self.assets.sort(key=_scan_order_key)
+
     def _add(self, full: str, rel_folder: str):
         a = self._make_asset(full, rel_folder)
+        if self._register(a, full) != "added":
+            return                      # omitted: unreadable or a verified duplicate
         self.assets.append(a)
         self._by_path[a.path] = a
 
-    def _index_file(self, full: str) -> str:
+    def _index_file(self, full: str) -> Optional[str]:
         """Add one file inside the store to the index without rescanning the
-        whole store, in the place a full scan would list it. Returns its
-        store-relative path."""
+        whole store, in the place a full scan would list it. Returns the
+        store-relative path the file is shown under, or None when the file
+        cannot be shown (unreadable, or a verified duplicate of a shown copy).
+
+        A copied file that ends up hidden is removed again, so the store never
+        accumulates pictures the library does not show."""
         rel = os.path.relpath(full, self.root).replace(os.sep, "/")
         if rel in self._by_path:
             return rel
         asset = self._make_asset(full, os.path.dirname(rel) or ".")
+        status = self._register(asset, full, record_hidden=False)
+        if status == "duplicate":
+            shown = self._by_name.get(self._name_key(asset, full), rel)
+            try:
+                os.remove(full)
+            except OSError:
+                pass
+            try:
+                os.removedirs(os.path.dirname(full))
+            except OSError:
+                pass                      # the folder still holds other files
+            return shown
+        if status == "unreadable":
+            try:
+                os.remove(full)
+            except OSError:
+                pass
+            return None
         key = _scan_order_key(asset)
         position = next((i for i, other in enumerate(self.assets)
                          if _scan_order_key(other) > key), len(self.assets))
         self.assets.insert(position, asset)
         self._by_path[rel] = asset
-        self._scan_revision += 1            # groups, counts and roles refresh
+        self._scan_revision += 1            # groups and counts refresh
         return rel
 
     def store_path_of(self, path: str) -> Optional[str]:
@@ -388,7 +496,7 @@ class AssetLibrary:
         ``preserve_root`` keeps the selected directory's own name as a group
         above its contents. The UI uses this for user imports so selecting a
         structural directory such as ``100x100 Core`` or ``Symbols`` does not
-        erase the folder name that the geomorph generator relies on. The
+        erase the folder name the asset arrived in. The
         default remains false for callers importing known fixture folders
         whose contents are intentionally merged into the store.
         """
@@ -439,8 +547,18 @@ class AssetLibrary:
         return count
 
     def import_file(self, src: str) -> Optional[str]:
-        if not self.root or not src.lower().endswith(SUPPORTED_EXTS):
+        """Copy one image into the store and show it.
+
+        Returns the store-relative path the picture is shown under, or None
+        when it is not a supported, readable image. A picture whose name is
+        already shown is not copied at all (one copy of a name is all that is
+        shown); the path of the shown copy is returned."""
+        if (not self.root or not src.lower().endswith(SUPPORTED_EXTS)
+                or not os.path.isfile(src)):
             return None
+        inside = self.store_path_of(src)
+        if inside is not None:
+            return self._index_file(os.path.join(self.root, *inside.split("/")))
         fn = os.path.basename(src)
         dest = os.path.join(self.root, fn)
         # avoid clobbering
@@ -450,8 +568,7 @@ class AssetLibrary:
             dest = os.path.join(self.root, f"{base}_{i}{ext}")
             i += 1
         shutil.copy2(src, dest)
-        self.scan(self.root)
-        return os.path.relpath(dest, self.root).replace(os.sep, "/")
+        return self._index_file(dest)
 
     def import_zip(self, archive_path: str, *, rescan: bool = True) -> ZipImportReport:
         """Import supported images from a ZIP without trusting its paths.
@@ -652,3 +769,42 @@ class AssetLibrary:
         self.root = root
         os.makedirs(root, exist_ok=True)
         self.scan(root)
+
+    # ---- removing tiles from the pool ------------------------------------
+    def remove_paths(self, paths) -> int:
+        """Delete store files (and any folders that become empty) and rescan.
+
+        Only files inside the store are touched; anything else is ignored.
+        Returns how many files were removed."""
+        removed = 0
+        touched_dirs = set()
+        for rel in list(paths):
+            if not rel:
+                continue
+            full = self.abs_path(rel)
+            if self.store_path_of(full) is None:
+                continue
+            try:
+                os.remove(full)
+                removed += 1
+                touched_dirs.add(os.path.dirname(full))
+            except OSError:
+                continue
+        for directory in touched_dirs:
+            # Folders that end up empty are gone from the library too.
+            try:
+                while directory and os.path.isdir(directory) and \
+                        os.path.commonpath((os.path.realpath(directory),
+                                            os.path.realpath(self.root))) == \
+                        os.path.realpath(self.root) and \
+                        directory != os.path.realpath(self.root):
+                    if os.listdir(directory):
+                        break
+                    parent = os.path.dirname(directory)
+                    os.rmdir(directory)
+                    directory = parent
+            except OSError:
+                pass
+        if removed:
+            self.scan(self.root)
+        return removed
