@@ -40,7 +40,8 @@ def png(rel, w, h, color="#446688"):
 
 png("A/room.png", 100, 100)
 png("A/prop.png", 40, 40)
-png("B/room.png", 100, 100)                 # same name as A/room.png
+png("B/room.png", 100, 100)                 # same name and size as A/room.png: a duplicate
+png("D/prop.png", 80, 80)                   # same name as A/prop.png, other size: kept
 os.makedirs(os.path.join(store, "empty"), exist_ok=True)   # empty folder
 with open(os.path.join(store, "bad.png"), "wb") as fh:
     fh.write(b"not an image at all")        # unreadable, must be omitted
@@ -51,8 +52,18 @@ library.scan(store)
 
 # ---- one copy of a name, unreadable and empty folders omitted -------------
 assert library.get("A/room.png") is not None
-assert library.get("B/room.png") is None, "a repeated name shows one copy"
+assert library.get("B/room.png") is None, "a verified duplicate shows one copy"
+assert library.get("D/prop.png") is not None, \
+    "same name but a different file size is different art and stays visible"
 assert len(library.hidden_duplicates) == 1, library.hidden_duplicates
+# the duplicates remain reachable for checking
+assert library.set_show_duplicates(True)
+shown = library.get("B/room.png")
+assert shown is not None and shown.duplicate_of == "A/room.png" \
+    and "duplicate" in shown.tags, shown
+assert "B" in library.groups()
+assert library.set_show_duplicates(False)
+assert library.get("B/room.png") is None and "B" not in library.groups()
 assert library.skipped_unreadable == 1, library.skipped_unreadable
 assert library.get("bad.png") is None, "unreadable images are left out"
 assert "B" not in library.groups(), library.groups()
@@ -70,6 +81,10 @@ app.processEvents()
 assert "folder:B" not in panel._tree_items
 assert "folder:empty" not in panel._tree_items
 assert "folder:A" in panel._tree_items and "folder:C" in panel._tree_items
+panel.act_dupes.setChecked(True)
+assert "folder:B" in panel._tree_items, "duplicates can be browsed on request"
+panel.act_dupes.setChecked(False)
+assert "folder:B" not in panel._tree_items
 
 # ---- ticking individual assets --------------------------------------------
 model = panel.list.asset_model

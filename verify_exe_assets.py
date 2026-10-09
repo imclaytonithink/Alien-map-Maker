@@ -537,11 +537,26 @@ def check_installed(report: Report, store: str, entries_by_pack: dict) -> None:
                      f"{name}: {intact:,}/{len(entries):,} images installed "
                      f"byte-for-byte (CRC-32){detail}")
 
-        seen = listed.get(os.path.basename(folder), 0)
+        top = os.path.basename(folder)
+        seen = listed.get(top, 0)
+        # The library folds away verified duplicates (same name and same byte
+        # size as a shown copy) and omits images it cannot read; both stay on
+        # disk. Every image must be accounted for as listed, a duplicate, or
+        # unreadable, and the duplicates stay reachable via the library.
+        duplicates = sum(1 for hidden, _kept in library.hidden_duplicates
+                         if hidden.split("/", 1)[0] == top)
+        shown_or_hidden = {asset.path for asset in library.assets}
+        shown_or_hidden.update(hidden for hidden, _kept in library.hidden_duplicates)
+        unreadable = sum(1 for key in on_disk
+                         if f"{top}/{on_disk[key][0]}" not in shown_or_hidden
+                         and on_disk[key][0].lower().endswith(SUPPORTED_EXTS))
         info["listed"] = seen
-        report.check(seen == len(entries),
+        info["duplicates"] = duplicates
+        info["unreadable"] = unreadable
+        report.check(seen + duplicates + unreadable == len(entries) and unreadable == 0,
                      f"{name}: the app's library scanner lists {seen:,}/"
-                     f"{len(entries):,} images")
+                     f"{len(entries):,} images ({duplicates:,} verified same-name "
+                     f"same-size duplicates folded away, {unreadable:,} unreadable)")
 
 
 # ---------------------------------------------------------------------------
@@ -566,8 +581,12 @@ def write_summary(report: Report, path: str, exe: str, store: str | None) -> Non
                           f"{yes if installed == info.get('expected') else no} "
                           f"{installed:,}/{info.get('expected', 0):,} byte-identical")
         listed = info.get("listed")
+        dupes = info.get("duplicates", 0)
+        accounted = (listed is not None and not info.get("unreadable", 0) and
+                     listed + dupes == info.get("expected"))
         listed_text = ("—" if listed is None else
-                       f"{yes if listed == info.get('expected') else no} {listed:,}")
+                       f"{yes if accounted else no} {listed:,}" +
+                       (f" + {dupes:,} duplicates" if dupes else ""))
         lines.append(f"| `{name}` | {source} | {images} | {embedded_text} "
                      f"| {installed_text} | {listed_text} |")
     skipped_rows = [(name, info["skipped"]) for name, info in report.packs.items()

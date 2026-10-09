@@ -8,8 +8,11 @@
 - Assets keep the folder layout they arrived with: a ZIP's own directories are
   preserved, and the library browses that structure as-is. Assets are never
   re-sorted, re-filed or renamed by the app.
-- Only one copy of a name is shown: a picture whose name is already in the
-  library is omitted (``hidden_duplicates`` remembers what was folded away).
+- Only a verified duplicate is folded away: a picture with the same name AND
+  the same byte size as one already shown. Same-named pictures of a different
+  size are different art and are always shown. Folded copies stay on disk and
+  are remembered in ``hidden_duplicates``; ``set_show_duplicates(True)`` lists
+  them (tagged ``duplicate``) so they can be checked.
 - Files that cannot be read as an image are omitted during import/install
   (``skipped_unreadable``), so the library never lists broken tiles.
 - ``remove_paths`` deletes tiles (and the folders that become empty) from the
@@ -67,6 +70,7 @@ class Asset:
     tags: list[str] = field(default_factory=list)
     width: int = 0            # source image pixels
     height: int = 0
+    duplicate_of: Optional[str] = None  # path of the shown copy, for a hidden duplicate
 
     def __post_init__(self):
         if not self.tags:
@@ -259,10 +263,13 @@ class AssetLibrary:
         self.root = root
         self.assets: list[Asset] = []
         self._by_path: dict[str, Asset] = {}
-        self._by_name: dict[str, str] = {}
-        # Same-named pictures: only one copy is shown; the others stay on disk
-        # but are hidden, remembered here as (hidden_path, shown_path).
+        self._by_name: dict[tuple[str, int], str] = {}
+        # Verified duplicates (same name and same byte size): only one copy is
+        # shown; the others stay on disk but are hidden, remembered here as
+        # (hidden_path, shown_path) and as Asset objects in ``hidden_assets``.
         self.hidden_duplicates: list[tuple[str, str]] = []
+        self.hidden_assets: list[Asset] = []
+        self.show_duplicates = False
         # Images that could not be read at all are omitted from the library.
         self.skipped_unreadable = 0
         self._scan_complete = False
@@ -277,6 +284,7 @@ class AssetLibrary:
         self._by_path = {}
         self._by_name = {}
         self.hidden_duplicates = []
+        self.hidden_assets = []
         self.skipped_unreadable = 0
         if not root or not os.path.isdir(root):
             self._scan_complete = True
@@ -289,6 +297,7 @@ class AssetLibrary:
             for fn in sorted(files):
                 if fn.lower().endswith(SUPPORTED_EXTS):
                     self._add(os.path.join(dirpath, fn), rel)
+        self._merge_hidden()
         self._scan_complete = True
 
     def adopt_scan(self, snapshot: "AssetLibrary") -> None:
@@ -300,7 +309,9 @@ class AssetLibrary:
         self._by_path = snapshot._by_path
         self._by_name = snapshot._by_name
         self.hidden_duplicates = snapshot.hidden_duplicates
+        self.hidden_assets = snapshot.hidden_assets
         self.skipped_unreadable = snapshot.skipped_unreadable
+        self._merge_hidden()
         self._scan_complete = True
         self._scan_revision += 1
 
@@ -315,28 +326,69 @@ class AssetLibrary:
                      size=size, is_overlay=is_overlay,
                      width=width, height=height)
 
-    def _register(self, asset: Asset, *, record_hidden: bool = True) -> str:
+    def _name_key(self, asset: Asset, full: str) -> tuple[str, int]:
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            size = -1
+        return asset.name.casefold(), size
+
+    def _register(self, asset: Asset, full: str, *, record_hidden: bool = True) -> str:
         """Decide whether a freshly-made Asset joins the visible library.
 
         Returns ``"added"``, ``"unreadable"`` (the image header could not be
-        read, so the file cannot be imported) or ``"duplicate"`` (another shown
-        asset already has the same name, and only one copy is shown).
+        read, so the file cannot be imported) or ``"duplicate"`` (a shown asset
+        has the same name and the same byte size, so only one copy is shown).
         """
         if asset.width <= 0 or asset.height <= 0:
             self.skipped_unreadable += 1
             return "unreadable"
-        kept = self._by_name.get(asset.name.casefold())
+        key = self._name_key(asset, full)
+        kept = self._by_name.get(key)
         if kept is not None:
             if record_hidden:
                 self.hidden_duplicates.append((asset.path, kept))
+                asset.duplicate_of = kept
+                if "duplicate" not in asset.tags:
+                    asset.tags.append("duplicate")
+                self.hidden_assets.append(asset)
             return "duplicate"
-        self._by_name[asset.name.casefold()] = asset.path
+        self._by_name[key] = asset.path
         return "added"
+
+    def set_show_duplicates(self, show: bool) -> bool:
+        """List the verified duplicates too (so they can be checked), or hide
+        them again. Returns True when the listing changed."""
+        show = bool(show)
+        if show == self.show_duplicates:
+            return False
+        self.show_duplicates = show
+        if show:
+            self._merge_hidden()
+        else:
+            hidden = {asset.path for asset in self.hidden_assets}
+            self.assets = [a for a in self.assets if a.path not in hidden]
+            for path in hidden:
+                self._by_path.pop(path, None)
+        self._scan_revision += 1
+        return True
+
+    def _merge_hidden(self):
+        if not self.show_duplicates:
+            return
+        added = False
+        for asset in self.hidden_assets:
+            if asset.path not in self._by_path:
+                self.assets.append(asset)
+                self._by_path[asset.path] = asset
+                added = True
+        if added:
+            self.assets.sort(key=_scan_order_key)
 
     def _add(self, full: str, rel_folder: str):
         a = self._make_asset(full, rel_folder)
-        if self._register(a) != "added":
-            return                      # omitted: unreadable or a repeat name
+        if self._register(a, full) != "added":
+            return                      # omitted: unreadable or a verified duplicate
         self.assets.append(a)
         self._by_path[a.path] = a
 
@@ -344,7 +396,7 @@ class AssetLibrary:
         """Add one file inside the store to the index without rescanning the
         whole store, in the place a full scan would list it. Returns the
         store-relative path the file is shown under, or None when the file
-        cannot be shown (unreadable, or a name that is already shown).
+        cannot be shown (unreadable, or a verified duplicate of a shown copy).
 
         A copied file that ends up hidden is removed again, so the store never
         accumulates pictures the library does not show."""
@@ -352,9 +404,9 @@ class AssetLibrary:
         if rel in self._by_path:
             return rel
         asset = self._make_asset(full, os.path.dirname(rel) or ".")
-        status = self._register(asset, record_hidden=False)
+        status = self._register(asset, full, record_hidden=False)
         if status == "duplicate":
-            shown = self._by_name.get(asset.name.casefold(), rel)
+            shown = self._by_name.get(self._name_key(asset, full), rel)
             try:
                 os.remove(full)
             except OSError:

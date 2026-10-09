@@ -766,6 +766,11 @@ class LibraryPanel(QWidget):
         self._tree_items[token] = item
         return item
 
+    def _toggle_duplicates(self, show: bool):
+        if self.library.set_show_duplicates(show):
+            self._rebuild_groups()
+            self.refresh()
+
     def _rebuild_groups(self):
         groups = self.library.groups(self.project.group_order if self.project else None)
         self._folder_groups = groups
@@ -1109,9 +1114,11 @@ class LibraryPanel(QWidget):
         if query:
             count_text += f" · search: {query}"
         hidden = len(self.library.hidden_duplicates)
-        if hidden:
-            count_text += (f" · {hidden:,} same-named cop(y/ies) hidden — "
-                           "one copy of a name is shown")
+        if hidden and self.library.show_duplicates:
+            count_text += f" · duplicates shown ({hidden:,} tagged 'duplicate')"
+        elif hidden:
+            count_text += (f" · {hidden:,} verified duplicate(s) hidden "
+                           "(same name and size) — Library menu → Show duplicate copies")
         if self.library.skipped_unreadable:
             count_text += (f" · {self.library.skipped_unreadable:,} unreadable "
                            "file(s) left out")
@@ -1229,6 +1236,13 @@ class LibraryPanel(QWidget):
         slider.setValue(self.sl_thumb.value())
         self.spin_thumb.setValue(self.sl_thumb.value())
 
+        self.act_dupes = menu.addAction("Show duplicate copies")
+        self.act_dupes.setCheckable(True)
+        self.act_dupes.setToolTip(
+            "A picture with the same name and the same file size as one already "
+            "shown is a duplicate and is folded away. Tick this to list those "
+            "copies too (tagged 'duplicate') and check them.")
+        self.act_dupes.toggled.connect(self._toggle_duplicates)
         self.act_tree = menu.addAction("Show folder tree")
         self.act_tree.setCheckable(True)
         show_tree = self._settings.value("library/show_tree", True, type=bool)
