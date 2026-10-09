@@ -3064,4 +3064,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, "About",
                           f"{product} — General-purpose PNG map and image studio\n\n"
                           "Arrange PNG assets on a canvas, recolor nodes with tint overlays, "
-                          "manage levels and layers, and export to PNG, PDF, or Tabletop Simulator-sized images.")
+                          "manage levels and layers, and export to PNG, PDF, or Tabletop Simulator-sized images.\n\n"
+                          "Geomorph tiles: Starship Geomorphs 2.0 by Robert Pearce (Pearce Design Studio, LLC), "
+                          "CC BY-NC 4.0; PNGs by Eric Smith / RPG Mobius. Non-commercial fan tool; "
+                          "Traveller is a trademark of Far Future Enterprises.")

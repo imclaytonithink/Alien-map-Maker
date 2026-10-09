@@ -519,3 +519,12 @@ ui/     main_window · canvas · library · properties · layers_panel · zones_
         cutout_bar
 sample_fixtures.py   demo images for tests, generated on demand (generate_samples.py)
 ```
+
+
+---
+## Geomorph generator (ships and sites)
+**Tools → Geomorph Generator…** builds connected, keyed ships and sites (colonies, mines, labs, prisons, stations, wrecks)
+from the Starship Geomorphs 2.0 tiles. See [geomorph/README.md](geomorph/README.md).
+
+Credits: tiles by Robert Pearce (Pearce Design Studio, LLC), licensed CC BY-NC 4.0, so this project must stay non-commercial;
+PNG renderings by Eric Smith / RPG Mobius. Unofficial fan tool; *Traveller* is a trademark of Far Future Enterprises.

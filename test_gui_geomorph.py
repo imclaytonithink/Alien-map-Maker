@@ -160,5 +160,6 @@ assert json.load(open(ov))[tid]["N"][0] == (before[0] + 1) % 3
 ee.tile.edges["N"]["cls"] = before                      # leave the shared registry untouched
 
 dlg.close()
+win._confirm_discard = lambda *a, **k: True
 win.close()
 print("ALL GEOMORPH GUI CHECKS PASSED")
