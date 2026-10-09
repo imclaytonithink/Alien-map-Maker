@@ -1,0 +1,30 @@
+{
+ "_about": "Rooms that belong together. Each group lists function tags; two rooms whose tags are both in a group are pulled toward each other with that group's weight (a room is also pulled toward others of its own function). 'repel' lists pairs that should be far apart. Edit freely, add groups as you like.",
+ "same_function": 0.9,
+ "groups": [
+  {"name": "medical",   "weight": 1.0, "tags": ["medical", "lab", "lowberth", "morgue", "fresher"]},
+  {"name": "loading",   "weight": 1.0, "tags": ["cargo", "hangar", "vehicle_bay", "docking", "airlock"]},
+  {"name": "stores",    "weight": 0.5, "tags": ["cargo", "workshop", "galley"]},
+  {"name": "dining",    "weight": 1.0, "tags": ["galley", "recreation", "concourse"]},
+  {"name": "farm",      "weight": 0.7, "tags": ["hydroponics", "galley", "water"]},
+  {"name": "quarters",  "weight": 1.0, "tags": ["staterooms", "crew_quarters", "barracks", "passenger", "fresher"]},
+  {"name": "off-duty",  "weight": 0.6, "tags": ["staterooms", "crew_quarters", "barracks", "passenger", "recreation", "galley"]},
+  {"name": "power",     "weight": 1.0, "tags": ["engineering", "power", "fuel", "workshop", "refinery", "scoop", "drive"]},
+  {"name": "command",   "weight": 1.0, "tags": ["bridge", "sensors", "comms", "office"]},
+  {"name": "security",  "weight": 1.0, "tags": ["security", "brig", "armory", "weapons"]},
+  {"name": "defence",   "weight": 0.6, "tags": ["weapons", "armory", "barracks", "hangar"]},
+  {"name": "research",  "weight": 0.8, "tags": ["lab", "office", "sensors", "lowberth"]},
+  {"name": "utilities", "weight": 0.7, "tags": ["waste", "water", "refinery", "engineering", "power"]},
+  {"name": "flight",    "weight": 0.8, "tags": ["hangar", "vehicle_bay", "workshop", "fuel", "escape"]},
+  {"name": "guests",    "weight": 0.7, "tags": ["passenger", "recreation", "concourse", "galley", "medical"]}
+ ],
+ "repel": [
+  {"tags": ["engineering", "staterooms"], "weight": 0.8}, {"tags": ["engineering", "medical"], "weight": 0.6},
+  {"tags": ["engineering", "galley"], "weight": 0.6}, {"tags": ["fuel", "staterooms"], "weight": 0.8},
+  {"tags": ["fuel", "galley"], "weight": 0.8}, {"tags": ["fuel", "medical"], "weight": 0.6},
+  {"tags": ["waste", "galley"], "weight": 1.0}, {"tags": ["waste", "medical"], "weight": 0.8},
+  {"tags": ["waste", "staterooms"], "weight": 0.6}, {"tags": ["waste", "hydroponics"], "weight": 0.6},
+  {"tags": ["weapons", "staterooms"], "weight": 0.5}, {"tags": ["brig", "recreation"], "weight": 0.6},
+  {"tags": ["refinery", "galley"], "weight": 0.7}, {"tags": ["refinery", "staterooms"], "weight": 0.7}
+ ]
+}

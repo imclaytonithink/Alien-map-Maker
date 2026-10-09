@@ -508,7 +508,7 @@ class PropertiesPanel(QWidget):
         self.spin_backdrop_tile.setRange(0.0, 200.0)
         self.spin_backdrop_tile.setDecimals(2)
         self.spin_backdrop_tile.setSingleStep(0.5)
-        self.spin_backdrop_tile.setSuffix(" squares")
+        self.spin_backdrop_tile.setSuffix(" sq")
         self.spin_backdrop_tile.setSpecialValueText("Natural size")
         self.spin_backdrop_tile.setToolTip(
             "How many grid squares one copy of the texture covers (Natural size = "

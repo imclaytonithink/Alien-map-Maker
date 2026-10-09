@@ -1,0 +1,199 @@
+{
+ "name": "Deep mine",
+ "group": "Industry",
+ "topology": "branching",
+ "scales": {
+  "small": {
+   "levels": 2,
+   "chambers": 3
+  },
+  "medium": {
+   "levels": 3,
+   "chambers": 5
+  },
+  "large": {
+   "levels": 4,
+   "chambers": 8
+  }
+ },
+ "environments": [
+  "underground"
+ ],
+ "zones": [
+  {
+   "id": "shaft",
+   "name": "Main shaft & lifts",
+   "tags": [
+    "vertical",
+    "cargo"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "core",
+   "access": "staff",
+   "prefer_adjacent": [
+    "ore"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "ore",
+   "name": "Ore chambers",
+   "tags": [
+    "cargo",
+    "refinery"
+   ],
+   "min": 2,
+   "max": 8,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "shaft"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "pump",
+   "name": "Pump room",
+   "tags": [
+    "water",
+    "engineering"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "vent",
+   "name": "Ventilation",
+   "tags": [
+    "engineering"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "refuge",
+   "name": "Refuge chamber",
+   "tags": [
+    "medical",
+    "escape"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "head",
+   "name": "Surface head-frame",
+   "tags": [
+    "vertical",
+    "workshop"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "entrance_zone": true
+  },
+  {
+   "id": "store",
+   "name": "Stores & shop",
+   "tags": [
+    "workshop",
+    "cargo"
+   ],
+   "min": 0,
+   "max": 2,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff",
+   "cargo"
+  ],
+  "shafts": [
+   "power",
+   "ventilation",
+   "water"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Drifts and stopes branch away from a single shaft. The deeper levels have been sealed for a reason nobody explains."
+  ],
+  "hooks": [
+   {
+    "type": "Rescue",
+    "text": "A cave-in has cut off the lowest chambers. The refuge chamber's beacon is still transmitting."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "deep mine",
+ "name_table": "mines",
+ "entrance_zone": "head"
+}

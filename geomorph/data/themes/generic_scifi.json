@@ -1,0 +1,158 @@
+{
+ "label": "Generic sci-fi",
+ "corporations": {
+  "first": [
+   "Orion",
+   "Vega",
+   "Helios",
+   "Meridian",
+   "Atlas",
+   "Nova",
+   "Polaris",
+   "Zenith",
+   "Aurora",
+   "Titan"
+  ],
+  "second": [
+   "Industries",
+   "Systems",
+   "Dynamics",
+   "Mining",
+   "Holdings",
+   "Logistics",
+   "Biotech",
+   "Group",
+   "Heavy Works"
+  ],
+  "patterns": [
+   "{first} {second}",
+   "{first}-{second}"
+  ]
+ },
+ "colonies": {
+  "prefix": [
+   "New",
+   "Port",
+   "Fort",
+   "Mount",
+   "Lake",
+   "Cape",
+   "Haven",
+   "Silver",
+   "Amber",
+   "Cold"
+  ],
+  "suffix": [
+   "Eden",
+   "Haven",
+   "Landing",
+   "Harbor",
+   "Meridian",
+   "Springs",
+   "Ridge",
+   "Hollow"
+  ],
+  "patterns": [
+   "{prefix} {suffix}",
+   "{prefix} {suffix} Colony"
+  ]
+ },
+ "facilities": {
+  "prefix": [
+   "Alpha",
+   "Bravo",
+   "Cedar",
+   "Dune",
+   "Echo",
+   "Falcon",
+   "Granite",
+   "Harbor",
+   "Ion",
+   "Juniper"
+  ],
+  "suffix": [
+   "Research Station",
+   "Facility",
+   "Complex",
+   "Laboratory",
+   "Depot",
+   "Compound",
+   "Outpost"
+  ],
+  "patterns": [
+   "{prefix} {suffix}",
+   "{prefix}-{number} {suffix}"
+  ]
+ },
+ "mines": {
+  "prefix": [
+   "Copper",
+   "Iron",
+   "Silver",
+   "Cobalt",
+   "Lithium",
+   "Quartz",
+   "Titanium"
+  ],
+  "suffix": [
+   "Mine",
+   "Pit",
+   "Quarry",
+   "Works",
+   "Diggings"
+  ],
+  "patterns": [
+   "{prefix} {suffix}",
+   "{prefix} {suffix} {number}"
+  ]
+ },
+ "stations": {
+  "prefix": [
+   "Aegis",
+   "Beacon",
+   "Comet",
+   "Dawn",
+   "Equinox",
+   "Fathom",
+   "Gemini",
+   "Horizon"
+  ],
+  "suffix": [
+   "Station",
+   "Platform",
+   "Ring",
+   "Habitat",
+   "Orbital",
+   "Hub"
+  ],
+  "patterns": [
+   "{prefix} {suffix}",
+   "{prefix}-{number}"
+  ]
+ },
+ "ships": {
+  "prefix": [
+   "Aurora",
+   "Brigand",
+   "Calypso",
+   "Dauntless",
+   "Endeavour",
+   "Firefly",
+   "Gannet",
+   "Harrier",
+   "Intrepid"
+  ],
+  "suffix": [
+   "Star",
+   "Wanderer",
+   "Fortune",
+   "Dawn",
+   "Voyager"
+  ],
+  "patterns": [
+   "{prefix}",
+   "{prefix} {suffix}",
+   "SS {prefix}"
+  ]
+ }
+}

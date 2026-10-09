@@ -1,0 +1,260 @@
+{
+ "name": "Xeno-biology containment lab",
+ "group": "Research",
+ "topology": "stacked",
+ "scales": {
+  "small": {
+   "cols": 2,
+   "rows": 2,
+   "levels": 3
+  },
+  "medium": {
+   "cols": 3,
+   "rows": 2,
+   "levels": 4
+  },
+  "large": {
+   "cols": 3,
+   "rows": 3,
+   "levels": 5
+  }
+ },
+ "environments": [
+  "underground",
+  "hostile",
+  "vacuum",
+  "orbital"
+ ],
+ "zones": [
+  {
+   "id": "cells",
+   "name": "Containment cells",
+   "tags": [
+    "lab",
+    "lowberth",
+    "medical"
+   ],
+   "min": 2,
+   "max": 6,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "containment",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "quarters"
+   ]
+  },
+  {
+   "id": "decon",
+   "name": "Decontamination",
+   "tags": [
+    "medical",
+    "airlock"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [
+    "cells"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "observation",
+   "name": "Observation",
+   "tags": [
+    "sensors",
+    "lab",
+    "recreation"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [
+    "cells"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "autopsy",
+   "name": "Autopsy / surgery",
+   "tags": [
+    "medical",
+    "lab"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "secure",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "storage",
+   "name": "Secure storage",
+   "tags": [
+    "cargo",
+    "lowberth",
+    "security"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "secure",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "control",
+   "name": "Lockdown control",
+   "tags": [
+    "bridge",
+    "security"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "secure",
+   "prefer_adjacent": [
+    "storage"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "checkpoint",
+   "name": "Checkpoint",
+   "tags": [
+    "security",
+    "airlock"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "checkpoint": true
+  },
+  {
+   "id": "quarters",
+   "name": "Staff quarters",
+   "tags": [
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "cells"
+   ]
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted",
+   "secure"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "prisoner": [
+   "containment",
+   "secure"
+  ],
+  "specimen": [
+   "containment",
+   "secure",
+   "restricted"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff",
+   "specimen"
+  ],
+  "shafts": [
+   "power",
+   "ventilation",
+   "coolant"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Specimens that were never meant to be studied live here behind graded airlocks."
+  ],
+  "notes": [
+   "Each containment tier is airlocked from the next. Breaching one should cost the party time."
+  ],
+  "hooks": [
+   {
+    "type": "Escape",
+    "text": "A containment failure sealed the upper levels. The party is on the same side as the specimens."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "threat",
+  "secrets",
+  "battle"
+ ],
+ "kind": "containment lab",
+ "name_table": "facilities",
+ "entrance_zone": "quarters"
+}

@@ -473,6 +473,7 @@ class MainWindow(QMainWindow):
         destroy_before_qt_exits(self)
         self._show_launch()
         QTimer.singleShot(0, self._install_bundled_asset_packs)
+        QTimer.singleShot(1500, self._sync_legend)
 
     # ------------------------------------------------------------------
     def _build_ui(self):
@@ -975,6 +976,17 @@ class MainWindow(QMainWindow):
         v.addAction("Canvas size…", self._edit_canvas_size)
         v.addAction("Backdrop (color, floor texture or none)…", self._show_backdrop_settings)
         v.addSeparator()
+        self.act_legend_show = QAction("Symbol legend on canvas", self)
+        self.act_legend_show.setCheckable(True)
+        self.act_legend_show.setShortcut("F6")
+        self.act_legend_show.setToolTip("Show the Geomorphs 'Symbols & Abbreviations' legend over the canvas")
+        self.act_legend_show.triggered.connect(self._toggle_legend_show)
+        v.addAction(self.act_legend_show)
+        self.act_legend_export = QAction("Include symbol legend in exports", self)
+        self.act_legend_export.setCheckable(True)
+        self.act_legend_export.triggered.connect(self._toggle_legend_export)
+        v.addAction(self.act_legend_export)
+        v.addSeparator()
         # Window-style toggles: everything on screen can be switched off.
         self.view_actions = {}
         shortcuts = {"library": "F2", "inspector": "F3", "toolbar": "F4",
@@ -1072,6 +1084,7 @@ class MainWindow(QMainWindow):
 
         t = mb.addMenu("&Tools")
         t.addAction("Generate Map…", self._open_generator)
+        t.addAction("Geomorph Generator (ships && sites)…", self._open_geomorph)
         t.addAction("Ruler / measure", self._start_ruler_tool)
         t.addAction("Add static scale bar", self._start_scale_tool)
         t.addAction("Add connection / transition marker", self._start_connector_tool)
@@ -1863,6 +1876,97 @@ class MainWindow(QMainWindow):
         dlg = GeneratorDialog(self.project, self.library, self.canvas,
                               self._run_generator, self, selection=selection)
         dlg.exec()
+
+    # ---- symbol legend (Geomorphs 'Symbols & Abbreviations') ----
+    def _sync_legend(self, warn=False):
+        from core import legend
+        legend.STATE["path"] = legend.find_in_library(
+            self.library.library, getattr(getattr(self, "_geomorph_dialog", None), "tiles_dir", ""))
+        legend.STATE["show"] = bool(self.settings.value("legend/show", False, bool)) and bool(legend.STATE["path"])
+        legend.STATE["export"] = bool(self.settings.value("legend/export", False, bool)) and bool(legend.STATE["path"])
+        self.act_legend_show.setChecked(legend.STATE["show"])
+        self.act_legend_export.setChecked(legend.STATE["export"])
+        if warn and not legend.STATE["path"]:
+            QMessageBox.information(self, "Symbol legend",
+                                    "The legend image ('Symbols & Abbreviations.png') comes with the Geomorphs ZIP. "
+                                    "Import that ZIP into the library and try again.")
+        self.canvas.update()
+
+    def _toggle_legend_show(self, on):
+        self.settings.setValue("legend/show", bool(on))
+        self._sync_legend(warn=bool(on))
+
+    def _toggle_legend_export(self, on):
+        self.settings.setValue("legend/export", bool(on))
+        self._sync_legend(warn=bool(on))
+
+    def _open_geomorph(self, _checked=False):
+        """Ships and sites built from the Starship Geomorphs tiles."""
+        from ui.geomorph_dialog import GeomorphDialog
+        dlg = GeomorphDialog(self, self)
+        self._geomorph_dialog = dlg
+        dlg.exec()
+
+    def _place_geomorph(self, res, registry, images, replace_prev=True):
+        """Add a generated ship/site to the map: one new level per deck.
+
+        Tiles use the library's copy of each tile PNG (found by file name);
+        procedural filler is embedded; the key and markers are text nodes on
+        their own layers. Nothing is touched until the result is non-empty.
+        """
+        import tempfile
+        from geomorph import canvas_export
+        cs = self.project.cell_size
+        resolver = canvas_export.library_resolver(self.library.library.assets)
+        out = canvas_export.to_canvas(res, cs, resolver, images, tempfile.mkdtemp(prefix="geomorph-filler-"))
+        if out["wanted"] and not out["tiles"]:
+            QMessageBox.warning(self, "Geomorph generator",
+                                "Nothing could be placed. " + " ".join(out["warnings"]) +
+                                " Import the tile pack ZIP into the library, or set the tile folder in the generator.")
+            return None
+        self.canvas.push_history("Generate geomorph map")
+        if replace_prev and self._gen_output and "geomorph" in self._gen_output:
+            self._discard_gen_output("geomorph")
+        if self._gen_output is None:
+            self._gen_output = {}
+        output = self._gen_output.setdefault("geomorph", {"ids": [], "levels": []})
+        cols, rows = out["grid"]
+        if cols > self.project.map_cols or rows > self.project.map_rows:
+            self.project.map_cols = max(self.project.map_cols, cols)
+            self.project.map_rows = max(self.project.map_rows, rows)
+            self.project._sync_canvas()
+            self.props.set_project(self.project)
+        from core.project import Piece
+        existing = {level.name for level in self.project.levels}
+        first_new = len(self.project.levels)
+        for lv in out["levels"]:
+            base = f"{out['title']} — {lv['name']}".strip(" —")
+            name, n = base, 2
+            while name in existing:
+                name, n = f"{base} ({n})", n + 1
+            existing.add(name)
+            level = self.project.add_level(name)
+            layer_ids = {}
+            for d in lv["pieces"]:
+                lname = d.get("layer_name") or "Geomorph"
+                if lname not in layer_ids:
+                    layer_ids[lname] = self._ensure_layer(level, lname)
+                fields = {k: v for k, v in d.items() if k in Piece.__dataclass_fields__ and k not in ("layer", "id")}
+                piece = Piece(layer=layer_ids[lname], **fields)
+                level.add(piece)
+                output["ids"].append(piece.id)
+            output["levels"].append(level)
+        self.level_bar.refresh()
+        self.level_bar.tabs.setCurrentIndex(first_new)
+        self.canvas.set_level(first_new)
+        self.layers.set_project(self.project, self.project.levels[first_new])
+        self.canvas.fit_to_view()
+        self.zones.refresh_level()
+        self.canvas.update()
+        self._mark_dirty()
+        if out["warnings"]:
+            QMessageBox.information(self, "Geomorph generator", "\n".join(out["warnings"]))
+        return out
 
     def _generate_from_paths(self, paths):
         """Library right-click: build a map from exactly these assets."""
@@ -2995,4 +3099,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, "About",
                           f"{product} — General-purpose PNG map and image studio\n\n"
                           "Arrange PNG assets on a canvas, recolor nodes with tint overlays, "
-                          "manage levels and layers, and export to PNG, PDF, or Tabletop Simulator-sized images.")
+                          "manage levels and layers, and export to PNG, PDF, or Tabletop Simulator-sized images.\n\n"
+                          "Geomorph tiles: Starship Geomorphs 2.0 by Robert Pearce (Pearce Design Studio, LLC), "
+                          "CC BY-NC 4.0; PNGs by Eric Smith / RPG Mobius. Non-commercial fan tool; "
+                          "Traveller is a trademark of Far Future Enterprises.")

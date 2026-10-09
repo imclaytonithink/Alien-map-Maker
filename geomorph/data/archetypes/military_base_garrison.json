@@ -1,0 +1,238 @@
+{
+ "name": "Military base / garrison",
+ "group": "Security",
+ "topology": "campus",
+ "scales": {
+  "small": {
+   "buildings": [
+    6,
+    7
+   ],
+   "levels": 1
+  },
+  "medium": {
+   "buildings": [
+    9,
+    11
+   ],
+   "levels": 1
+  },
+  "large": {
+   "buildings": [
+    13,
+    16
+   ],
+   "levels": 2
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "vacuum"
+ ],
+ "zones": [
+  {
+   "id": "barracks",
+   "name": "Barracks",
+   "tags": [
+    "barracks",
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 1,
+   "max": 4,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "armory",
+   "name": "Armory",
+   "tags": [
+    "armory",
+    "weapons"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "secure",
+   "prefer_adjacent": [
+    "command"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "motor",
+   "name": "Motor pool",
+   "tags": [
+    "vehicle_bay",
+    "workshop"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "hangar"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "command",
+   "name": "Command",
+   "tags": [
+    "bridge",
+    "office",
+    "comms"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "hangar",
+   "name": "Hangar",
+   "tags": [
+    "hangar"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "medical",
+   "name": "Medical",
+   "tags": [
+    "medical"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "mess",
+   "name": "Mess",
+   "tags": [
+    "galley",
+    "recreation"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "barracks"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "gate",
+   "name": "Gatehouse",
+   "tags": [
+    "security",
+    "airlock"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "edge",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "checkpoint": true
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted",
+   "secure"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "prisoner": [
+   "containment",
+   "secure"
+  ],
+  "specimen": [
+   "containment",
+   "secure",
+   "restricted"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Hard walls, harder rules. Nobody here was assigned by choice."
+  ],
+  "hooks": [
+   {
+    "type": "Defend",
+    "text": "A hostile force is inbound. The garrison commander won't give the party weapons from the armory without orders."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "military base",
+ "name_table": "facilities",
+ "entrance_zone": "gate",
+ "perimeter": "wall"
+}

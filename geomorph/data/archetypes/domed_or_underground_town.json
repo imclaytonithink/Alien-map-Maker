@@ -1,0 +1,224 @@
+{
+ "name": "Domed or underground town",
+ "group": "Colony",
+ "topology": "street",
+ "scales": {
+  "small": {
+   "blocks": [
+    3,
+    3
+   ]
+  },
+  "medium": {
+   "blocks": [
+    4,
+    4
+   ]
+  },
+  "large": {
+   "blocks": [
+    5,
+    5
+   ]
+  }
+ },
+ "environments": [
+  "underground",
+  "hostile",
+  "vacuum"
+ ],
+ "zones": [
+  {
+   "id": "plaza",
+   "name": "Plaza / market",
+   "tags": [
+    "recreation",
+    "concourse"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "filler": "ground",
+   "filler_only": true
+  },
+  {
+   "id": "housing",
+   "name": "Housing",
+   "tags": [
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 2,
+   "max": 8,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "civic",
+   "name": "Civic hall",
+   "tags": [
+    "office",
+    "bridge"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "medical",
+   "name": "Medical",
+   "tags": [
+    "medical"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "school",
+   "name": "School",
+   "tags": [
+    "lab",
+    "recreation"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "housing",
+    "school"
+   ]
+  },
+  {
+   "id": "air",
+   "name": "Air plant",
+   "tags": [
+    "engineering",
+    "water"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [
+    "power"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "gate",
+   "name": "Gates / airlocks",
+   "tags": [
+    "airlock",
+    "hangar"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "edge",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "A sealed town under a dome or rock. Everyone knows everyone, and everyone knows when the air plant coughs."
+  ],
+  "hooks": [
+   {
+    "type": "Cover-up",
+    "text": "A seal failure killed a dozen people. The council has declared it routine."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "domed town",
+ "name_table": "colonies",
+ "entrance_zone": "gate",
+ "dome": true
+}

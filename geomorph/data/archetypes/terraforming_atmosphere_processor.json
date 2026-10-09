@@ -1,0 +1,216 @@
+{
+ "name": "Terraforming / atmosphere processor",
+ "group": "Colony",
+ "topology": "stacked",
+ "scales": {
+  "small": {
+   "cols": 2,
+   "rows": 1,
+   "levels": 3
+  },
+  "medium": {
+   "cols": 2,
+   "rows": 2,
+   "levels": 3
+  },
+  "large": {
+   "cols": 3,
+   "rows": 2,
+   "levels": 4
+  }
+ },
+ "environments": [
+  "hostile",
+  "vacuum",
+  "underground"
+ ],
+ "zones": [
+  {
+   "id": "core",
+   "name": "Reactor & processor core",
+   "tags": [
+    "engineering",
+    "power",
+    "refinery"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "bottom",
+   "position": "core",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "quarters"
+   ]
+  },
+  {
+   "id": "cooling",
+   "name": "Cooling plant",
+   "tags": [
+    "engineering",
+    "water"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [
+    "core"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "maint",
+   "name": "Maintenance",
+   "tags": [
+    "workshop"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "core"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "control",
+   "name": "Control room",
+   "tags": [
+    "bridge",
+    "office"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "quarters",
+   "name": "Small crew quarters",
+   "tags": [
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "core"
+   ]
+  },
+  {
+   "id": "shelter",
+   "name": "Emergency shelter",
+   "tags": [
+    "medical",
+    "escape",
+    "airlock"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "store",
+   "name": "Stores",
+   "tags": [
+    "cargo"
+   ],
+   "min": 0,
+   "max": 2,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "coolant",
+   "ventilation"
+  ],
+  "special_volumes": [
+   {
+    "zone": "core",
+    "height": 2,
+    "open_below": false
+   }
+  ]
+ },
+ "text": {
+  "description": [
+   "A decades-long project: a tower of machinery that is slowly making a world breathable."
+  ],
+  "notes": [
+   "The core runs hot. Cooling failures cascade fast."
+  ],
+  "hooks": [
+   {
+    "type": "Sabotage",
+    "text": "An eco-militant faction wants the processor stopped; the party can help or prevent them."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "atmosphere processor",
+ "name_table": "facilities",
+ "entrance_zone": "shelter"
+}

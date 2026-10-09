@@ -355,6 +355,11 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
         _draw_centerlines(painter, project, scale)
     if include_guides:
         _draw_guides(painter, project, level, scale)
+    try:
+        from core import legend
+        legend.draw_export(painter, img.width(), img.height())
+    except Exception:                         # a missing/broken legend must never break an export
+        pass
     painter.end()
     if include_coordinates:
         img = _with_coordinate_border(img, project, level, scale, see_through)

@@ -88,6 +88,8 @@ class MenuOverlay(QWidget):
              "Package the project, its referenced assets, and PNG level renders"),
             ("#  Generate Map…", self.main._open_generator,
              "Build a map from the assets you selected in the library"),
+            ("★  Geomorph Generator…", self.main._open_geomorph,
+             "Build a ship or a site (colony, mine, lab, prison, station…) from the Starship Geomorphs tiles"),
             ("×  Quit", self.main.close, "Exit the application"),
         ]:
             b = QPushButton(label)

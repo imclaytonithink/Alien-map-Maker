@@ -1,0 +1,249 @@
+{
+ "name": "Company town",
+ "group": "Colony",
+ "topology": "street",
+ "scales": {
+  "small": {
+   "blocks": [
+    3,
+    2
+   ]
+  },
+  "medium": {
+   "blocks": [
+    4,
+    3
+   ]
+  },
+  "large": {
+   "blocks": [
+    5,
+    4
+   ]
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "underground"
+ ],
+ "zones": [
+  {
+   "id": "admin",
+   "name": "Admin block",
+   "tags": [
+    "office",
+    "bridge"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "security"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "housing",
+   "name": "Housing blocks",
+   "tags": [
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 2,
+   "max": 8,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "commissary",
+   "name": "Company commissary",
+   "tags": [
+    "cargo",
+    "galley"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [
+    "bar"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "bar",
+   "name": "Bar & rec hall",
+   "tags": [
+    "recreation",
+    "galley"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "clinic",
+   "name": "Clinic",
+   "tags": [
+    "medical"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "security",
+   "name": "Security office",
+   "tags": [
+    "security",
+    "brig"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "admin"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "plant",
+   "name": "Processing plant",
+   "tags": [
+    "refinery",
+    "engineering",
+    "workshop"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "housing",
+    "clinic"
+   ]
+  },
+  {
+   "id": "depot",
+   "name": "Depot",
+   "tags": [
+    "cargo",
+    "vehicle_bay"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "plant"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "plaza",
+   "name": "Plaza",
+   "tags": [
+    "recreation",
+    "concourse"
+   ],
+   "min": 0,
+   "max": 1,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "filler": "ground",
+   "filler_only": true
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Everyone here works for the company, shops at the company store and owes the company money."
+  ],
+  "notes": [
+   "Main street is public. Behind the plant gate, everything needs a company badge."
+  ],
+  "hooks": [
+   {
+    "type": "Investigate",
+    "text": "Workers keep vanishing from the night shift at the processing plant."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "company town",
+ "name_table": "colonies",
+ "entrance_zone": "plaza"
+}

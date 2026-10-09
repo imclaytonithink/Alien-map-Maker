@@ -1,0 +1,212 @@
+{
+ "name": "Factory / shipyard / ship-breaking yard",
+ "group": "Industry",
+ "topology": "campus",
+ "scales": {
+  "small": {
+   "buildings": [
+    6,
+    7
+   ],
+   "levels": 1
+  },
+  "medium": {
+   "buildings": [
+    9,
+    11
+   ],
+   "levels": 1
+  },
+  "large": {
+   "buildings": [
+    12,
+    15
+   ],
+   "levels": 2
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "vacuum"
+ ],
+ "zones": [
+  {
+   "id": "floor",
+   "name": "Production floor",
+   "tags": [
+    "workshop",
+    "cargo",
+    "engineering"
+   ],
+   "min": 1,
+   "max": 3,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "parts",
+   "name": "Parts storage",
+   "tags": [
+    "cargo"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "floor"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "gantry",
+   "name": "Gantry / dock",
+   "tags": [
+    "hangar",
+    "docking"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "floor"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "office",
+   "name": "Offices",
+   "tags": [
+    "office",
+    "bridge"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "crew",
+   "name": "Crew facilities",
+   "tags": [
+    "galley",
+    "recreation",
+    "staterooms"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "scrap",
+   "name": "Scrap yard",
+   "tags": [
+    "waste",
+    "cargo"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "filler": "rubble",
+   "filler_only": true
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Hulls in every state of birth and death. Sparks, noise and cranes that never stop."
+  ],
+  "hooks": [
+   {
+    "type": "Salvage",
+    "text": "A decommissioned warship sits half-stripped in the yard. Its vault is still sealed."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "shipyard",
+ "name_table": "facilities",
+ "entrance_zone": "office",
+ "perimeter": "fence"
+}

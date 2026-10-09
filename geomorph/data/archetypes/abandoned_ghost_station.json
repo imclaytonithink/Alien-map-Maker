@@ -1,0 +1,179 @@
+{
+ "name": "Abandoned / \"ghost\" station",
+ "group": "Wreck",
+ "topology": "ring",
+ "scales": {
+  "small": {
+   "modules": 6
+  },
+  "medium": {
+   "modules": 9
+  },
+  "large": {
+   "modules": 13
+  }
+ },
+ "environments": [
+  "vacuum",
+  "orbital"
+ ],
+ "zones": [
+  {
+   "id": "dock",
+   "name": "Docking",
+   "tags": [
+    "docking",
+    "hangar"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "edge",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "habitat",
+   "name": "Habitat",
+   "tags": [
+    "staterooms",
+    "crew_quarters",
+    "recreation"
+   ],
+   "min": 2,
+   "max": 4,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "command",
+   "name": "Command",
+   "tags": [
+    "bridge",
+    "office"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "medical",
+   "name": "Medical",
+   "tags": [
+    "medical",
+    "lab"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "cargo",
+   "name": "Cargo",
+   "tags": [
+    "cargo"
+   ],
+   "min": 0,
+   "max": 2,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Derelict",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "No distress call, no bodies, no log entries after the third of the month."
+  ],
+  "hooks": [
+   {
+    "type": "Abandoned Facility",
+    "text": "Every personal locker is empty. Every meal tray is full."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "abandoned station",
+ "name_table": "stations",
+ "entrance_zone": "dock",
+ "damage": {
+  "mask": 0.12,
+  "breach": 0.08
+ }
+}

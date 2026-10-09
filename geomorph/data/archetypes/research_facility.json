@@ -1,0 +1,236 @@
+{
+ "name": "Research facility",
+ "group": "Research",
+ "topology": "stacked",
+ "scales": {
+  "small": {
+   "cols": 2,
+   "rows": 2,
+   "levels": 2
+  },
+  "medium": {
+   "cols": 3,
+   "rows": 2,
+   "levels": 3
+  },
+  "large": {
+   "cols": 3,
+   "rows": 3,
+   "levels": 4
+  }
+ },
+ "environments": [
+  "breathable",
+  "underground",
+  "hostile"
+ ],
+ "zones": [
+  {
+   "id": "lab",
+   "name": "Laboratories",
+   "tags": [
+    "lab"
+   ],
+   "min": 2,
+   "max": 6,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "quarters"
+   ]
+  },
+  {
+   "id": "specimen",
+   "name": "Specimen storage",
+   "tags": [
+    "lab",
+    "lowberth",
+    "cargo"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "bottom",
+   "position": "core",
+   "access": "secure",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "quarters"
+   ]
+  },
+  {
+   "id": "office",
+   "name": "Offices",
+   "tags": [
+    "office",
+    "bridge"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "quarantine",
+   "name": "Quarantine",
+   "tags": [
+    "medical",
+    "lowberth",
+    "airlock"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "containment",
+   "prefer_adjacent": [
+    "specimen"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "observation",
+   "name": "Observation",
+   "tags": [
+    "sensors",
+    "recreation"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [
+    "lab"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "quarters",
+   "name": "Staff quarters",
+   "tags": [
+    "staterooms",
+    "crew_quarters",
+    "galley"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "checkpoint",
+   "name": "Security checkpoint",
+   "tags": [
+    "security"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "checkpoint": true
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted",
+   "secure"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "prisoner": [
+   "containment",
+   "secure"
+  ],
+  "specimen": [
+   "containment",
+   "secure",
+   "restricted"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff",
+   "specimen"
+  ],
+  "shafts": [
+   "power",
+   "ventilation",
+   "coolant"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Corporate science behind badge-locked doors. The visible work is routine; the funded work is not."
+  ],
+  "hooks": [
+   {
+    "type": "Cover-up",
+    "text": "Project records have been flagged for deletion. The researchers are being reassigned one by one."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "research facility",
+ "name_table": "facilities",
+ "entrance_zone": "office"
+}

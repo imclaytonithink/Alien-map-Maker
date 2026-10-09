@@ -1,0 +1,235 @@
+{
+ "name": "Surface mining operation",
+ "group": "Industry",
+ "topology": "campus",
+ "scales": {
+  "small": {
+   "buildings": [
+    5,
+    6
+   ],
+   "levels": 1
+  },
+  "medium": {
+   "buildings": [
+    8,
+    10
+   ],
+   "levels": 1
+  },
+  "large": {
+   "buildings": [
+    11,
+    13
+   ],
+   "levels": 2
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "vacuum"
+ ],
+ "zones": [
+  {
+   "id": "pit",
+   "name": "Pit access",
+   "tags": [
+    "cargo",
+    "vehicle_bay"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "filler": "pit",
+   "filler_only": true
+  },
+  {
+   "id": "plant",
+   "name": "Processing plant",
+   "tags": [
+    "refinery",
+    "engineering",
+    "workshop"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "bunk",
+    "mess"
+   ]
+  },
+  {
+   "id": "ore",
+   "name": "Ore storage",
+   "tags": [
+    "cargo"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "plant"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "garage",
+   "name": "Vehicle garage",
+   "tags": [
+    "vehicle_bay",
+    "workshop"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "pit"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "bunk",
+   "name": "Bunkhouse",
+   "tags": [
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 1,
+   "max": 3,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "mess",
+   "name": "Mess",
+   "tags": [
+    "galley",
+    "recreation"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [
+    "bunk"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "office",
+   "name": "Office",
+   "tags": [
+    "office",
+    "bridge"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "bunk",
+    "mess"
+   ]
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "A terraced pit, a roaring plant and a row of cramped bunkhouses."
+  ],
+  "hooks": [
+   {
+    "type": "Investigate",
+    "text": "The latest blast uncovered something in the rock that the foreman wants buried."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "surface mine",
+ "name_table": "mines",
+ "entrance_zone": "office",
+ "perimeter": "fence"
+}

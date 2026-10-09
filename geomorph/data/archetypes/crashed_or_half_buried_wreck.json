@@ -1,0 +1,116 @@
+{
+ "name": "Crashed or half-buried wreck",
+ "group": "Wreck",
+ "topology": "wreck",
+ "scales": {
+  "small": {
+   "tonnage": 400
+  },
+  "medium": {
+   "tonnage": 1000
+  },
+  "large": {
+   "tonnage": 2000
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "underground"
+ ],
+ "zones": [
+  {
+   "id": "bridge",
+   "name": "Bridge section",
+   "tags": [
+    "bridge"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "engineering",
+   "name": "Engineering section",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Derelict",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Torn open on impact and half-swallowed by the terrain."
+  ],
+  "hooks": [
+   {
+    "type": "Rescue",
+    "text": "A beacon pings from the aft section, weeks after the crash."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "crashed wreck",
+ "name_table": "ships",
+ "entrance_zone": "bridge",
+ "damage": {
+  "mask": 0.3,
+  "breach": 0.12,
+  "tilt": true
+ }
+}
