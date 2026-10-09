@@ -118,6 +118,17 @@ dlg.cb_ship_mode.setCurrentIndex(0)
 dlg.generate()
 assert dlg.result.kind == "ship" and dlg.result.grids[0].placed
 assert "Military" in dlg.result.meta["ship_type"]
+# part options: no wings, no guns, exactly 2 escape pods, a chosen nose style, craft overlays on
+dlg.cb_wing.setCurrentIndex(dlg.cb_wing.findData("none"))
+dlg.count_spins["weapons"].setValue(0)
+dlg.count_spins["escape"].setValue(2)
+dlg.cb_nose.setCurrentIndex(dlg.cb_nose.findData("style:Bridge, Rounded Nose"))
+dlg.craft_checks["escape"].setChecked(True)
+dlg.generate()
+placed = dlg.result.grids[0].placed
+assert not [p for p in placed if p.tile.type == "wing"]
+assert not [p for p in placed if p.tile.tags.get("weapons", 0) >= 0.6]
+assert dlg.result.options["craft"] == ["escape"] and dlg.result.options["parts"]["counts"] == {"weapons": 0, "escape": 2}
 
 # ---- tile folder detection --------------------------------------------------
 fake_pack = tempfile.mkdtemp()
@@ -158,6 +169,29 @@ assert ee.overrides[tid]["N"][0] == (before[0] + 1) % 3
 ee._save()
 assert json.load(open(ov))[tid]["N"][0] == (before[0] + 1) % 3
 ee.tile.edges["N"]["cls"] = before                      # leave the shared registry untouched
+
+# ---- symbol legend: toggle on the canvas and in exports ------------------------
+from core import exporter as core_exporter, legend
+legend.STATE.update(path="", show=False, export=False)
+win._toggle_legend_show(True)              # no legend in the library yet -> told why, stays off
+assert not legend.STATE["show"] and shown
+png("Pack/Symbols & Abbreviations.png", 132, 220, "#e8fafa") if False else None
+img = QImage(132, 220, QImage.Format.Format_ARGB32)
+img.fill(QColor("#e8fafa"))
+os.makedirs(os.path.join(store, "Geomorphs"), exist_ok=True)
+assert img.save(os.path.join(store, "Geomorphs", "Symbols & Abbreviations.png"))
+lib.scan(store)
+win._toggle_legend_show(True)
+assert legend.STATE["path"] and legend.STATE["show"] and win.act_legend_show.isChecked()
+win.canvas.grab()                           # paints with the overlay without error
+base = core_exporter.render_level(win.project, win.project.levels[0])
+win._toggle_legend_export(True)
+with_legend = core_exporter.render_level(win.project, win.project.levels[0])
+assert with_legend != base, "legend appears in the export"
+win._toggle_legend_export(False)
+assert core_exporter.render_level(win.project, win.project.levels[0]) == base
+win._toggle_legend_show(False)
+assert not legend.STATE["show"]
 
 dlg.close()
 win._confirm_discard = lambda *a, **k: True

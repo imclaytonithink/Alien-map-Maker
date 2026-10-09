@@ -11,10 +11,12 @@ import base64
 from pathlib import Path
 
 from . import filler as F
+from .overlays import selected_overlays
 from .placement import tile_piece
 from .registry import BORDER_SQUARES, PX_PER_SQUARE
 
 LAYER_TILES, LAYER_FILLER, LAYER_KEY, LAYER_GM = "Geomorph tiles", "Geomorph filler", "Geomorph key", "Geomorph GM only"
+LAYER_CRAFT = "Geomorph craft"
 
 
 def library_resolver(assets):
@@ -105,6 +107,16 @@ def to_canvas(res, cell: float, resolver=None, tile_images=None, filler_dir=None
                 d["asset_path"] = ""
             pieces.append(d)
             n_tiles += 1
+            for rel in selected_overlays(t, (res.options or {}).get("craft")):
+                class _T:
+                    image = rel
+                ov = resolver(_T) if resolver else None
+                if ov is None:
+                    continue
+                od = dict(d, asset_path=ov[0], name=f"{t.number} craft {rel.rsplit('/', 1)[-1][:40]}",
+                          layer_name=LAYER_CRAFT)
+                od.pop("embedded", None)
+                pieces.append(od)
         if filler_dir is not None:
             for f in g.filler:
                 big = max(f["w"], f["h"])

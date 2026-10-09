@@ -2444,6 +2444,8 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
 
         self._draw_rails(painter)
         self._draw_guide_readout(painter)
+        from core import legend
+        legend.draw_overlay(painter, self.rect())
         painter.end()
 
     def _canvas_middle_lines(self):

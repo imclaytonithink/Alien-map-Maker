@@ -169,6 +169,52 @@ class GeomorphDialog(QDialog):
         f.addRow("Orientation", self.cb_orient)
         f.addRow(self.ck_sym)
         f.addRow(self.ck_fins)
+        # ship parts: every part can be left on Auto, chosen, or removed
+        reg = self.registry
+        self.cb_wing = QComboBox()
+        self.cb_wing.addItem("Auto (matched to ship type)", None)
+        self.cb_wing.addItem("No wings", "none")
+        for port, _star in reg.wing_pairs():
+            self.cb_wing.addItem(f"{port.number} {port.title.replace('Wing Port ', '')}"[:70], port.id)
+        self.cb_nose = QComboBox()
+        self.cb_nose.addItem("Auto", None)
+        for st in reg.nose_styles("bridge"):
+            self.cb_nose.addItem(st.replace("Bridge, ", ""), "style:" + st)
+        self.cb_tail = QComboBox()
+        self.cb_tail.addItem("Auto", None)
+        for st in reg.nose_styles("engineering"):
+            self.cb_tail.addItem(st.replace("Engineering, ", ""), "style:" + st)
+        self.cb_trans = QComboBox()
+        self.cb_trans.addItem("Auto", None)
+        self.cb_trans.addItem("None (single-piece nose and tail)", "none")
+        for t in sorted((t for t in reg.tiles.values() if t.type == "trans" and not t.mirror_of), key=lambda t: t.id):
+            self.cb_trans.addItem(f"{t.id}  {t.title.replace('Nose transition ', '')}"[:70], t.id)
+        self.ck_square = QCheckBox("Square shoulders (no corner pieces beside a lone nose/tail)")
+        self.ck_square.setChecked(True)
+        f.addRow(self.ck_square)
+        f.addRow("Wings", self.cb_wing)
+        f.addRow("Nose (bridge)", self.cb_nose)
+        f.addRow("Tail (engineering)", self.cb_tail)
+        f.addRow("Nose/tail transition", self.cb_trans)
+        self.count_spins = {}
+        for tag, label in (("escape", "Escape pods"), ("weapons", "Guns / barbettes"), ("hangar", "Launch bays / hangars"),
+                           ("scoop", "Fuel scoops"), ("vehicle_bay", "Vehicle bays"), ("cargo", "Cargo holds"),
+                           ("medical", "Medical"), ("lab", "Labs"), ("staterooms", "Staterooms"),
+                           ("recreation", "Lounges / recreation"), ("hydroponics", "Hydroponics")):
+            sp = QSpinBox()
+            sp.setRange(-1, 20)
+            sp.setValue(-1)
+            sp.setSpecialValueText("Auto")
+            sp.setToolTip("Auto lets the ship type decide. 0 leaves this part out. A number asks for that many "
+                          "rooms. Escape pods, guns, launch bays and fuel scoops always come in mirrored pairs.")
+            self.count_spins[tag] = sp
+            f.addRow(label, sp)
+        self.craft_checks = {}
+        from geomorph.overlays import CATEGORIES
+        for key, (label, _rx) in CATEGORIES.items():
+            c = QCheckBox("Show: " + label)
+            self.craft_checks[key] = c
+            f.addRow(c)
         self.tabs.addTab(w, "Ship")
         # ---- site ----
         w = QWidget()
@@ -367,9 +413,14 @@ class GeomorphDialog(QDialog):
              "peculiarities": self.sp_pec.value(), "intensity": self.sl_int.value() / 100.0,
              "overlays": [k for k, c in self.overlay_checks.items() if c.isChecked()]}
         if kind == "ship":
+            counts = {t: sp.value() for t, sp in self.count_spins.items() if sp.value() >= 0}
+            parts = {"wing": self.cb_wing.currentData(), "nose": self.cb_nose.currentData(),
+                     "tail": self.cb_tail.currentData(), "transition": self.cb_trans.currentData(), "counts": counts,
+                     "square_shoulders": self.ck_square.isChecked()}
             o.update(ship_type=self.cb_ship_type.currentText(), tonnage=self.sp_tonnage.value(),
                      mode=self.cb_ship_mode.currentData(), orientation=self.cb_orient.currentData(),
-                     symmetric=self.ck_sym.isChecked(), fins=self.ck_fins.isChecked())
+                     symmetric=self.ck_sym.isChecked(), fins=self.ck_fins.isChecked(), parts=parts,
+                     craft=[k for k, c in self.craft_checks.items() if c.isChecked()] or None)
         else:
             o.update(archetype=self.cb_arch.currentData(), scale=self.cb_scale.currentData(),
                      environment=self.cb_env.currentData(), mode=self.cb_site_mode.currentData())

@@ -231,7 +231,7 @@ def check_ships():
             a, b = wings
             assert a.tile.id.endswith("P") and b.tile.id.endswith("S") and a.tile.pair == b.tile.id
             assert (a.w, a.h, a.y) == (b.w, b.h, b.y)
-            mid = ship.PAD + 36 + (ship.choose_dims(2000, True)[0] * 20) / 2
+            mid = ship.PAD + 36 + (ship.choose_dims(2000, True, True, True)[0] * 20) / 2
             assert abs((a.x + a.w / 2) + (b.x + b.w / 2) - 2 * mid) < 1e-6, "mirrored about the centre line"
     # RULES: exactly one nose (bridge) and one tail (engineering) on the centre line; with the transition chain
     # a transition sits between hull and nose; fuel-scoop wings need a fuel nose or tail; mirror files are used
@@ -242,7 +242,7 @@ def check_ships():
         g = r.grids[0]
         ends = [p for p in g.placed if p.tile.type == "end"]
         assert sorted(p.zone.split("#")[0] for p in ends) == ["bridge", "engineering"], [p.zone for p in ends]
-        c = ship.choose_dims(1500, True)[0]
+        c = ship.choose_dims(1500, True, True, True)[0]
         mid = ship.PAD + 36 + c * 10
         for p in ends:
             assert abs(p.x + p.w / 2 - mid) < 1e-6, "nose and tail sit on the centre line"
@@ -271,7 +271,7 @@ def check_ships():
                                             "mode": mode, "symmetric": sym})
                 g = r.grids[0]
                 b = g.bounds()
-                mids = ship.PAD + 36 + ship.choose_dims(2500, sym)[0] * 10
+                mids = ship.PAD + 36 + ship.choose_dims(2500, sym, True, True)[0] * 10
                 ys_stern = max(p.y for p in g.placed if p.tile.type == "end")
                 by = {(round(p.x + p.w / 2, 3), p.y, p.w, p.h): p for p in g.placed}
                 for p in g.placed:
@@ -289,6 +289,27 @@ def check_ships():
     c, rws = ship.choose_dims(1000)
     assert ship.slots_area(ship.hull_slots(c, rws)) // 2 == 1000, "the guide's ~1000-ton sample deck"
     print("ships ok")
+
+
+def check_ship_part_options():
+    from geomorph.overlays import categorize, selected_overlays
+    base = {"kind": "ship", "ship_type": "Military", "tonnage": 2500, "seed": 4}
+    def tiles(parts, **kw):
+        return pipeline.generate(REG, dict(base, parts=parts, **kw)).grids[0].placed
+    assert not [p for p in tiles({"wing": "none"}) if p.tile.type == "wing"]
+    assert not [p for p in tiles({"counts": {"weapons": 0}}) if p.tile.tags.get("weapons", 0) >= 0.6]
+    assert len([p for p in tiles({"counts": {"escape": 2}}) if p.tile.tags.get("escape", 0) >= 0.9]) >= 2
+    assert not [p for p in tiles({"transition": "none"}) if p.tile.type == "trans"]
+    ends = [p.tile.id for p in tiles({"nose": "style:Bridge, Rounded Nose", "transition": "A104-1"}) if p.tile.type == "end"]
+    assert any("Rounded Nose" in e for e in ends), ends
+    wing = REG.wing_pairs()[3][0].id
+    assert any(p.tile.id == wing for p in tiles({"wing": wing}))
+    assert categorize("E700 [Overlay] Gunnery x2, Large Turret.png") == "turrets"
+    assert categorize("101 [100x100] [Overlay] Escape Pod.png") == "escape"
+    assert categorize("103 Air-Raft (Small Cargo).png") == "raft"
+    t = REG.tiles["101"]
+    assert selected_overlays(t, None) == [] and selected_overlays(t, ["escape"]) and not selected_overlays(t, ["fighters"])
+    print("ship part options ok")
 
 
 def check_archetype_files():
@@ -618,6 +639,7 @@ def main():
     check_piece_geometry()
     check_placement()
     check_ships()
+    check_ship_part_options()
     check_archetype_files()
     check_sites()
     check_vertical_alignment()

@@ -473,6 +473,7 @@ class MainWindow(QMainWindow):
         destroy_before_qt_exits(self)
         self._show_launch()
         QTimer.singleShot(0, self._install_bundled_asset_packs)
+        QTimer.singleShot(1500, self._sync_legend)
 
     # ------------------------------------------------------------------
     def _build_ui(self):
@@ -974,6 +975,17 @@ class MainWindow(QMainWindow):
         v = mb.addMenu("&View")
         v.addAction("Canvas size…", self._edit_canvas_size)
         v.addAction("Backdrop (color, floor texture or none)…", self._show_backdrop_settings)
+        v.addSeparator()
+        self.act_legend_show = QAction("Symbol legend on canvas", self)
+        self.act_legend_show.setCheckable(True)
+        self.act_legend_show.setShortcut("F6")
+        self.act_legend_show.setToolTip("Show the Geomorphs 'Symbols & Abbreviations' legend over the canvas")
+        self.act_legend_show.triggered.connect(self._toggle_legend_show)
+        v.addAction(self.act_legend_show)
+        self.act_legend_export = QAction("Include symbol legend in exports", self)
+        self.act_legend_export.setCheckable(True)
+        self.act_legend_export.triggered.connect(self._toggle_legend_export)
+        v.addAction(self.act_legend_export)
         v.addSeparator()
         # Window-style toggles: everything on screen can be switched off.
         self.view_actions = {}
@@ -1864,6 +1876,29 @@ class MainWindow(QMainWindow):
         dlg = GeneratorDialog(self.project, self.library, self.canvas,
                               self._run_generator, self, selection=selection)
         dlg.exec()
+
+    # ---- symbol legend (Geomorphs 'Symbols & Abbreviations') ----
+    def _sync_legend(self, warn=False):
+        from core import legend
+        legend.STATE["path"] = legend.find_in_library(
+            self.library.library, getattr(getattr(self, "_geomorph_dialog", None), "tiles_dir", ""))
+        legend.STATE["show"] = bool(self.settings.value("legend/show", False, bool)) and bool(legend.STATE["path"])
+        legend.STATE["export"] = bool(self.settings.value("legend/export", False, bool)) and bool(legend.STATE["path"])
+        self.act_legend_show.setChecked(legend.STATE["show"])
+        self.act_legend_export.setChecked(legend.STATE["export"])
+        if warn and not legend.STATE["path"]:
+            QMessageBox.information(self, "Symbol legend",
+                                    "The legend image ('Symbols & Abbreviations.png') comes with the Geomorphs ZIP. "
+                                    "Import that ZIP into the library and try again.")
+        self.canvas.update()
+
+    def _toggle_legend_show(self, on):
+        self.settings.setValue("legend/show", bool(on))
+        self._sync_legend(warn=bool(on))
+
+    def _toggle_legend_export(self, on):
+        self.settings.setValue("legend/export", bool(on))
+        self._sync_legend(warn=bool(on))
 
     def _open_geomorph(self, _checked=False):
         """Ships and sites built from the Starship Geomorphs tiles."""

@@ -303,6 +303,15 @@ class Registry:
             t.review = False
 
     # -- queries --------------------------------------------------------
+    def nose_styles(self, role="bridge"):
+        """Style names of the 10x10 nose (bridge) or tail (engineering) ends in the Custom Tiles pack."""
+        out = set()
+        for t in self.tiles.values():
+            if t.type == "end" and t.w == 10 and ":" in t.id and t.tags.get(role, 0) >= 1.0 \
+                    and "[Mirror]" not in t.id:
+                out.add(t.id.split(":", 1)[1])
+        return sorted(out)
+
     def wing_pairs(self, max_w=20, max_h=60):
         """[(port, starboard)] with matching shapes that fit the ship grid."""
         out = []

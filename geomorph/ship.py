@@ -47,7 +47,7 @@ LONG_PREF = {"bridge": 0.0, "sensors": 0.1, "weapons": 0.3, "office": 0.25, "sta
 PAD = 6
 
 
-def hull_slots(C, R, fins=True, chain=False):
+def hull_slots(C, R, fins=True, chain=False, square=False):
     """All slots of a C x R ship: standard block, edge ring, corners, ends, fins."""
     S = 20
     ox, oy = PAD + 36, PAD + 20      # left margin leaves room for wings
@@ -70,8 +70,13 @@ def hull_slots(C, R, fins=True, chain=False):
             continue
         out.append({"kind": "edge", "x": ox - 10, "y": oy + r * S, "w": 10, "h": 20, "out": {"W"}, "row": (r + 0.5) / R, "col": -1})
         out.append({"kind": "edge", "x": ox + C * S, "y": oy + r * S, "w": 10, "h": 20, "out": {"E"}, "row": (r + 0.5) / R, "col": C})
-    for (cx, cy, o, col) in ((ox - 10, oy - 10, {"N", "W"}, -1), (ox + C * S, oy - 10, {"N", "E"}, C),
-                             (ox - 10, oy + R * S, {"S", "W"}, -1), (ox + C * S, oy + R * S, {"S", "E"}, C)):
+    corners = [(ox - 10, oy - 10, {"N", "W"}, -1), (ox + C * S, oy - 10, {"N", "E"}, C),
+               (ox - 10, oy + R * S, {"S", "W"}, -1), (ox + C * S, oy + R * S, {"S", "E"}, C)]
+    if C == 1 and square:
+        # a lone nose/tail end sits flush against the corner pieces and they read as bump-outs beside it:
+        # leave the shoulders square instead (the end piece itself carries the taper)
+        corners = []
+    for (cx, cy, o, col) in corners:
         out.append({"kind": "corner", "x": cx, "y": cy, "w": 10, "h": 10, "out": o,
                     "row": 0.0 if "N" in o else 1.0, "col": col})
     if chain:
@@ -101,7 +106,7 @@ def slots_area(slots):
     return sum(s["w"] * s["h"] for s in slots)
 
 
-def choose_dims(tonnage, symmetric=True, fins=True):
+def choose_dims(tonnage, symmetric=True, fins=True, square=False):
     target = tonnage * 2           # two squares = one ton
     best = None
     for C in range(1, 6):
@@ -110,19 +115,23 @@ def choose_dims(tonnage, symmetric=True, fins=True):
         for R in range(1, 10):
             if R < C:
                 continue
-            a = slots_area(hull_slots(C, R, fins))
+            a = slots_area(hull_slots(C, R, fins, False, square))
             err = abs(a - target) + (0 if R >= C else 50)
             if best is None or err < best[0]:
                 best = (err, C, R)
     return best[1], best[2]
 
 
-def tags_for_slots(slots, ship_type, rng, mode):
+def tags_for_slots(slots, ship_type, rng, mode, counts=None, C=1):
     """Planned: guarantee required rooms, bias function to hull position."""
     cfg = SHIP_TYPES[ship_type]
     need = dict(BASE_REQUIRED)
     for k, v in cfg["extra"].items():
         need[k] = need.get(k, 0) + v
+    counts = {k: v for k, v in (counts or {}).items() if v is not None}
+    for k, v in counts.items():            # user options: an exact number of this part (0 = none at all)
+        need[k] = v
+    banned = {k for k, v in counts.items() if v == 0}
     tags = {i: None for i in range(len(slots))}
     for i, s in enumerate(slots):
         if s.get("role") == "bow":
@@ -141,10 +150,13 @@ def tags_for_slots(slots, ship_type, rng, mode):
         if not open_:
             break
         pref = LONG_PREF.get(tag, 0.5)
-        pick = min(open_, key=lambda i: abs(slots[i]["row"] - pref) + rng.random() * 0.35)
+        pool = open_
+        if tag in PAIRED_TAGS:                 # paired parts need a port/starboard partner slot
+            pool = [i for i in open_ if _partner(slots, i, C) is not None] or open_
+        pick = min(pool, key=lambda i: abs(slots[i]["row"] - pref) + rng.random() * 0.35)
         tags[pick] = [tag]
         open_.remove(pick)
-    palette = cfg["palette"]
+    palette = {k: v for k, v in cfg["palette"].items() if k not in banned} or {"staterooms": 1}
     names = list(palette)
     for i in open_:
         row = slots[i]["row"]
@@ -164,17 +176,49 @@ def _allowed(slot):
 
 
 def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="planned", symmetric=True,
-                  fins=True, orientation="N", condition="Average"):
-    """Build a ship. Returns ``(grid, info)`` where ``grid`` is a LevelGrid."""
+                  fins=True, orientation="N", condition="Average", parts=None):
+    """Build a ship. Returns ``(grid, info)`` where ``grid`` is a LevelGrid.
+
+    ``parts`` (all optional) are user choices: ``wing`` ("none" or a port tile id), ``nose``/``tail`` (tile ids),
+    ``transition`` ("none" or a tile id) and ``counts`` {tag: exact number or None for auto, 0 for none}.
+    """
+    parts = parts or {}
+    counts = parts.get("counts") or {}
     if ship_type not in SHIP_TYPES:
         ship_type = "Merchant"
-    C, R = choose_dims(tonnage, symmetric, fins)
+    C, R = choose_dims(tonnage, symmetric, fins, parts.get("square_shoulders", True))
+    wing_opt = parts.get("wing")
+    if wing_opt == "none":
+        fins = False
     pairs = registry.wing_pairs() if fins else []
     wing = _choose_wings(rng, pairs, ship_type) if pairs else None
+    if wing_opt and wing_opt != "none":
+        pick_ = [p for p in registry.wing_pairs() if p[0].id == wing_opt]
+        if pick_:
+            pairs, wing = pick_, pick_[0]
+    fixed_roles = {}
+    style = {}
+    for role, key in (("bow", "nose"), ("stern", "tail")):
+        v = parts.get(key)
+        if v in registry.tiles:
+            fixed_roles[role] = registry.tiles[v]
+        elif isinstance(v, str) and v.startswith("style:"):       # e.g. "style:Rounded Nose": any tile of that style
+            style[role] = v[6:].lower()
+    tr_opt = parts.get("transition")
+    if tr_opt in registry.tiles:
+        fixed_roles["bow_t"] = fixed_roles["stern_t"] = registry.tiles[tr_opt]
     have_chain = any(t.type == "trans" for t in registry.tiles.values()) and \
         any(t.type == "end" and t.w == 10 for t in registry.tiles.values())
     chain = have_chain and rng.random() < 0.5
-    slots = hull_slots(C, R, fins and not pairs, chain)
+    if tr_opt == "none":
+        chain = False
+    elif tr_opt in registry.tiles or any(t.w == 10 for t in fixed_roles.values()):
+        chain = have_chain
+    if style:
+        chain = have_chain
+    if any(t.w == 20 for r_, t in fixed_roles.items() if r_ in ("bow", "stern")):
+        chain = False
+    slots = hull_slots(C, R, fins and not pairs, chain, parts.get("square_shoulders", True))
     # RULE: fuel-scoop wings need a fuel nose or tail (a fuel-tagged transition on the bow or stern)
     fuel_end = None
     if chain and wing is not None and wing[0].tags.get("fuel", 0) >= 0.5:
@@ -184,7 +228,8 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
     if mode == "random":
         tags = {i: None for i in range(len(slots))}
     else:
-        tags = tags_for_slots(slots, ship_type, rng, mode)
+        tags = tags_for_slots(slots, ship_type, rng, mode, counts, C)
+    banned = {k for k, v in counts.items() if v == 0}
     for i, sl in enumerate(slots):
         if sl.get("role") in ("bow_t", "stern_t"):
             tags[i] = ["fuel"] if (fuel_end == sl["role"] and mode != "random") else ([] if mode == "random" else ["multipurpose"])
@@ -228,6 +273,12 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
                 if best is not None:
                     pick = (best[3], best[1], best[2])
         rej = drive_rejector(s)
+        if banned:
+            base0 = rej
+            rej = (lambda tile, b=base0: any(tile.tags.get(x, 0) >= 0.6 for x in banned) or (b is not None and b(tile)))
+        if s.get("role") in style:
+            base1 = rej
+            rej = (lambda tile, b=base1, want=style[s["role"]]: want not in tile.id.lower() or (b is not None and b(tile)))
         pr = _partner(slots, i, C) if s["kind"] != "end" else None
         if pr is not None and pr in placed and not is_paired(placed[pr].tile):
             base_rej = rej                       # partner is an ordinary part: this side must not be a paired part
@@ -237,7 +288,7 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
                 pick = _selective_pick(picker, grid, s, t, ttype, allowed, rng, rej)
             else:
                 pick = picker.choose(grid, s["x"], s["y"], s["w"], s["h"], t, ttype,
-                                     allowed_orients=allowed, reject=rej)
+                                     allowed_orients=allowed, reject=rej, fixed=fixed_roles.get(s.get("role")))
         if pick is None:
             issues.append(f"no tile fits {s['kind']} slot at {s['x']},{s['y']}")
             continue

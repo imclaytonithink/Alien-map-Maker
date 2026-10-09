@@ -31,6 +31,11 @@ class ExportDialog(QDialog):
             if index >= 0:
                 self.cmb_preset.setCurrentIndex(index)
 
+    def _legend_toggled(self, on):
+        parent = self.parent()
+        if hasattr(parent, "_toggle_legend_export"):
+            parent._toggle_legend_export(on)
+
     def _build(self):
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -108,6 +113,14 @@ class ExportDialog(QDialog):
             "one square).")
         self.chk_coordinates.setChecked(bool(getattr(self.project, "export_coordinates", False)))
         form.addRow(self.chk_coordinates)
+        from core import legend
+        self.chk_legend = QCheckBox("Include the symbol legend (Geomorphs 'Symbols & Abbreviations')")
+        self.chk_legend.setEnabled(bool(legend.STATE["path"]))
+        self.chk_legend.setToolTip("Adds the legend in a corner of the exported map. Needs the Geomorphs ZIP in the "
+                                   "library (it is found there by name).")
+        self.chk_legend.setChecked(bool(legend.STATE["export"]))
+        self.chk_legend.toggled.connect(self._legend_toggled)
+        form.addRow(self.chk_legend)
 
         left_out = sorted({layer.name for level in self.project.levels
                            for layer in level.layers

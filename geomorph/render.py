@@ -35,6 +35,13 @@ class TileImages:
         self.loader = loader          # loader(tile) -> RGBA image at THUMB_PPS (tests)
         self._mem = {}
 
+    def thumb_rel(self, rel: str):
+        """Thumbnail of any pack image by relative path (used for overlays)."""
+        class _T:                       # minimal tile-like holder
+            id = "ov:" + rel
+            image = rel
+        return self.thumb(_T)
+
     def thumb(self, tile) -> Image.Image | None:
         if tile.id in self._mem:
             return self._mem[tile.id]
@@ -42,7 +49,7 @@ class TileImages:
         if self.loader is not None:
             im = self.loader(tile)
         else:
-            safe = tile.id.replace("/", "_")
+            safe = tile.id.replace("/", "_").replace(":", "_")
             cp = self.cache / f"{safe}.png"
             if cp.exists():
                 im = Image.open(cp).convert("RGBA")
@@ -134,6 +141,7 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
             continue
         layer.alpha_composite(t, (bx0 - border, by0 - border)) if bx0 - border >= 0 and by0 - border >= 0 \
             else _paste_clipped(layer, t, bx0 - border, by0 - border)
+        _draw_craft(res, p, layer, images, x0, y0, pps)
     d = ImageDraw.Draw(layer)
     for f in g.filler:
         if f["kind"] in TOP_KINDS or f["kind"] == "void":
@@ -160,6 +168,26 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
     dr.rectangle((int(pps) + sq, ly, int(pps) + 2 * sq, ly + sq), outline=F.LINE)
     dr.text((int(pps) + 2 * sq + 6, ly + 2), "= 1 TON  (5 ft squares)", fill=F.LINE, font=_font(max(8, int(pps * 0.8))))
     return im
+
+
+def _draw_craft(res, p, layer, images, x0, y0, pps):
+    """Optional craft/vehicle overlays on a tile (``options['craft']`` lists the categories)."""
+    from .overlays import selected_overlays
+    craft = (res.options or {}).get("craft")
+    for rel in selected_overlays(p.tile, craft):
+        th = images.thumb_rel(rel)
+        if th is None:
+            continue
+        t = th
+        scale = pps / THUMB_PPS
+        if abs(scale - 1) > 1e-6:
+            t = t.resize((max(1, int(t.width * scale)), max(1, int(t.height * scale))), Image.LANCZOS)
+        if p.o.mirror:
+            t = t.transpose(Image.FLIP_LEFT_RIGHT)
+        if p.o.rot:
+            t = t.transpose({90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[p.o.rot])
+        border = int(BORDER_SQUARES * pps)
+        _paste_clipped(layer, t, int((p.x - x0) * pps) - border, int((p.y - y0) * pps) - border)
 
 
 def _paste_clipped(dst, src, x, y):

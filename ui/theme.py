@@ -43,6 +43,34 @@ def theme_colors(mode: str, accent: str = DEFAULT_ACCENT) -> dict[str, str]:
     }
 
 
+_ARROW_DIR = None
+
+
+def _arrow_png(direction: str, color: str) -> str:
+    """Path of a small arrow PNG (drawn once per colour) for the spin-box buttons."""
+    import os
+    import tempfile
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QImage, QPolygonF
+    global _ARROW_DIR
+    if _ARROW_DIR is None:
+        _ARROW_DIR = tempfile.mkdtemp(prefix="sceneboard-arrows-")
+    path = os.path.join(_ARROW_DIR, f"{direction}_{color.strip('#')}.png")
+    if not os.path.exists(path):
+        img = QImage(16, 16, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setBrush(QColor(color))
+        p.setPen(Qt.PenStyle.NoPen)
+        pts = [QPointF(3, 11), QPointF(13, 11), QPointF(8, 4)] if direction == "up" else \
+            [QPointF(3, 5), QPointF(13, 5), QPointF(8, 12)]
+        p.drawPolygon(QPolygonF(pts))
+        p.end()
+        img.save(path)
+    return path.replace("\\", "/")
+
+
 def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
                      mode: str = "alien") -> str:
     """Build the application-wide Qt stylesheet for dark, light, or Alien mode.
@@ -120,6 +148,35 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT, text_scale: float = 1.0,
         image: none; border-left: 4px solid transparent;
         border-right: 4px solid transparent; border-top: 5px solid {c['accent']};
         margin-right: 6px;
+    }}
+    QSpinBox, QDoubleSpinBox {{
+        padding-right: 34px; min-height: 22px;
+    }}
+    QSpinBox::up-button, QDoubleSpinBox::up-button,
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{
+        subcontrol-origin: border; width: 30px;
+        background: {c['panel3']}; border-left: 1px solid {c['border']};
+    }}
+    QSpinBox::up-button, QDoubleSpinBox::up-button {{
+        subcontrol-position: top right; border-top-right-radius: {radius};
+        border-bottom: 1px solid {c['border']};
+    }}
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{
+        subcontrol-position: bottom right; border-bottom-right-radius: {radius};
+    }}
+    QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+    QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+        background: {c['hover']}; border-left: 1px solid {c['border_hot']};
+    }}
+    QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,
+    QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {{
+        background: {c['selection']};
+    }}
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+        image: url({_arrow_png("up", c['accent'])}); width: 14px; height: 14px;
+    }}
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+        image: url({_arrow_png("down", c['accent'])}); width: 14px; height: 14px;
     }}
     QComboBox QAbstractItemView {{
         background: {c['panel']}; border: 1px solid {c['border_hot']};
