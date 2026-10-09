@@ -458,9 +458,11 @@ def check_grouping_and_smart_decor():
                 checked += 1
     assert checked > 40, checked
     # a ward gets medical beds, cargo gets crates, a cell gets bunks and brig fixtures
-    res = pipeline.generate(REG, {"kind": "ship", "ship_type": "Medical / Rescue", "tonnage": 3000, "seed": 4,
-                                  "decor": {"enabled": True, "density": 0.9}})
-    names = [(res.zones[i["zone"]].base, syms[i["sym"]].name) for i in res.decor]
+    names = []
+    for seed in range(1, 9):
+        res = pipeline.generate(REG, {"kind": "ship", "ship_type": "Medical / Rescue", "tonnage": 3000, "seed": seed,
+                                      "decor": {"enabled": True, "density": 0.9}})
+        names += [(res.zones[i["zone"]].base, syms[i["sym"]].name) for i in res.decor]
     assert any(b == "medical" and n.startswith("Medical Bed") for b, n in names), "wards have medical beds"
     assert not any(b == "cargo" and n.startswith(("Bed", "Medical Bed")) for b, n in names)
     # stair and lift cores are never furnished
