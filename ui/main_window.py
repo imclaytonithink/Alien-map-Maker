@@ -1836,7 +1836,9 @@ class MainWindow(QMainWindow):
     def _export_tts(self):
         from ui.export_dialog import ExportDialog
         ExportDialog(self.project, self.canvas, self, file_format="png",
-                     default_preset="Tabletop Sim (2048px)").exec()
+                     default_preset=("Tabletop Sim (sharp 100px/sq, in sections)"
+                                     if self.project.canvas_w / max(1, self.project.cell_size) > 30
+                                     else "Tabletop Sim (2048px)")).exec()
 
     def export_defaults(self) -> tuple[str, str]:
         """(base file name, folder) for export dialogs: named after the map, in
