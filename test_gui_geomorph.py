@@ -2,6 +2,7 @@
 archetype editor and the edge editor (offscreen Qt, synthetic tile images)."""
 import json
 import os
+from pathlib import Path
 import sys
 import tempfile
 
@@ -212,6 +213,84 @@ win._toggle_legend_export(False)
 assert core_exporter.render_level(win.project, win.project.levels[0]) == base
 win._toggle_legend_show(False)
 assert not legend.STATE["show"]
+
+# ---- scenarios, presets, live preview, lock / re-roll, gap warning ---------------
+dlg.user_dir = Path(tempfile.mkdtemp(prefix="geo-user-"))
+dlg._fill_presets()
+names = [dlg.cb_preset.itemText(i) for i in range(dlg.cb_preset.count())]
+assert any(n.startswith("Scenario: ") for n in names) and len(names) >= 8, names
+_set = dlg.cb_preset.findText("Scenario: Prison riot")
+dlg.cb_preset.setCurrentIndex(_set)
+dlg._apply_preset()
+assert dlg.tabs.currentIndex() == 1 and dlg.cb_arch.currentData() == "Prison / penal colony"
+assert dlg.cb_incident.currentData() == "struggle" and dlg.overlay_checks["lockdown"].isChecked()
+assert dlg.result is not None and any(h["type"] == "scenario" for h in dlg.result.text["hooks"])
+assert dlg.options()["decor"]["incident"] == "struggle"
+dlg._scenario_hooks = []
+# save / apply / delete my own preset
+from PyQt6.QtWidgets import QInputDialog
+QInputDialog.getText = staticmethod(lambda *a, **k: ("Mine", True))
+dlg.sl_decor.setValue(77)
+dlg._save_preset()
+assert dlg.cb_preset.currentData() == "user:Mine"
+dlg.sl_decor.setValue(20)
+dlg._apply_preset()
+assert dlg.sl_decor.value() == 77, "preset restores the amount slider"
+dlg._delete_preset()
+assert dlg.cb_preset.findData("user:Mine") < 0
+# ship scenario round-trips through apply_options
+dlg.cb_preset.setCurrentIndex(dlg.cb_preset.findText("Scenario: Derelict with a nest"))
+dlg._apply_preset()
+assert dlg.tabs.currentIndex() == 0 and dlg.cb_cond.currentData() == "Derelict" and dlg.sp_tonnage.value() == 2000
+# live preview regenerates after an option changes
+before_result = dlg.result
+dlg.ck_live.setChecked(True)
+dlg.sp_tonnage.setValue(1500)
+assert dlg._live_timer.isActive()
+dlg._live_timer.stop()
+dlg._live_fire()
+assert dlg.result is not before_result and dlg.options()["tonnage"] == 1500
+dlg.ck_live.setChecked(False)
+# click a tile -> selected; lock it; re-rolls keep it
+res = dlg.result
+g0 = res.grids[0]
+cand = next(p for p in g0.placed if p.zone and p.tile.type == "standard")
+from geomorph import render as _r
+bx0, by0, _a, _b = _r.shared_bounds(res)
+dlg.level_index = 0
+dlg._preview_clicked(int((cand.x + 1 - bx0) * 8), int(24 + (cand.y + 1 - by0) * 8))
+assert dlg.cb_zone.currentData() == cand.zone and dlg.selected_zone == cand.zone
+dlg.ck_lock.setChecked(True)
+assert cand.zone in dlg.locked
+locked_tile = cand.tile.id
+for _ in range(4):
+    dlg._reroll_all()
+now = next(p for p in res.grids[0].placed if p.zone == cand.zone)
+assert now.tile.id == locked_tile, "locked tile survives re-rolls"
+dlg._reroll_level()
+assert "tile(s) changed" in dlg.lbl_status.text()
+dlg._show_level()
+assert not dlg.preview.pixmap().isNull()
+# editable room notes flow into the exports; player version stays free of GM text
+assert dlg.lst_notes.count() == len(res.key)
+dlg.lst_notes.setCurrentRow(0)
+dlg.ed_note_gm.setPlainText("GM ONLY: the vent leads to the nest.")
+dlg.ed_note_player.setPlainText("A quiet corridor.")
+assert res.key[0]["text"].startswith("GM ONLY") and res.key[0]["player"] == "A quiet corridor."
+assert "GM ONLY" in dlg.txt_key.toPlainText()
+from geomorph import exporter as _ex
+pk = _ex.to_package(res, gm=False)
+assert "GM ONLY" not in str(pk) and pk["key"][0]["text"] == "A quiet corridor."
+assert "GM ONLY" in str(_ex.to_package(res, gm=True))
+dlg._preview_clicked(int((cand.x + 1 - bx0) * 8), int(24 + (cand.y + 1 - by0) * 8))
+assert dlg.lst_notes.currentRow() >= 0
+# gap warning label follows the result
+res.gaps = {"Test zone": "no tile"}
+dlg._generated(res, None)
+assert dlg.lbl_gaps.isVisibleTo(dlg) and "Test zone" in dlg.lbl_gaps.text()
+res.gaps = {}
+dlg._generated(res, None)
+assert not dlg.lbl_gaps.isVisibleTo(dlg)
 
 dlg.close()
 win._confirm_discard = lambda *a, **k: True

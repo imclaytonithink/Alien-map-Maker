@@ -1,0 +1,242 @@
+{
+ "scenarios": [
+  {
+   "name": "Derelict with a nest",
+   "tab": "ship",
+   "description": "A drifting wreck, power out, something breeding in the dark.",
+   "options": {
+    "ship_type": "Merchant",
+    "tonnage": 2000,
+    "condition": "Derelict",
+    "overlays": [
+     "power_failure",
+     "threat",
+     "breach"
+    ],
+    "intensity": 0.6,
+    "decor": {
+     "enabled": true,
+     "density": 0.6,
+     "incident": "overrun",
+     "where": "all",
+     "exterior": false
+    }
+   },
+   "hooks": [
+    "Resin-coated bulkheads lead toward a warm, humid hold. Whatever grew here is still growing.",
+    "The flight recorder shows the last crew sealing themselves in the cargo bay from the outside."
+   ]
+  },
+  {
+   "name": "Colony under siege",
+   "tab": "site",
+   "description": "A frontier colony that stopped answering the relay.",
+   "options": {
+    "archetype": "Frontier colony outpost",
+    "scale": "medium",
+    "environment": "hostile",
+    "condition": "Disrepair",
+    "overlays": [
+     "lockdown",
+     "threat"
+    ],
+    "intensity": 0.6,
+    "decor": {
+     "enabled": true,
+     "density": 0.6,
+     "incident": "overrun",
+     "where": "all",
+     "exterior": true
+    }
+   },
+   "hooks": [
+    "The perimeter lights are on but nobody is at the gate. Barricades face inward.",
+    "A child's voice repeats a single call-sign on the colony band."
+   ]
+  },
+  {
+   "name": "Prison riot",
+   "tab": "site",
+   "description": "Cell blocks in lockdown, the guards gone quiet.",
+   "options": {
+    "archetype": "Prison / penal colony",
+    "scale": "medium",
+    "environment": "breathable",
+    "condition": "Average",
+    "overlays": [
+     "lockdown",
+     "battle"
+    ],
+    "intensity": 0.6,
+    "decor": {
+     "enabled": true,
+     "density": 0.55,
+     "incident": "struggle",
+     "where": "all",
+     "exterior": true
+    }
+   },
+   "hooks": [
+    "Half the cell doors are open from the inside.",
+    "The warden's office is locked, and someone is still using the intercom."
+   ]
+  },
+  {
+   "name": "Corporate black site",
+   "tab": "site",
+   "description": "A secret lab that was never on any registry.",
+   "options": {
+    "archetype": "Black site / secret corporate lab",
+    "scale": "medium",
+    "environment": "underground",
+    "condition": "Top of the Line",
+    "overlays": [
+     "quarantine",
+     "secrets"
+    ],
+    "intensity": 0.5,
+    "decor": {
+     "enabled": true,
+     "density": 0.5,
+     "incident": "none",
+     "where": "all",
+     "exterior": false
+    }
+   },
+   "hooks": [
+    "Every specimen tank is empty. The cleaning logs say otherwise.",
+    "A sealed vault holds the only copy of the project file, and a long list of names."
+   ]
+  },
+  {
+   "name": "Quarantine station",
+   "tab": "site",
+   "description": "Sealed wards and a hypersleep vault. Nobody was supposed to wake.",
+   "options": {
+    "archetype": "Quarantine station / cryo (hypersleep) vault",
+    "scale": "medium",
+    "environment": "vacuum",
+    "condition": "Sleeper",
+    "overlays": [
+     "quarantine",
+     "power_failure",
+     "threat"
+    ],
+    "intensity": 0.55,
+    "decor": {
+     "enabled": true,
+     "density": 0.5,
+     "incident": "struggle",
+     "where": "overlay",
+     "exterior": false
+    }
+   },
+   "hooks": [
+    "One sleeper pod is open and still warm.",
+    "The quarantine order was signed by someone who left the company years ago."
+   ]
+  },
+  {
+   "name": "Abandoned mining colony",
+   "tab": "site",
+   "description": "Deep shafts, stripped stores, and a headframe that still hums.",
+   "options": {
+    "archetype": "Deep mine",
+    "scale": "medium",
+    "environment": "underground",
+    "condition": "Scrap",
+    "overlays": [
+     "power_failure",
+     "salvage",
+     "threat"
+    ],
+    "intensity": 0.6,
+    "decor": {
+     "enabled": true,
+     "density": 0.5,
+     "incident": "ransacked",
+     "where": "random",
+     "exterior": false
+    }
+   },
+   "hooks": [
+    "The lift works. Nobody can say who is sending it down.",
+    "The deepest level is not on the survey."
+   ]
+  },
+  {
+   "name": "Orbital station adrift",
+   "tab": "site",
+   "description": "A ghost station with its lights on and its crew accounted for. Mostly.",
+   "options": {
+    "archetype": "Abandoned / \"ghost\" station",
+    "scale": "medium",
+    "environment": "vacuum",
+    "condition": "Derelict",
+    "overlays": [
+     "breach",
+     "power_failure"
+    ],
+    "intensity": 0.5,
+    "decor": {
+     "enabled": true,
+     "density": 0.5,
+     "incident": "struggle",
+     "where": "random",
+     "exterior": false
+    }
+   },
+   "hooks": [
+    "Docking rings 2 and 3 are missing from the structure but present on the manifest."
+   ]
+  },
+  {
+   "name": "Military outpost, cut off",
+   "tab": "site",
+   "description": "A garrison that fought something it could not stop.",
+   "options": {
+    "archetype": "Military base / garrison",
+    "scale": "medium",
+    "environment": "hostile",
+    "condition": "Disrepair",
+    "overlays": [
+     "lockdown",
+     "battle"
+    ],
+    "intensity": 0.6,
+    "decor": {
+     "enabled": true,
+     "density": 0.55,
+     "incident": "overrun",
+     "where": "all",
+     "exterior": true
+    }
+   },
+   "hooks": [
+    "The armoury is empty and the sentry guns are pointing at the barracks."
+   ]
+  },
+  {
+   "name": "Tidy corporate ship",
+   "tab": "ship",
+   "description": "A well-kept merchant, no trouble at all. Suspiciously clean.",
+   "options": {
+    "ship_type": "Merchant",
+    "tonnage": 1000,
+    "condition": "Well Maintained",
+    "overlays": [],
+    "intensity": 0.3,
+    "decor": {
+     "enabled": true,
+     "density": 0.5,
+     "incident": "none",
+     "where": "all",
+     "exterior": false
+    }
+   },
+   "hooks": [
+    "The cargo manifest does not match the cargo."
+   ]
+  }
+ ]
+}

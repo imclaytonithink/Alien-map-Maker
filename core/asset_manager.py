@@ -258,6 +258,57 @@ def _fingerprint(entries) -> str:
     return digest.hexdigest()
 
 
+_DIMS_CACHE: dict | None = None
+_DIMS_DIRTY = False
+
+
+def _dims_cache_file() -> str:
+    base = os.environ.get("SCENEBOARD_PX_CACHE") or os.path.join(
+        os.path.expanduser("~"), ".cache", "sceneboard_px")
+    return os.path.join(base, "image_sizes.json")
+
+
+def _cached_dimensions(path: str) -> tuple[int, int]:
+    """Image size via a small on-disk memo keyed by file size and mtime, so a
+    relaunch doesn't reopen every file in a big library."""
+    global _DIMS_CACHE, _DIMS_DIRTY
+    if _DIMS_CACHE is None:
+        try:
+            import json
+            with open(_dims_cache_file(), encoding="utf-8") as fh:
+                _DIMS_CACHE = json.load(fh)
+        except (OSError, ValueError):
+            _DIMS_CACHE = {}
+    try:
+        st = os.stat(path)
+    except OSError:
+        return 0, 0
+    entry = _DIMS_CACHE.get(path)
+    if entry and entry[0] == st.st_mtime_ns and entry[1] == st.st_size:
+        return entry[2], entry[3]
+    w, h = _image_dimensions(path)
+    if w and h:
+        _DIMS_CACHE[path] = [st.st_mtime_ns, st.st_size, w, h]
+        _DIMS_DIRTY = True
+    return w, h
+
+
+def save_dimension_cache() -> None:
+    global _DIMS_DIRTY
+    if not _DIMS_DIRTY or _DIMS_CACHE is None:
+        return
+    try:
+        import json
+        target = _dims_cache_file()
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(_DIMS_CACHE, fh)
+        os.replace(target + ".tmp", target)
+        _DIMS_DIRTY = False
+    except OSError:
+        pass
+
+
 class AssetLibrary:
     def __init__(self, root: str = ""):
         self.root = root
@@ -298,6 +349,7 @@ class AssetLibrary:
                 if fn.lower().endswith(SUPPORTED_EXTS):
                     self._add(os.path.join(dirpath, fn), rel)
         self._merge_hidden()
+        save_dimension_cache()
         self._scan_complete = True
 
     def adopt_scan(self, snapshot: "AssetLibrary") -> None:
@@ -320,7 +372,7 @@ class AssetLibrary:
         size = parse_size_from_name(os.path.splitext(name)[0])
         rel = os.path.relpath(full, self.root).replace(os.sep, "/")
         folder = "." if rel_folder in (".", "") else rel_folder.replace(os.sep, "/")
-        width, height = _image_dimensions(full)
+        width, height = _cached_dimensions(full)
         is_overlay = "overlay" in rel.lower()
         return Asset(path=rel, name=name, folder=folder,
                      size=size, is_overlay=is_overlay,

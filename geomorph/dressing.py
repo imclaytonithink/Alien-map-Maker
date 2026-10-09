@@ -145,6 +145,31 @@ def apply_overlays(res, rng, enabled=None, intensity=0.5, arch=None):
 
 
 # ---------------------------------------------------------------------------
+STATE_TEXT = {"lockdown": "LOCKDOWN: doors sealed, access only by override.",
+              "power_failure": "POWER OUT: dark, no lifts or electronic doors.",
+              "quarantine": "QUARANTINE: sealed, contamination protocols active."}
+
+
+def _room_detail(res, zone_id):
+    """What the GM should know about one room: state overlays, contents, threats and secrets."""
+    states = [k for k in ("lockdown", "power_failure", "quarantine") if zone_id in (res.overlays or {}).get(k, [])]
+    cats = {}
+    for it in (getattr(res, "decor", None) or []):
+        if it.get("zone") == zone_id and it.get("kind") == "item":
+            cats[it.get("cat", "equipment")] = cats.get(it.get("cat", "equipment"), 0) + 1
+    contents = [f"{n}x {c}" for c, n in sorted(cats.items(), key=lambda kv: -kv[1])[:6]]
+    threats = [m.get("label", "threat") for m in res.markers if m.get("type") == "threat" and m.get("zone") == zone_id]
+    secrets = [m.get("label", "secret") for m in res.markers if m.get("type") == "secret" and m.get("zone") == zone_id]
+    parts = [STATE_TEXT[k] for k in states]
+    if contents:
+        parts.append("Furnished with: " + ", ".join(contents) + ".")
+    if threats:
+        parts.append("THREAT: " + "; ".join(threats) + ".")
+    if secrets:
+        parts.append("SECRET: " + "; ".join(secrets) + ".")
+    return {"states": states, "contents": contents, "threats": threats, "secrets": secrets, "gm": " ".join(parts)}
+
+
 def build_key(res, rng, arch=None):
     """Numbered key: one entry per room tile/zone, then vertical and utility entries."""
     key = []
@@ -166,8 +191,14 @@ def build_key(res, rng, arch=None):
             rooms = ", ".join(p.tile.rooms[:8]) if p.tile.rooms else ""
             text = f"{sentence}{access} {('Contains: ' + rooms + '.') if rooms else ''} Condition: {cond}. {cond_notes.get(cond, '')}".strip()
             title = z.name if z is not None and getattr(z, "name", None) else p.tile.title
+            detail = _room_detail(res, p.zone)
+            if detail["gm"]:
+                text = f"{text} {detail['gm']}"
             key.append({"n": n, "level": g.index, "x": p.x + p.w / 2.0, "y": p.y + p.h / 2.0, "title": title,
-                        "text": text, "zone": p.zone, "tile": p.tile.id})
+                        "text": text, "zone": p.zone, "tile": p.tile.id,
+                        "player": (f"{sentence} Marked on the map: {rooms}." if rooms else sentence),
+                        "states": detail["states"], "contents": detail["contents"],
+                        "threats": detail["threats"], "secrets": detail["secrets"]})
         for f in g.filler:
             if f["kind"] in ("pad", "pit", "dome", "building") and f.get("label"):
                 n += 1

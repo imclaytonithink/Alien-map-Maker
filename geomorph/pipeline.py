@@ -176,3 +176,31 @@ def reroll_zone(res: Result, zone_id: str, seed=None):
         if k.get("zone") == zone_id:
             k["tile"] = tile.id
     return tile.id != target.tile.id
+
+
+def _fixed_zone_ids(res: Result) -> set:
+    """Zones whose tile must not change: stair/lift cores, tall-room voids."""
+    out = set()
+    lay = res.layout
+    for s in (getattr(lay, "slots", None) or []):
+        if s.zone is not None and (s.role or s.fixed_tile is not None or s.reserved):
+            out.add(s.zone.id)
+    return out
+
+
+def reroll_zones(res: Result, zone_ids, seed=None) -> int:
+    """Re-pick the tile of every listed zone; returns how many changed."""
+    rng = random.Random(coerce_seed(seed if seed is not None else random.random()))
+    changed = 0
+    for zid in zone_ids:
+        if reroll_zone(res, zid, seed=rng.random()):
+            changed += 1
+    return changed
+
+
+def reroll_level(res: Result, level_index: int, locked=(), seed=None) -> int:
+    """Re-roll every tile on one level except locked ones and fixed cores."""
+    skip = set(locked) | _fixed_zone_ids(res)
+    g = res.grids[level_index]
+    ids = [p.zone for p in g.placed if p.zone and p.zone not in skip and p.tile.type == "standard"]
+    return reroll_zones(res, ids, seed)

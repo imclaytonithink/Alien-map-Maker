@@ -11,10 +11,10 @@ import json
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QStandardPaths, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QStandardPaths, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+    QAbstractSpinBox, QCheckBox, QComboBox, QDialog, QListWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget,
     QVBoxLayout, QWidget,
 )
@@ -89,6 +89,24 @@ def _help(text, colors):
     return label
 
 
+class _ClickLabel(QLabel):
+    """Preview label that reports where it was clicked."""
+    clicked = pyqtSignal(int, int)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(int(e.position().x()), int(e.position().y()))
+        super().mousePressEvent(e)
+
+
+def _set_combo(cb, data):
+    i = cb.findData(data)
+    if i < 0 and isinstance(data, str):
+        i = cb.findText(data)
+    if i >= 0:
+        cb.setCurrentIndex(i)
+
+
 class GeomorphDialog(QDialog):
     def __init__(self, main, parent=None, sync=False):
         super().__init__(parent or main)
@@ -117,8 +135,14 @@ class GeomorphDialog(QDialog):
         self.images = None
         self.job = None
         self.level_index = 0
+        self.locked = set()                 # zone ids kept by every re-roll
+        self.selected_zone = None
+        self._applying = False
+        self._live_pending = False
+        self._scenario_hooks = []
         self._build()
         self._reload_archetypes()
+        self._wire_live_preview()
         self._set_tiles_dir(self.settings.value("geomorph/tiles_dir", "", str) or self._autodetect())
 
     # ------------------------------------------------------------------
@@ -151,6 +175,25 @@ class GeomorphDialog(QDialog):
         self.lbl_pack.setWordWrap(True)
         f.addRow(self.lbl_pack)
         left.addWidget(box)
+
+        box = QGroupBox("Scenarios & presets")
+        v = QVBoxLayout(box)
+        self.cb_preset = QComboBox()
+        v.addWidget(self.cb_preset)
+        row = QHBoxLayout()
+        b_apply = QPushButton("Apply")
+        b_apply.clicked.connect(self._apply_preset)
+        b_save = QPushButton("Save current…")
+        b_save.clicked.connect(self._save_preset)
+        b_del = QPushButton("Delete")
+        b_del.clicked.connect(self._delete_preset)
+        for wdg in (b_apply, b_save, b_del):
+            row.addWidget(wdg)
+        v.addLayout(row)
+        self.lbl_preset = _help("", self.colors)
+        v.addWidget(self.lbl_preset)
+        left.addWidget(box)
+        self._fill_presets()
 
         self.tabs = QTabWidget()
         left.addWidget(self.tabs)
@@ -356,11 +399,14 @@ class GeomorphDialog(QDialog):
         self.ck_gm = QCheckBox("GM view")
         self.ck_gm.setChecked(True)
         self.ck_gm.toggled.connect(lambda _c: self._show_level())
-        for wdg in (self.btn_gen, self.btn_regen, QLabel("Level"), self.cb_level, self.ck_gm):
+        self.ck_live = QCheckBox("Live preview")
+        self.ck_live.setToolTip("Regenerate automatically a moment after any option changes.")
+        for wdg in (self.btn_gen, self.btn_regen, self.ck_live, QLabel("Level"), self.cb_level, self.ck_gm):
             top.addWidget(wdg)
         top.addStretch(1)
         right.addLayout(top)
-        self.preview = QLabel("Press Generate.")
+        self.preview = _ClickLabel("Press Generate.")
+        self.preview.clicked.connect(self._preview_clicked)
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(400, 300)
         sc = QScrollArea()
@@ -374,6 +420,24 @@ class GeomorphDialog(QDialog):
         for t, name in ((self.txt_main, "Description & hooks"), (self.txt_key, "Key"), (self.txt_report, "Checks & gaps")):
             t.setReadOnly(True)
             self.info_tabs.addTab(t, name)
+        # editable per-room notes (what the GM sees / what players get)
+        w = QWidget()
+        h = QHBoxLayout(w)
+        self.lst_notes = QListWidget()
+        self.lst_notes.setMaximumWidth(260)
+        self.lst_notes.currentRowChanged.connect(self._note_selected)
+        h.addWidget(self.lst_notes)
+        col = QVBoxLayout()
+        col.addWidget(QLabel("GM note (never in the player version)"))
+        self.ed_note_gm = QPlainTextEdit()
+        self.ed_note_gm.textChanged.connect(lambda: self._note_edited("text", self.ed_note_gm))
+        col.addWidget(self.ed_note_gm)
+        col.addWidget(QLabel("Player note (shown in the player key)"))
+        self.ed_note_player = QPlainTextEdit()
+        self.ed_note_player.textChanged.connect(lambda: self._note_edited("player", self.ed_note_player))
+        col.addWidget(self.ed_note_player)
+        h.addLayout(col, 1)
+        self.info_tabs.addTab(w, "Room notes")
         right.addWidget(self.info_tabs, 2)
         row = QHBoxLayout()
         self.cb_zone = QComboBox()
@@ -391,9 +455,28 @@ class GeomorphDialog(QDialog):
         b_edge.clicked.connect(self._edge_editor)
         b_close = QPushButton("Close")
         b_close.clicked.connect(self.accept)
-        for wdg in (self.cb_zone, self.btn_reroll, self.btn_place, self.btn_export, self.btn_save, self.btn_load, b_edge, b_close):
+        self.cb_zone.currentIndexChanged.connect(self._zone_changed)
+        self.ck_lock = QCheckBox("Lock")
+        self.ck_lock.setToolTip("Locked tiles stay put when you re-roll the level or everything else.")
+        self.ck_lock.toggled.connect(self._lock_toggled)
+        self.btn_reroll_level = QPushButton("Re-roll level")
+        self.btn_reroll_level.setToolTip("New tiles for every room on this level except locked ones and stair/lift cores.")
+        self.btn_reroll_level.clicked.connect(self._reroll_level)
+        self.btn_reroll_all = QPushButton("Re-roll all unlocked")
+        self.btn_reroll_all.clicked.connect(self._reroll_all)
+        for wdg in (self.cb_zone, self.ck_lock, self.btn_reroll, self.btn_reroll_level, self.btn_reroll_all):
+            row.addWidget(wdg)
+        row2 = QHBoxLayout()
+        right.addLayout(row)
+        row = row2
+        for wdg in (self.btn_place, self.btn_export, self.btn_save, self.btn_load, b_edge, b_close):
             row.addWidget(wdg)
         right.addLayout(row)
+        self.lbl_gaps = QLabel("")
+        self.lbl_gaps.setWordWrap(True)
+        self.lbl_gaps.setStyleSheet("color: #f0b040;")
+        self.lbl_gaps.hide()
+        right.addWidget(self.lbl_gaps)
         self.lbl_status = QLabel("")
         self.lbl_status.setWordWrap(True)
         right.addWidget(self.lbl_status)
@@ -404,8 +487,265 @@ class GeomorphDialog(QDialog):
         self._enable(False)
 
     def _enable(self, has):
-        for b in (self.btn_place, self.btn_export, self.btn_save, self.btn_reroll):
+        for b in (self.btn_place, self.btn_export, self.btn_save, self.btn_reroll, self.ck_lock,
+                  self.btn_reroll_level, self.btn_reroll_all):
             b.setEnabled(has)
+
+    # ---- presets & scenarios ------------------------------------------
+    def _presets_file(self):
+        return self.user_dir / "presets.json"
+
+    def _user_presets(self) -> dict:
+        try:
+            return json.loads(self._presets_file().read_text(encoding="utf-8")).get("presets", {})
+        except (OSError, ValueError):
+            return {}
+
+    def _scenarios(self) -> list:
+        try:
+            return json.loads((Path(__file__).resolve().parent.parent / "geomorph" / "data" /
+                               "scenarios.json").read_text(encoding="utf-8")).get("scenarios", [])
+        except (OSError, ValueError):
+            return []
+
+    def _fill_presets(self, select=None):
+        self.cb_preset.blockSignals(True)
+        self.cb_preset.clear()
+        self.cb_preset.addItem("Choose a scenario or preset…", None)
+        for sc in self._scenarios():
+            self.cb_preset.addItem("Scenario: " + sc["name"], "scenario:" + sc["name"])
+        for name in sorted(self._user_presets()):
+            self.cb_preset.addItem("My preset: " + name, "user:" + name)
+        if select:
+            _set_combo(self.cb_preset, select)
+        self.cb_preset.blockSignals(False)
+
+    def _apply_preset(self):
+        key = self.cb_preset.currentData()
+        if not key:
+            return
+        kind, _, name = key.partition(":")
+        self._scenario_hooks = []
+        if kind == "scenario":
+            sc = next((x for x in self._scenarios() if x["name"] == name), None)
+            if sc is None:
+                return
+            o = dict(sc["options"])
+            o["kind"] = sc["tab"]
+            self._scenario_hooks = list(sc.get("hooks", []))
+            self.lbl_preset.setText(sc.get("description", ""))
+        else:
+            o = self._user_presets().get(name)
+            if o is None:
+                return
+            self.lbl_preset.setText("")
+        self.apply_options(o)
+        self.generate()
+
+    def _save_preset(self):
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Save preset", "Name for these settings:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        o = self.options()
+        o.pop("seed", None)
+        presets = self._user_presets()
+        presets[name] = o
+        try:
+            self.user_dir.mkdir(parents=True, exist_ok=True)
+            self._presets_file().write_text(json.dumps({"presets": presets}, indent=1), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Geomorph generator", f"Could not save the preset: {exc}")
+            return
+        self._fill_presets("user:" + name)
+        self.lbl_status.setText(f"Preset '{name}' saved.")
+
+    def _delete_preset(self):
+        key = self.cb_preset.currentData()
+        if not key or not key.startswith("user:"):
+            self.lbl_status.setText("Only your own presets can be deleted.")
+            return
+        presets = self._user_presets()
+        presets.pop(key[5:], None)
+        try:
+            self._presets_file().write_text(json.dumps({"presets": presets}, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+        self._fill_presets()
+
+    def apply_options(self, o: dict):
+        """Set every control from an options dict (the inverse of :meth:`options`)."""
+        self._applying = True
+        try:
+            self.tabs.setCurrentIndex(0 if o.get("kind") == "ship" else 1)
+            for key, cb in (("theme", self.cb_theme), ("condition", self.cb_cond), ("mode", None)):
+                if cb is not None and key in o:
+                    _set_combo(cb, o[key] or "")
+            if "name" in o:
+                self.ed_name.setText(o["name"])
+            if "mixed_conditions" in o:
+                self.ck_mixed.setChecked(bool(o["mixed_conditions"]))
+            if "peculiarities" in o:
+                self.sp_pec.setValue(int(o["peculiarities"]))
+            if "grouping" in o:
+                self.sl_group.setValue(int(round(o["grouping"] * 100)))
+            if "intensity" in o:
+                self.sl_int.setValue(int(round(o["intensity"] * 100)))
+            for k, c in self.overlay_checks.items():
+                c.setChecked(k in (o.get("overlays") or []))
+            d = o.get("decor") or {}
+            self.ck_decor.setChecked(bool(d.get("enabled")))
+            self.ck_outdoor.setChecked(bool(d.get("exterior", d.get("enabled", False))))
+            if "density" in d:
+                self.sl_decor.setValue(int(round(d["density"] * 100)))
+            _set_combo(self.cb_incident, d.get("incident", "none"))
+            _set_combo(self.cb_where, d.get("where", "all"))
+            if o.get("kind") == "ship":
+                if "ship_type" in o:
+                    self.cb_ship_type.setCurrentText(o["ship_type"])
+                if "tonnage" in o:
+                    self.sp_tonnage.setValue(int(o["tonnage"]))
+                _set_combo(self.cb_ship_mode, o.get("mode", "planned"))
+                _set_combo(self.cb_orient, o.get("orientation", "N"))
+                self.ck_sym.setChecked(bool(o.get("symmetric", True)))
+                self.ck_fins.setChecked(bool(o.get("fins", True)))
+                parts = o.get("parts") or {}
+                for key, cb in (("wing", self.cb_wing), ("nose", self.cb_nose), ("tail", self.cb_tail),
+                                ("transition", self.cb_trans)):
+                    _set_combo(cb, parts.get(key))
+                self.ck_square.setChecked(bool(parts.get("square_shoulders", True)))
+                for t, sp in self.count_spins.items():
+                    sp.setValue(int((parts.get("counts") or {}).get(t, -1)))
+                for k, c in self.craft_checks.items():
+                    c.setChecked(k in (o.get("craft") or []))
+            else:
+                _set_combo(self.cb_arch, o.get("archetype"))
+                _set_combo(self.cb_scale, o.get("scale", "medium"))
+                self._arch_changed()
+                _set_combo(self.cb_env, o.get("environment"))
+                _set_combo(self.cb_site_mode, o.get("mode", "planned"))
+        finally:
+            self._applying = False
+
+    # ---- live preview ---------------------------------------------------
+    def _wire_live_preview(self):
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(600)
+        self._live_timer.timeout.connect(self._live_fire)
+        skip = {self.cb_level, self.ck_gm, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
+        for w in self.findChildren(QWidget):
+            if w in skip or w.parent() is None:
+                continue
+            if isinstance(w, QComboBox):
+                w.currentIndexChanged.connect(self._option_changed)
+            elif isinstance(w, QCheckBox):
+                w.toggled.connect(self._option_changed)
+            elif isinstance(w, QAbstractSpinBox):
+                w.valueChanged.connect(self._option_changed)
+            elif isinstance(w, QSlider):
+                w.valueChanged.connect(self._option_changed)
+            elif isinstance(w, QLineEdit) and w is not self.ed_tiles:
+                w.textChanged.connect(self._option_changed)
+
+    def _option_changed(self, *_a):
+        if self.ck_live.isChecked() and not self._applying and self.registry is not None:
+            self._live_timer.start()
+
+    def _live_fire(self):
+        if not self.ck_live.isChecked():
+            return
+        if self.job is not None and self.job.isRunning():
+            self._live_pending = True
+            return
+        self.generate()
+
+    # ---- selecting, locking, re-rolling ------------------------------------
+    def _preview_clicked(self, px, py):
+        res = self.result
+        if res is None:
+            return
+        from geomorph import render
+        x0, y0, _x1, _y1 = render.shared_bounds(res)
+        pps, head = 8, 3 * 8
+        gx, gy = px / pps + x0, (py - head) / pps + y0
+        for p in res.grids[self.level_index].placed:
+            if p.zone and p.x <= gx < p.x + p.w and p.y <= gy < p.y + p.h:
+                _set_combo(self.cb_zone, p.zone)
+                return
+
+    def _fill_notes(self):
+        self.lst_notes.blockSignals(True)
+        self.lst_notes.clear()
+        for e in self.result.key:
+            self.lst_notes.addItem(f"{e['n']}. {e['title']}")
+        self.lst_notes.blockSignals(False)
+        self.ed_note_gm.clear()
+        self.ed_note_player.clear()
+
+    def _note_selected(self, row):
+        key = self.result.key if self.result is not None else []
+        if not 0 <= row < len(key):
+            return
+        e = key[row]
+        for ed, field in ((self.ed_note_gm, "text"), (self.ed_note_player, "player")):
+            ed.blockSignals(True)
+            ed.setPlainText(e.get(field, ""))
+            ed.blockSignals(False)
+
+    def _note_edited(self, field, editor):
+        row = self.lst_notes.currentRow()
+        if self.result is not None and 0 <= row < len(self.result.key):
+            self.result.key[row][field] = editor.toPlainText()
+            if field == "text":
+                self._rebuild_key_text()
+
+    def _rebuild_key_text(self):
+        res = self.result
+        self.txt_key.setPlainText("\n".join(f"{e['n']}. {e['title']} (level {e['level'] + 1}) — {e.get('text', '')}"
+                                            for e in res.key))
+
+    def _zone_changed(self, *_a):
+        self.selected_zone = self.cb_zone.currentData()
+        if self.result is not None:
+            for i, e in enumerate(self.result.key):
+                if e.get("zone") == self.selected_zone and self.selected_zone:
+                    self.lst_notes.setCurrentRow(i)
+                    break
+        self.ck_lock.blockSignals(True)
+        self.ck_lock.setChecked(self.selected_zone in self.locked)
+        self.ck_lock.blockSignals(False)
+        self._show_level()
+
+    def _lock_toggled(self, on):
+        zid = self.cb_zone.currentData()
+        if not zid:
+            return
+        (self.locked.add if on else self.locked.discard)(zid)
+        self._show_level()
+
+    def _reroll_level(self):
+        from geomorph import pipeline
+        import random
+        if self.result is None:
+            return
+        n = pipeline.reroll_level(self.result, self.level_index, self.locked, seed=random.random())
+        self._after_reroll(f"{n} tile(s) changed on this level.")
+
+    def _reroll_all(self):
+        from geomorph import pipeline
+        import random
+        if self.result is None:
+            return
+        n = sum(pipeline.reroll_level(self.result, g.index, self.locked, seed=random.random())
+                for g in self.result.grids)
+        self._after_reroll(f"{n} tile(s) changed; locked tiles kept.")
+
+    def _after_reroll(self, text):
+        self._prerender(self.result)
+        self._show_level()
+        self.lbl_status.setText(text)
 
     # ------------------------------------------------------------------
     def _browse_tiles(self):
@@ -503,6 +843,9 @@ class GeomorphDialog(QDialog):
             self.btn_gen.setEnabled(True)
             self.btn_regen.setEnabled(True)
             done(value, err)
+            if self._live_pending:
+                self._live_pending = False
+                self._live_timer.start()
         self.job = _Job(fn, self)
         self.job.done.connect(finish)
         self.job.start()
@@ -532,6 +875,10 @@ class GeomorphDialog(QDialog):
             self.lbl_status.setText("Generation failed: " + err.splitlines()[0])
             QMessageBox.warning(self, "Geomorph generator", err)
             return
+        if self._scenario_hooks:
+            hooks = res.text.setdefault("hooks", [])
+            hooks.extend({"type": "scenario", "text": h} for h in self._scenario_hooks)
+        self.locked = {z for z in self.locked if z in res.zones}      # layouts differ: keep only ids that still exist
         self.result = res
         self.cb_level.blockSignals(True)
         self.cb_level.clear()
@@ -542,9 +889,16 @@ class GeomorphDialog(QDialog):
         self.cb_zone.clear()
         for zid, z in res.zones.items():
             self.cb_zone.addItem(f"{z.name} ({zid})", zid)
-        self._show_level()
+        self._zone_changed()
         self._fill_text()
         self._enable(True)
+        if res.gaps:
+            names = ", ".join(list(res.gaps)[:6]) + (" …" if len(res.gaps) > 6 else "")
+            self.lbl_gaps.setText(f"⚠ {len(res.gaps)} zone(s) had no suitable tile and were drawn procedurally "
+                                  f"or substituted: {names}. Details in 'Checks & gaps'.")
+            self.lbl_gaps.show()
+        else:
+            self.lbl_gaps.hide()
         n = sum(len(g.placed) for g in res.grids)
         self.lbl_status.setText(f"{res.meta['name']}: {n} tiles on {len(res.grids)} level(s). "
                                 + (f"{len(res.issues)} issue(s) — see Checks." if res.issues else "All checks passed."))
@@ -565,8 +919,31 @@ class GeomorphDialog(QDialog):
         if pv is None:
             from geomorph import render
             pv = render.render_level(res, self.level_index, self.images, pps=8, gm=self.ck_gm.isChecked())
+        pv = self._mark_tiles(pv)
         self.preview.setPixmap(pil_to_pixmap(pv))
         self.preview.resize(pv.size[0], pv.size[1])
+
+    def _mark_tiles(self, im):
+        """Outline the selected tile (yellow) and locked tiles (cyan) on a copy."""
+        if not (self.locked or self.selected_zone):
+            return im
+        from PIL import ImageDraw
+        from geomorph import render
+        res = self.result
+        x0, y0, _x1, _y1 = render.shared_bounds(res)
+        pps, head = 8, 3 * 8
+        out = im.copy()
+        d = ImageDraw.Draw(out)
+        for p in res.grids[self.level_index].placed:
+            if p.zone in self.locked or p.zone == self.selected_zone:
+                box = ((p.x - x0) * pps, head + (p.y - y0) * pps, (p.x + p.w - x0) * pps - 1, head + (p.y + p.h - y0) * pps - 1)
+                if p.zone == self.selected_zone:
+                    d.rectangle(box, outline=(255, 214, 64, 255), width=3)
+                else:
+                    d.rectangle(box, outline=(80, 220, 255, 255), width=2)
+                if p.zone in self.locked:
+                    d.rectangle((box[0] + 3, box[1] + 3, box[0] + 12, box[1] + 12), fill=(80, 220, 255, 255))
+        return out
 
     def _fill_text(self):
         res = self.result
@@ -578,6 +955,7 @@ class GeomorphDialog(QDialog):
         self.txt_main.setPlainText("\n".join(lines))
         self.txt_key.setPlainText("\n".join(f"{e['n']}. {e['title']} (level {e['level'] + 1}) — {e.get('text', '')}"
                                             for e in res.key))
+        self._fill_notes()
         from geomorph import reports
         rep = ["Issues:"] + ([f"  - {i}" for i in res.issues] or ["  none"])
         rep += ["", "Zones with no suitable tile (drawn procedurally or substituted):"]

@@ -6,10 +6,10 @@ import math
 import os
 from typing import Optional
 
-from PyQt6.QtCore import (Qt, QEvent, QObject, QPoint, QPointF, QRectF, QRunnable,
+from PyQt6.QtCore import (Qt, QEvent, QLineF, QObject, QPoint, QPointF, QRectF, QRunnable,
                           QSize, QThreadPool, QTimer, pyqtSignal)
 from PyQt6.QtGui import (
-    QImageReader, QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont,
+    QImage, QImageReader, QPainter, QPixmap, QColor, QPen, QBrush, QCursor, QFont,
     QFontMetricsF, QPolygonF, QTransform,
 )
 from PyQt6.QtWidgets import QWidget, QFrame, QPushButton, QHBoxLayout, QToolTip
@@ -68,6 +68,28 @@ class _BoundsTask(QRunnable):
             table = None
         try:
             self.signals.done.emit(self.piece_id, table)
+        except RuntimeError:
+            pass
+
+
+class _DecodeSignals(QObject):
+    done = pyqtSignal(object, object, QImage)
+
+
+class _DecodeTask(QRunnable):
+    """Decode one map image at one display size off the GUI thread."""
+
+    def __init__(self, key, path: str, size, signals: _DecodeSignals):
+        super().__init__()
+        self.key, self.path, self.size, self.signals = key, path, size, signals
+
+    def run(self):
+        try:
+            image = exporter.file_image(self.path, self.size)
+        except Exception:
+            image = QImage()
+        try:
+            self.signals.done.emit(self.key, self.size, image)
         except RuntimeError:
             pass
 
@@ -144,6 +166,12 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
         self.quick_enabled = False   # floating node buttons; right-click covers them
         self.auto_tighten = True     # trim transparent margins when nodes are placed
         self._suppress_history = False
+        self._decode_signals = _DecodeSignals()
+        self._decode_signals.done.connect(self._decoded)
+        self._decode_pool = QThreadPool(self)
+        self._decode_pool.setMaxThreadCount(2)
+        self._decoding: set = set()
+        self._placeholder_pm = None
         self._bounds_signals = _BoundsSignals()
         self._bounds_signals.done.connect(self._bounds_ready)
         self._bounds_pool = QThreadPool(self)
@@ -1124,9 +1152,34 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
             if not self._load_timer.isActive():
                 self._load_timer.start(15)
             return fallback[1]
+        path = ("" if piece.embedded or not piece.asset_path
+                else self.project.resolve_asset(piece.asset_path))
+        if path and os.path.isfile(path):
+            # Decode off the GUI thread; show a flat placeholder meanwhile so a
+            # first paint of a big map never freezes the window.
+            if key not in self._decoding:
+                self._decoding.add(key)
+                self._decode_pool.start(_DecodeTask(key, path, size, self._decode_signals))
+            return self._placeholder()
         pm = exporter.piece_pixmap(piece, self.project, self._cache, size)
         variants[size] = True
         return pm
+
+    def _placeholder(self) -> QPixmap:
+        if self._placeholder_pm is None:
+            pm = QPixmap(4, 4)
+            pm.fill(QColor(120, 140, 160, 70))
+            self._placeholder_pm = pm
+        return self._placeholder_pm
+
+    def _decoded(self, key, size, image):
+        self._decoding.discard(key)
+        if self.project is None:
+            return
+        pm = QPixmap.fromImage(image) if not image.isNull() else QPixmap()
+        exporter._cache_remember(self._cache, key, pm)
+        self._variants.setdefault(key[0], {})[tuple(size)] = True
+        self.update()
 
     def _process_loads(self):
         import time
@@ -2011,6 +2064,8 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
         """
         self._bounds_pool.clear()
         self._bounds_pool.waitForDone()
+        self._decode_pool.clear()
+        self._decode_pool.waitForDone()
 
     def tighten_selected(self, options: dict | None = None) -> int:
         """Trim every selected image node to its visible pixels."""
@@ -2604,16 +2659,19 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
             painter.setPen(pen)
             first_x = math.ceil(wx0 / step) * step
             first_y = math.ceil(wy0 / step) * step
+            batch = []
             gx = first_x
             while gx <= wx1 + 1e-6:
                 sx = crisp(self.world_to_screen(gx, 0)[0])
-                painter.drawLine(QPointF(sx, top), QPointF(sx, bottom))
+                batch.append(QLineF(sx, top, sx, bottom))
                 gx += step
             gy = first_y
             while gy <= wy1 + 1e-6:
                 sy = crisp(self.world_to_screen(0, gy)[1])
-                painter.drawLine(QPointF(left, sy), QPointF(right, sy))
+                batch.append(QLineF(left, sy, right, sy))
                 gy += step
+            if batch:
+                painter.drawLines(batch)
 
         minor = QPen(QColor(color))
         minor.setCosmetic(True)

@@ -248,6 +248,8 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
     if wing_opt == "none":
         fins = False
     pairs = registry.wing_pairs() if fins else []
+    if (parts.get("counts") or {}).get("weapons") == 0:       # "no guns" also means no gunnery wings
+        pairs = [p for p in pairs if p[0].tags.get("weapons", 0) < 0.6]
     wing = _choose_wings(rng, pairs, ship_type) if pairs else None
     if wing_opt and wing_opt != "none":
         pick_ = [p for p in registry.wing_pairs() if p[0].id == wing_opt]
