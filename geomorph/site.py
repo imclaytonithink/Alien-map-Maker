@@ -101,7 +101,8 @@ def generate_site(registry, arch: dict, rng: random.Random, scale="medium", env=
     env = env or (arch.get("environments") or ["breathable"])[0]
     topology = arch["topology"]
     preset = arch["scales"][scale]
-    ctx = {"shafts": (arch.get("vertical") or {}).get("shafts", []), "dome": arch.get("dome")}
+    ctx = {"shafts": (arch.get("vertical") or {}).get("shafts", []), "dome": arch.get("dome"),
+           "ground_margin": arch.get("ground_margin", layouts.PAD)}
     need = required_count(arch)
     lay = None
     issues = []

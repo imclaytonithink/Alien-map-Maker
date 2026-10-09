@@ -208,5 +208,6 @@
  "kind": "agricultural colony",
  "name_table": "colonies",
  "entrance_zone": "bunk",
- "perimeter": "fence"
+ "perimeter": "fence",
+ "ground_margin": 20
 }

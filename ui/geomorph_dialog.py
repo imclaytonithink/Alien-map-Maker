@@ -288,6 +288,12 @@ class GeomorphDialog(QDialog):
         self.ck_decor.setToolTip("Uses the Symbols pack. Items match the room's function, keep to the walls and never "
                                  "block corridors. Needs the Symbols ZIP in the library to place on the canvas.")
         v.addWidget(self.ck_decor)
+        self.ck_outdoor = QCheckBox("Outdoor features on sites: trees, bushes, boulders, benches, fields")
+        self.ck_outdoor.setChecked(True)
+        self.ck_outdoor.setToolTip("Only where they make sense: trees need a breathable atmosphere, a hostile world gets rocks "
+                                   "and scrub, an airless one only rocks; a garrison stays bare, a farm gets fields, and "
+                                   "ships and stations get nothing.")
+        v.addWidget(self.ck_outdoor)
         row = QHBoxLayout()
         row.addWidget(QLabel("Amount"))
         self.sl_decor = QSlider(Qt.Orientation.Horizontal)
@@ -461,9 +467,10 @@ class GeomorphDialog(QDialog):
              "condition": self.cb_cond.currentData() or None, "mixed_conditions": self.ck_mixed.isChecked(),
              "peculiarities": self.sp_pec.value(), "grouping": self.sl_group.value() / 100.0, "intensity": self.sl_int.value() / 100.0,
              "overlays": [k for k, c in self.overlay_checks.items() if c.isChecked()]}
-        if self.ck_decor.isChecked():
-            o["decor"] = {"enabled": True, "density": self.sl_decor.value() / 100.0,
-                          "incident": self.cb_incident.currentData(), "where": self.cb_where.currentData()}
+        if self.ck_decor.isChecked() or self.ck_outdoor.isChecked():
+            o["decor"] = {"enabled": self.ck_decor.isChecked(), "density": self.sl_decor.value() / 100.0,
+                          "incident": self.cb_incident.currentData(), "where": self.cb_where.currentData(),
+                          "exterior": self.ck_outdoor.isChecked()}
         if kind == "ship":
             counts = {t: sp.value() for t, sp in self.count_spins.items() if sp.value() >= 0}
             parts = {"wing": self.cb_wing.currentData(), "nose": self.cb_nose.currentData(),

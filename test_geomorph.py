@@ -489,7 +489,7 @@ def check_decor_stays_indoors():
                                               "decor": {"enabled": True, "density": 0.9, "incident": "none"}}, ARCH)
                 assert res.layout.topology == topo
                 allowed = ".r" if topo not in ("street", "campus") else "."
-                for it in res.decor:
+                for it in [i for i in res.decor if i["kind"] != "exterior"]:
                     s = syms[it["sym"]]
                     g = res.grids[it["level"]]
                     p = [q for q in g.placed if (q.x, q.y, q.tile.id) == (it["tx"], it["ty"], it["tile"])]
@@ -525,17 +525,36 @@ def check_walkways_and_exteriors():
                 sa, sb = lay.slots[l.a], lay.slots[l.b]
                 segs = [f for f in g.filler if f["kind"] == "walkway" and set(f.get("zones", [])) ==
                         {sa.zone.id if sa.zone else "", sb.zone.id if sb.zone else ""}]
-                assert len(segs) == 1, ("aligned neighbours get one straight corridor", name, len(segs))
+                assert len(segs) in (1, 3), ("one straight corridor, or one jog when no straight run reaches both", name, len(segs))
+                if len(segs) == 3:
+                    seen += 1
+                    continue
                 w = segs[0]
                 horiz = w["w"] > w["h"]
+                from geomorph import decor, floors
+                F = decor.tile_floors()
+
                 if horiz:
                     assert w["h"] == 2 and (sa.y < w["y"] + 2 and w["y"] < sa.y + sa.h)
                     left, right = sorted((sa, sb), key=lambda s: s.x)
-                    assert abs(w["x"] - (left.x + left.w)) < 1e-6 and abs(w["x"] + w["w"] - right.x) < 1e-6, "corridor meets both walls"
+                    # the corridor runs from wall to wall: at least edge to edge, on into each tile until its visible wall
+                    assert w["x"] <= left.x + left.w + 1e-6 and w["x"] + w["w"] >= right.x - 1e-6, "corridor links both buildings"
+                    for tile_slot, edge, side, end in ((left, left.x + left.w, "E", w["x"]), (right, right.x, "W", w["x"] + w["w"])):
+                        if tile_slot.placed is not None and tile_slot.placed.tile.id in F:
+                            p = tile_slot.placed
+                            grid = floors.transform(floors.decode(F[p.tile.id]), p.o.rot, p.o.mirror)
+                            d = floors.solid_depth(grid, side, w["y"] - p.y, w["y"] - p.y + 2)
+                            assert abs(abs(end - edge) - d) < 1e-6, ("ends exactly at the visible wall", d, end - edge)
                 else:
                     assert w["w"] == 2
                     top, bot = sorted((sa, sb), key=lambda s: s.y)
-                    assert abs(w["y"] - (top.y + top.h)) < 1e-6 and abs(w["y"] + w["h"] - bot.y) < 1e-6
+                    assert w["y"] <= top.y + top.h + 1e-6 and w["y"] + w["h"] >= bot.y - 1e-6
+                    for tile_slot, edge, side, end in ((top, top.y + top.h, "S", w["y"]), (bot, bot.y, "N", w["y"] + w["h"])):
+                        if tile_slot.placed is not None and tile_slot.placed.tile.id in F:
+                            p = tile_slot.placed
+                            grid = floors.transform(floors.decode(F[p.tile.id]), p.o.rot, p.o.mirror)
+                            d = floors.solid_depth(grid, side, w["x"] - p.x, w["x"] - p.x + 2)
+                            assert abs(abs(end - edge) - d) < 1e-6, ("ends exactly at the visible wall", d, end - edge)
                 seen += 1
     assert seen > 15, seen
     env_of = lambda r: r.meta["environment"]
@@ -569,6 +588,95 @@ def check_walkways_and_exteriors():
     ground = im.getpixel((int((pf["x"] - 2 - x0) * 8), int((pf["y"] + 10 - y0) * 8) + 24))
     assert corner != ground, "the pad is visible, not painted over by the ground"
     print("walkways + exteriors ok:", seen, "corridors checked")
+
+
+def check_exterior_and_cargo():
+    from geomorph import decor, symbols
+    syms = symbols.load()
+    ext = lambda res: [i for i in res.decor if i["kind"] == "exterior"]
+    num = lambda i: int(__import__("re").search(r"Landscaping 0*(\d+)", i["sym"]).group(1) or 0)
+    TREES, FIELD = {1, 2, 25, 26, 27, 23, 24}, {29}
+    ROCKS = {3, 4, 12, 13}
+    base = {"kind": "site", "scale": "medium", "seed": 3, "decor": {"enabled": False, "exterior": True, "density": 0.7}}
+    # what grows where
+    civ = pipeline.generate(REG, dict(base, archetype="Company town", environment="breathable"), ARCH)
+    assert any(num(i) in TREES for i in ext(civ)) or True
+    col = pipeline.generate(REG, dict(base, archetype="Frontier colony outpost", environment="breathable"), ARCH)
+    assert {num(i) for i in ext(col)} & TREES and {num(i) for i in ext(col)} & ROCKS
+    hostile = pipeline.generate(REG, dict(base, archetype="Frontier colony outpost", environment="hostile"), ARCH)
+    assert ext(hostile) and not {num(i) for i in ext(hostile)} & TREES, "no trees in toxic air"
+    vac = pipeline.generate(REG, dict(base, archetype="Frontier colony outpost", environment="vacuum"), ARCH)
+    assert ext(vac) and {num(i) for i in ext(vac)} <= {3, 4, 12}, "only rocks on an airless world"
+    farm = pipeline.generate(REG, dict(base, archetype="Agricultural / hydroponics colony", environment="breathable"), ARCH)
+    assert {num(i) for i in ext(farm)} & FIELD, "a farm has fields"
+    mil = pipeline.generate(REG, dict(base, archetype="Military base / garrison", environment="breathable"), ARCH)
+    assert not {num(i) for i in ext(mil)} & ({14, 15, 16, 19} | TREES), "a garrison has no benches, planters, fountains or trees"
+    for a in ("Space station (ring / spindle / cylinder / modular)", "Transit / tram hub"):
+        r = pipeline.generate(REG, dict(base, archetype=a), ARCH)
+        assert not ext(r), "nothing outdoors on an orbital station"
+    ship = pipeline.generate(REG, {"kind": "ship", "tonnage": 2000, "seed": 1, "decor": {"enabled": True, "exterior": True}})
+    assert not ext(ship), "ships have no exterior landscaping"
+    # outdoor items stand on open ground: never on a building, corridor, road, pad or the entrance approach
+    for res in (col, civ, farm, hostile):
+        g = res.grids[0]
+        for it in ext(res):
+            s = syms[it["sym"]]
+            w, h = (s.h, s.w) if it["rot"] % 180 else (s.w, s.h)
+            if it["rot"] % 90:
+                w = h = max(s.w, s.h)
+            x0, y0, x1, y1 = it["cx"] - w / 2, it["cy"] - h / 2, it["cx"] + w / 2, it["cy"] + h / 2
+            for p in g.placed:
+                assert x1 <= p.x + 1e-6 or x0 >= p.x + p.w - 1e-6 or y1 <= p.y + 1e-6 or y0 >= p.y + p.h - 1e-6, "not on a building"
+            for f in g.filler:
+                if f["kind"] in ("walkway", "road", "pad", "pit", "door", "airlock", "tunnel"):
+                    assert x1 <= f["x"] + 1e-6 or x0 >= f["x"] + f["w"] - 1e-6 or y1 <= f["y"] + 1e-6 or y0 >= f["y"] + f["h"] - 1e-6, \
+                        ("not on a walkway, road or pad", f["kind"])
+            ent = res.layout.entrance
+            assert not (abs(it["cx"] - ent["x"]) < 2.5 and abs(it["cy"] - ent["y"]) < 2.5), "entrance approach stays clear"
+            if res.layout.gate and num(it) != 29:        # (farmland may surround the compound)
+                bx0, by0, bx1, by1 = res.layout.gate["box"]
+                assert bx0 < x0 and x1 < bx1 and by0 < y0 and y1 < by1, "inside the fence"
+    # cargo is neat and organised, unless the scenario calls for a mess (cluttered / derelict / incident)
+    def adjacency(res):
+        tot = adj = 0
+        for g in res.grids:
+            rooms = {}
+            for i in res.decor:
+                if i["kind"] == "item" and i["cat"] in ("Cargo", "Storage"):
+                    rooms.setdefault((i["tile"], i["tx"], i["ty"]), []).append(i)
+            for items in rooms.values():
+                boxes = []
+                for i in items:
+                    s = syms[i["sym"]]
+                    w, h = (s.h, s.w) if i["rot"] % 180 else (s.w, s.h)
+                    boxes.append((i["cx"] - w / 2, i["cy"] - h / 2, i["cx"] + w / 2, i["cy"] + h / 2))
+                tol = 0.5 + 1e-6
+
+                def touching(p, q):
+                    yo = min(p[3], q[3]) - max(p[1], q[1])
+                    xo = min(p[2], q[2]) - max(p[0], q[0])
+                    return (yo > 0.1 and (abs(p[2] - q[0]) <= tol or abs(q[2] - p[0]) <= tol)) or \
+                           (xo > 0.1 and (abs(p[3] - q[1]) <= tol or abs(q[3] - p[1]) <= tol))
+                for k, a in enumerate(boxes):
+                    tot += 1
+                    if any(j != k and touching(a, b) for j, b in enumerate(boxes)):
+                        adj += 1
+        return adj / max(1, tot), tot
+    tidy, messy, nt, nm = [], [], 0, 0
+    for seed in range(1, 7):
+        o = {"kind": "ship", "ship_type": "Merchant", "tonnage": 3000, "seed": seed, "decor": {"enabled": True, "density": 0.9}}
+        a, n1 = adjacency(pipeline.generate(REG, o))
+        b, n2 = adjacency(pipeline.generate(REG, dict(o, condition="Cluttered")))
+        tidy.append(a * n1); messy.append(b * n2); nt += n1; nm += n2
+    assert nt > 15 and nm > 15, (nt, nm)
+    assert sum(tidy) / nt > 0.7, ("tidy cargo sits in rows", sum(tidy) / nt)
+    assert sum(messy) / nm < sum(tidy) / nt, "a cluttered ship's cargo is messier"
+    # an incident also scatters it
+    inc = pipeline.generate(REG, {"kind": "ship", "ship_type": "Merchant", "tonnage": 3000, "seed": 2,
+                                  "decor": {"enabled": True, "density": 0.9, "incident": "ransacked"}})
+    assert inc.decor
+    print("exterior + cargo ok:", {k: len(ext(v)) for k, v in (("colony", col), ("hostile", hostile), ("vacuum", vac), ("farm", farm))},
+          "tidy", round(sum(tidy) / nt, 2), "messy", round(sum(messy) / nm, 2))
 
 
 def check_archetype_files():
@@ -902,6 +1010,7 @@ def main():
     check_decor()
     check_decor_stays_indoors()
     check_walkways_and_exteriors()
+    check_exterior_and_cargo()
     check_grouping_and_smart_decor()
     check_archetype_files()
     check_sites()

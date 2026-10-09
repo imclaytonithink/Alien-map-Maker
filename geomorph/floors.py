@@ -25,7 +25,7 @@ def analyse_floor(path, w, h, edges=None, pps=PX_PER_SQUARE, border=BORDER_SQUAR
     boundary is circulation ('c'); enclosed room floor stays '.'.
     """
     im = Image.open(path) if not isinstance(path, Image.Image) else path
-    a = im.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 64 else 0)   # any visible line counts
+    a = im.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 16 else 0)   # any visible line counts, even a faint dashed one
     box = (border * pps, border * pps, (border + w) * pps, (border + h) * pps)
     a = a.crop(box).resize((w * SUB, h * SUB), Image.BOX)
     px = a.load()
@@ -129,3 +129,32 @@ def transform(rows, rot=0, mirror=False):
     for _ in range((rot % 360) // 90):
         g = [list(col) for col in zip(*g[::-1])]
     return ["".join(r) for r in g]
+
+
+def solid_depth(rows, side, lo, hi, limit=12, none_if_empty=False):
+    """Open distance (in squares) between a tile's plan edge and its first solid cell, along a strip.
+
+    ``rows`` is the (already rotated/mirrored) floor map; ``lo``..``hi`` are the strip's squares along the side.
+    A corridor that stops at the plan edge would end in empty ground when the tile's visible walls sit further in.
+    """
+    H, W = len(rows), len(rows[0])
+    a, b = int(lo * SUB), int(hi * SUB)
+    best = None
+    for k in range(max(0, a), min((W if side in "NS" else H), b)):
+        d = 0
+        n = (H if side in "NS" else W)
+        while d < n:
+            if side == "N": c = rows[d][k]
+            elif side == "S": c = rows[H - 1 - d][k]
+            elif side == "W": c = rows[k][d]
+            else: c = rows[k][W - 1 - d]
+            if c == "#":
+                break
+            d += 1
+        else:
+            d = None                                # nothing solid at all on this strip
+        if d is not None:
+            best = d if best is None else min(best, d)
+    if best is None:
+        return None if none_if_empty else 0.0
+    return min(limit, best / SUB)

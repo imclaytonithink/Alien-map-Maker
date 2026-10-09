@@ -1,0 +1,28 @@
+{
+ "_about": "Outdoor features from the Symbols pack's Landscaping folder, by number in the file name. 'rules' say what each kind of site gets outside, by environment. Edit freely.",
+ "groups": {
+  "tree": [1, 2, 25, 26, 27], "grove": [23, 24], "shrub": [0, 5, 6, 9, 10, 11], "rock": [3, 4, 12], "stones": [13],
+  "bench": [14], "planter": [15, 16], "hedge": [30, 31], "fountain": [19], "field": [29]
+ },
+ "env": {
+  "breathable": ["tree", "shrub", "rock", "stones", "bench", "planter", "hedge", "fountain", "field", "grove"],
+  "hostile":    ["rock", "stones", "shrub"],
+  "vacuum":     ["rock"],
+  "underground": ["rock", "stones"],
+  "orbital":    []
+ },
+ "style": {
+  "civil":      {"tree": 1.0, "shrub": 1.0, "rock": 0.4, "stones": 0.3, "bench": 1.0, "planter": 0.6, "hedge": 0.4, "fountain": 0.5, "grove": 0.3},
+  "park":       {"tree": 1.5, "shrub": 1.5, "rock": 0.3, "stones": 0.6, "bench": 1.5, "planter": 1.0, "hedge": 0.8, "fountain": 1.0, "grove": 0.6},
+  "agri":       {"field": 1.0, "tree": 0.5, "shrub": 0.6, "rock": 0.5, "stones": 0.3, "hedge": 0.5},
+  "industrial": {"rock": 1.0, "stones": 0.5, "shrub": 0.3},
+  "research":   {"tree": 0.5, "shrub": 0.6, "rock": 0.6, "stones": 0.3, "bench": 0.4, "planter": 0.3},
+  "military":   {"rock": 0.5, "stones": 0.2},
+  "wild":       {"rock": 1.5, "stones": 0.5, "shrub": 0.8}
+ },
+ "style_by_group": {"Colony": "civil", "Industry": "industrial", "Research": "research", "Security": "military",
+                    "Medical": "research", "Orbital": "civil", "Wreck": "wild"},
+ "style_by_archetype": {"Agricultural / hydroponics colony": "agri", "Domed or underground town": "park",
+                        "Archaeological / dig site": "wild", "Spaceport / starport": "industrial",
+                        "Company town": "civil", "Fuel depot / waystation / relay": "industrial"}
+}

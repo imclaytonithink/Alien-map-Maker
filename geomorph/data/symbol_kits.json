@@ -522,35 +522,29 @@
    {
     "cat": "Cargo",
     "w": 4,
-    "style": "row",
-    "max": 8,
+    "style": "block",
+    "max": 10,
     "must": true
-   },
-   {
-    "cat": "Cargo",
-    "w": 1.5,
-    "style": "corner",
-    "max": 3
    },
    {
     "cat": "Storage",
     "w": 2,
-    "style": "row",
-    "max": 3
+    "style": "block",
+    "max": 4
    },
    {
     "cat": "Ship's Locker",
     "w": 1,
     "style": "wall",
-    "max": 1
+    "max": 2
    }
   ],
   "hangar": [
    {
     "cat": "Cargo",
     "w": 2,
-    "style": "corner",
-    "max": 3
+    "style": "block",
+    "max": 4
    },
    {
     "cat": "Storage",
@@ -587,7 +581,7 @@
    {
     "cat": "Cargo",
     "w": 1,
-    "style": "corner",
+    "style": "block",
     "max": 2
    }
   ],
@@ -595,14 +589,14 @@
    {
     "cat": "Cargo",
     "w": 3,
-    "style": "row",
-    "max": 5
+    "style": "block",
+    "max": 6
    },
    {
     "cat": "Storage",
     "w": 2,
-    "style": "row",
-    "max": 2
+    "style": "block",
+    "max": 3
    },
    {
     "cat": "Ship's Locker",
@@ -753,7 +747,7 @@
    {
     "cat": "Cargo",
     "w": 2,
-    "style": "corner",
+    "style": "block",
     "max": 2
    },
    {

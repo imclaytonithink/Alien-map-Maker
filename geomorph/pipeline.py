@@ -129,10 +129,13 @@ def finish(res: Result, rng, o, arch, table, cond_default, theme) -> Result:
     dressing.apply_condition(res, rng, cond_default, o.get("zone_conditions"), o.get("mixed_conditions"))
     dressing.apply_peculiarities(res, rng, o.get("peculiarities", 2))
     dressing.apply_overlays(res, rng, o.get("overlays"), o.get("intensity", 0.5), arch)
-    if o.get("decor") and o["decor"].get("enabled"):
+    if o.get("decor") and (o["decor"].get("enabled") or o["decor"].get("exterior")):
         from . import decor, symbols
         res.symbols = symbols.load()
+        o["_group"] = (arch or {}).get("group", "")
+        res.decor = []
         decor.apply(res, rng, res.symbols, o["decor"])
+        decor.apply_exterior(res, rng, res.symbols, o["decor"])
     dressing.build_key(res, rng, arch)
     dressing.build_section(res)
     dressing.build_text(res, rng, arch, theme, res.meta["name"])

@@ -230,9 +230,12 @@ def _draw_decor(res, g, layer, images, x0, y0, pps):
 
 
 def _paste_clipped(dst, src, x, y):
-    cx0, cy0 = max(0, -x), max(0, -y)
-    crop = src.crop((cx0, cy0, src.width, src.height))
-    dst.alpha_composite(crop, (max(0, x), max(0, y)))
+    """alpha_composite ``src`` at (x, y), clipped to ``dst`` (nothing happens when it is entirely outside)."""
+    l, t = max(0, x), max(0, y)
+    rr, bb = min(dst.width, x + src.width), min(dst.height, y + src.height)
+    if rr <= l or bb <= t:
+        return
+    dst.alpha_composite(src.crop((l - x, t - y, rr - x, bb - y)), (l, t))
 
 
 def _overlays(res, g, layer, x0, y0, pps, gm):

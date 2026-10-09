@@ -112,7 +112,7 @@ class Decorator:
         return out
 
     # -- one room rectangle -------------------------------------------------
-    def furnish(self, tile, p, rect, level, zone, incident, prefer=()):
+    def furnish(self, tile, p, rect, level, zone, incident, prefer=(), messy=False):
         """Place items in ``rect`` (cells of tile ``p``); returns decor dicts and filler pieces."""
         rng = self.rng
         entries = self.kit(tile, prefer)
@@ -146,7 +146,7 @@ class Decorator:
                            "flip": bool(flip), "zone": zone, "kind": "item", "cat": sym.cat})
             counts[id(ent)] = counts.get(id(ent), 0) + 1
 
-        def place_wall(ent, sym, side=None, start=None):
+        def place_wall(ent, sym, side=None, start=None, inset=0):
             side = side or rng.choice("NESW")
             rot = 0 if (side in "NS") == (sym.w >= sym.h) else 90
             cw_, ch_, _sw, _sh = dims(sym, rot)
@@ -154,10 +154,10 @@ class Decorator:
                 return None
             if side in "NS":
                 ix = start if start is not None else rng.randint(0, w - cw_)
-                iy = 0 if side == "N" else h - ch_
+                iy = inset if side == "N" else h - ch_ - inset
             else:
                 iy = start if start is not None else rng.randint(0, h - ch_)
-                ix = 0 if side == "W" else w - cw_
+                ix = inset if side == "W" else w - cw_ - inset
             if fits(ix, iy, cw_, ch_):
                 put(sym, ix, iy, rot, ent, flip=rng.random() < 0.3)
                 return (side, ix, iy, cw_, ch_)
@@ -211,9 +211,52 @@ class Decorator:
                 _s, ix, iy, cw_, ch_ = ok
             return True
 
+        def place_block(ent, sym):
+            """Neat stock: one wall, rows of the same crate side by side (a second row behind the first when
+            there is room), leaving an aisle through the middle."""
+            side = rng.choice("NESW")
+            first = place_wall(ent, sym, side, start=0 if rng.random() < 0.5 else None)
+            if not first:
+                return False
+            _s, ix, iy, cw_, ch_ = first
+            along = (w if side in "NS" else h)
+            depth = ch_ if side in "NS" else cw_
+            pos = (ix if side in "NS" else iy)
+            step = cw_ if side in "NS" else ch_
+            # the rest of the first row
+            p0 = pos + step
+            while counts.get(id(ent), 0) < ent.get("max", 6) and p0 + step <= along:
+                if not place_wall(ent, sym, side, p0):
+                    break
+                p0 += step
+            across = (h if side in "NS" else w)
+            if across - 2 * depth >= 4 and counts.get(id(ent), 0) < ent.get("max", 6):    # aisle stays >= 2 squares
+                p1 = pos
+                while counts.get(id(ent), 0) < ent.get("max", 6) and p1 + step <= along:
+                    if not place_wall(ent, sym, side, p1, inset=depth):
+                        break
+                    p1 += step
+            return True
+
+        def place_scatter(ent, sym):
+            for _ in range(10):
+                rot = rng.choice((0, 90))
+                cw_, ch_, _sw, _sh = dims(sym, rot)
+                if cw_ > w or ch_ > h:
+                    continue
+                ix, iy = rng.randint(0, w - cw_), rng.randint(0, h - ch_)
+                if fits(ix, iy, cw_, ch_):
+                    put(sym, ix, iy, rot, ent, flip=rng.random() < 0.5)
+                    return True
+            return False
+
         def place(ent):
             sym = rng.choice(ent["pool"])
             style = ent.get("style", "wall")
+            if messy and ent["cat"] in ("Cargo", "Storage", "Ship's Locker") and style in ("block", "row", "corner", "wall"):
+                return place_scatter(ent, sym)             # the scenario calls for a mess: crates everywhere
+            if style == "block":
+                return place_block(ent, sym)
             if style == "center":
                 return place_center(ent, sym)
             if style == "corner":
@@ -315,6 +358,144 @@ class Decorator:
         return out
 
 
+_EXT = None
+
+
+def exterior_rules():
+    global _EXT
+    if _EXT is None:
+        _EXT = json.loads((DATA_DIR / "symbol_exterior.json").read_text(encoding="utf-8"))
+    return _EXT
+
+
+def _landscaping(symbols):
+    by = {}
+    rx = re.compile(r"Landscaping 0*(\d+)")
+    for s in symbols.values():
+        m = rx.search(s.name)
+        if m and s.cat == "Misc":
+            by[int(m.group(1)) if m.group(1) else 0] = s
+    return by
+
+
+def apply_exterior(res, rng, symbols: dict, opts: dict):
+    """Trees, bushes, boulders, benches, fountains and fields outdoors — only where a site would have them.
+
+    * Non-ship sites, on levels that have open ground (campus, street, mine surface).
+    * What grows depends on the environment (trees only in a breathable atmosphere; rocks and scrub on a hostile
+      world; only rocks on an airless one; nothing for an orbital station) and on the kind of site (a company
+      town gets trees and benches, a mine only rock and scrub, a garrison almost nothing, a farm gets fields).
+    * It keeps off buildings, corridors, roads, pads, the gate and the approach to the entrance, and the fence line.
+    """
+    if res.kind != "site" or res.layout is None or not opts or not opts.get("exterior"):
+        return res
+    ext = exterior_rules()
+    env = res.meta.get("environment", "breathable")
+    allowed = set(ext["env"].get(env, []))
+    arch_name = res.meta.get("archetype", "")
+    group = (res.options or {}).get("_group") or ""
+    style = ext["style_by_archetype"].get(arch_name) or ext["style_by_group"].get(group) or "civil"
+    weights = {k: v for k, v in ext["style"][style].items() if k in allowed}
+    if not weights:
+        return res
+    sym_by_num = _landscaping(symbols)
+    groups = {k: [sym_by_num[n] for n in v if n in sym_by_num] for k, v in ext["groups"].items()}
+    density = max(0.0, min(1.0, float(opts.get("exterior_density", opts.get("density", 0.5)))))
+    out = []
+    for g in res.grids:
+        grounds = [f for f in g.filler if f["kind"] in ("ground", "rock") and f["w"] * f["h"] > 100]
+        if not grounds or any(f["kind"] == "rock" for f in grounds if f["w"] * f["h"] > 100) and env == "underground" and g.index != 0:
+            continue
+        ground = max(grounds, key=lambda f: f["w"] * f["h"])
+        gx0, gy0, gx1, gy1 = ground["x"] + 2, ground["y"] + 2, ground["x"] + ground["w"] - 2, ground["y"] + ground["h"] - 2
+        gate = getattr(res.layout, "gate", {}) or {}
+        yard = (gx0, gy0, gx1, gy1)                       # the whole open ground (fields may lie outside the fence)
+        if gate.get("box"):                               # everything else stays inside the fence
+            bx0, by0, bx1, by1 = gate["box"]
+            gx0, gy0, gx1, gy1 = max(gx0, bx0 + 1), max(gy0, by0 + 1), min(gx1, bx1 - 1), min(gy1, by1 - 1)
+        fence = (gx0, gy0, gx1, gy1)
+        occ = set()
+
+        def mark(x, y, w, h, margin=1):
+            for cx in range(int(math.floor(x)) - margin, int(math.ceil(x + w)) + margin):
+                for cy in range(int(math.floor(y)) - margin, int(math.ceil(y + h)) + margin):
+                    occ.add((cx, cy))
+        for p in g.placed:
+            mark(p.x, p.y, p.w, p.h, 2)
+        for f in g.filler:
+            if f["kind"] in ("ground", "rock", "water", "dome"):
+                continue
+            mark(f["x"], f["y"], f["w"], f["h"], 1)
+        ent = res.layout.entrance or {}
+        if ent.get("level", 0) == g.index and "x" in ent:
+            mark(ent["x"] - 3, ent["y"] - 3, 6, 6, 1)             # the approach to the entrance stays open
+        if gate.get("x") is not None:
+            mark(gate["x"] - 3, gate["y"] - 3, 10, 10, 0)
+        near_building = {(c[0] + dx, c[1] + dy) for p in g.placed for c in p.cells() for dx, dy in ((-3, 0), (3, 0), (0, -3), (0, 3))}
+
+        def free(cx, cy, w, h):
+            return all((x, y) not in occ for x in range(int(math.floor(cx - w / 2)) - 0, int(math.ceil(cx + w / 2)) + 0)
+                       for y in range(int(math.floor(cy - h / 2)), int(math.ceil(cy + h / 2))))
+
+        def place(sym, cx, cy, rot, gap=1, bounds=None):
+            w, h = (sym.h, sym.w) if rot % 180 else (sym.w, sym.h)
+            if rot % 90:
+                w = h = max(sym.w, sym.h)
+            bx0_, by0_, bx1_, by1_ = bounds or fence
+            if cx - w / 2 < bx0_ or cy - h / 2 < by0_ or cx + w / 2 > bx1_ or cy + h / 2 > by1_:
+                return False
+            if not free(cx, cy, w, h):
+                return False
+            mark(cx - w / 2, cy - h / 2, w, h, gap)
+            out.append({"sym": sym.id, "level": g.index, "cx": round(cx, 3), "cy": round(cy, 3), "rot": rot,
+                        "flip": rng.random() < 0.5, "zone": "", "kind": "exterior", "cat": sym.cat})
+            return True
+        area = max(1, (gx1 - gx0) * (gy1 - gy0))
+        counts = {"tree": area / 220, "grove": area / 900, "shrub": area / 90, "rock": area / 150, "stones": area / 600,
+                  "bench": 3, "planter": 2, "hedge": area / 500, "fountain": 1, "field": area / 450}
+        for kind, wgt in weights.items():
+            pool = groups.get(kind) or []
+            if not pool:
+                continue
+            n = int(round(counts[kind] * wgt * (0.3 + density * 1.4)))
+            if kind == "fountain" and (density < 0.3 or style not in ("civil", "park")):
+                n = 0
+            for _ in range(max(0, n)):
+                sym = rng.choice(pool)
+                if kind in ("field", "grove", "fountain"):         # big pieces: search the whole yard for a place they fit
+                    lim = yard if kind == "field" else fence      # farmland surrounds the compound
+                    spots = [(x + 0.5, y + 0.5) for x in range(int(lim[0]), int(lim[2]), 2) for y in range(int(lim[1]), int(lim[3]), 2)]
+                    rng.shuffle(spots)
+                    if kind == "fountain":
+                        spots.sort(key=lambda p: abs(p[0] - (gx0 + gx1) / 2) + abs(p[1] - (gy0 + gy1) / 2))
+                    for cx, cy in spots[:600]:
+                        rot = rng.choice((0, 90)) if kind == "field" else 0
+                        if place(sym, cx + (sym.w / 2 - 0.5), cy + (sym.h / 2 - 0.5), rot, bounds=lim):
+                            break
+                    continue
+                for _try in range(40):
+                    cx, cy = rng.uniform(gx0, gx1), rng.uniform(gy0, gy1)
+                    if kind == "shrub" and (int(cx), int(cy)) not in near_building:
+                        continue                                    # shrubs hug the buildings
+                    edge = min(cx - gx0, gx1 - cx, cy - gy0, gy1 - cy)
+                    if kind in ("tree", "hedge") and edge > 9 and not (style == "park" and rng.random() < 0.3):
+                        continue                                    # trees and hedges line the edges, the middle stays clear
+                    if kind in ("bench", "planter") and ent and abs(cx - ent.get("x", cx)) + abs(cy - ent.get("y", cy)) > 14:
+                        continue
+                    if kind == "fountain":
+                        cx, cy = (gx0 + gx1) / 2 + rng.uniform(-6, 6), (gy0 + gy1) / 2 + rng.uniform(-6, 6)
+                    rot = rng.choice((0, 90)) if kind in ("bench", "planter", "hedge", "field", "stones") else rng.randrange(0, 360, 15)
+                    if kind == "rock" and place(sym, cx, cy, rot):         # boulders come in small clusters
+                        for _k in range(rng.randint(0, 2)):
+                            place(rng.choice(pool), cx + rng.uniform(-1.6, 1.6), cy + rng.uniform(-1.6, 1.6), rng.randrange(0, 360, 15), 0)
+                        break
+                    if kind != "rock" and place(sym, cx, cy, rot):
+                        break
+    res.decor = list(getattr(res, "decor", []) or []) + out
+    res.meta.setdefault("decor", {})["exterior"] = len(out)
+    return res
+
+
 def apply(res, rng, symbols: dict, opts: dict):
     """Furnish ``res`` (a generation Result). ``opts``: enabled, density, incident, where, cats."""
     if not opts or not opts.get("enabled") or not symbols:
@@ -351,7 +532,9 @@ def apply(res, rng, symbols: dict, opts: dict):
                     continue                          # stair/lift cores are circulation: no furniture
                 kits = symbol_kits()
                 prefer = ([z.base] if z.base in kits else list(z.tags[:2])) if z is not None else []
-                items, extra = dec.furnish(p.tile, p, rect, g.index, p.zone, kind, prefer)
+                cond = (res.meta.get("zone_conditions") or {}).get(p.zone) or res.meta.get("condition", "Average")
+                messy = kind != "none" or cond in ("Cluttered", "Scrap", "Derelict", "Disrepair")
+                items, extra = dec.furnish(p.tile, p, rect, g.index, p.zone, kind, prefer, messy)
                 for it in items:                      # trace each item to the tile it stands in
                     it["tile"], it["tx"], it["ty"] = p.tile.id, p.x, p.y
                 out.extend(items)

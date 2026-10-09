@@ -172,10 +172,11 @@ def campus(rng, p, env, need, ctx):
     nrow = math.ceil(n / ncol)
     lay = Layout(levels=1, level_names=["Surface"], slots=[], topology="campus")
     pitch = T + GAP
+    base = max(PAD, ctx.get("ground_margin", PAD))      # room for the ground around (farmland needs more)
     order = [(i, j) for j in range(nrow) for i in range(ncol)][:n]
     pos = {}
     for k, (i, j) in enumerate(order):
-        s = _slot(lay, 0, PAD + i * pitch, PAD + j * pitch)
+        s = _slot(lay, 0, base + i * pitch, base + j * pitch)
         pos[(i, j)] = s
     # links between grid neighbours (walkways drawn after tiles are placed)
     for (i, j), s in pos.items():
@@ -183,7 +184,7 @@ def campus(rng, p, env, need, ctx):
             t = pos.get((i + di, j + dj))
             if t:
                 lay.links.append(Link(s.idx, t.idx, "walkway"))
-    _ground(lay, 0)
+    _ground(lay, 0, margin=ctx.get("ground_margin", PAD))
     ctx["perimeter_box"] = _slots_box(lay, 0)
     if nlev > 1:                           # large campuses: a second, covered level
         lay.levels = 2
@@ -191,8 +192,8 @@ def campus(rng, p, env, need, ctx):
         for (i, j), s in list(pos.items())[: max(2, n // 3)]:
             s2 = _slot(lay, 1, s.x, s.y)
             lay.links.append(Link(s.idx, s2.idx, "stairs"))
-        lay.filler.append(F.piece("rock", 1, PAD - 2, PAD - 2, ncol * pitch, nrow * pitch))
-        lay.vertical.append({"kind": "stairs", "x": PAD, "y": PAD, "w": 4, "h": 4, "levels": [0, 1],
+        lay.filler.append(F.piece("rock", 1, base - 2, base - 2, ncol * pitch, nrow * pitch))
+        lay.vertical.append({"kind": "stairs", "x": base, "y": base, "w": 4, "h": 4, "levels": [0, 1],
                              "source": "filler"})
     return lay
 

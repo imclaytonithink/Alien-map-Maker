@@ -91,12 +91,27 @@ def patch_pieces(level, side, coords, a: Placed):
     return out
 
 
-def walkway_between(grid: LevelGrid, a: Placed, b: Placed, kind="walkway", width=2):
-    """Draw a straight corridor between two tiles that do not touch.
+def _strip_depth(p, side, c0, width):
+    """Open distance inside tile ``p`` before its first visible wall on the strip [c0, c0+width) (None: no wall there)."""
+    try:
+        from . import decor, floors
+        rows = decor.tile_floors().get(p.tile.id)
+        if not rows:
+            return 0.0                               # filler box: its edge is the wall
+        grid = floors.transform(floors.decode(rows), p.o.rot, p.o.mirror)
+        base = p.y if side in ("E", "W") else p.x
+        return floors.solid_depth(grid, side, c0 - base, c0 - base + width, none_if_empty=True)
+    except AttributeError:
+        return 0.0
 
-    The corridor runs square to both facing walls at a position where the two tiles overlap, preferring a spot
-    where both walls already have a door; where a wall has none a door is cut into it (a door glyph on the wall).
-    Tiles that do not overlap at all (diagonal neighbours) are joined with a single elbow.
+
+def walkway_between(grid: LevelGrid, a: Placed, b: Placed, kind="walkway", width=2):
+    """Draw a corridor between two tiles that do not touch, so that it really connects.
+
+    It runs square to both facing walls and on until each tile's *visible* wall (tile art often leaves empty floor
+    inside its plan edge). Where the tiles overlap it looks for a straight run that hits a wall at both ends,
+    preferring existing doors; a door glyph is cut into each wall that has none. If no straight run reaches both
+    buildings (one has its room off to the side) the corridor jogs once in the gap.
     Returns ``(pieces, (side_a, coord_a), (side_b, coord_b))``.
     """
     acx, acy = a.x + a.w / 2, a.y + a.h / 2
@@ -107,67 +122,92 @@ def walkway_between(grid: LevelGrid, a: Placed, b: Placed, kind="walkway", width
     else:
         sa, sb = ("S", "N") if dy > 0 else ("N", "S")
     lvl = a.level
-    out = []
-    horiz = sa in ("E", "W")                       # corridor runs left-right
-    if horiz:
-        lo, hi = max(a.y, b.y), min(a.y + a.h, b.y + b.h)
-    else:
-        lo, hi = max(a.x, b.x), min(a.x + a.w, b.x + b.w)
+    horiz = sa in ("E", "W")
+    lo_a = int(a.y if horiz else a.x)
+    n_a = int(a.h if horiz else a.w)
+    lo_b = int(b.y if horiz else b.x)
+    n_b = int(b.h if horiz else b.w)
 
     def door_coords(p, side):
-        cls = p.side_cls(side)
         base = p.y if side in ("E", "W") else p.x
-        return {base + i for i, c in enumerate(cls) if c == DOOR}
+        return {base + i for i, c in enumerate(p.side_cls(side)) if c == DOOR}
     da, db = door_coords(a, sa), door_coords(b, sb)
-    if hi - lo >= width:
-        best = None
+    ov_lo, ov_hi = max(lo_a, lo_b), min(lo_a + n_a, lo_b + n_b)
+
+    def candidates(lo, hi):
+        res = []
         for c in range(int(lo), int(hi) - width + 1):
-            span = set(range(c, c + width))
-            both = bool(span & da and span & db)
-            near = min([abs(c + (width - 1) / 2 - d) for d in (da | db)] or [99])
-            cost = (0 if both else 1, near + abs(c + width / 2 - (lo + hi) / 2) * 0.1)
-            if best is None or cost < best[0]:
-                best = (cost, c, both)
-        _, c, both = best
+            res.append((c, _strip_depth(a, sa, c, width), _strip_depth(b, sb, c, width)))
+        return res
+    straight = [(c, x, y) for c, x, y in candidates(ov_lo, ov_hi) if x is not None and y is not None]
+    out = []
+
+    def run(c0, ia, ib):
+        """One straight corridor at strip [c0, c0+width) from tile a's wall to tile b's wall."""
         if horiz:
-            xa = a.x + a.w if sa == "E" else b.x + b.w
-            xb = b.x if sa == "E" else a.x
-            out.append(F.piece(kind, lvl, xa, c, max(0.5, xb - xa), width))
-            walls = ((a, sa, a.x + a.w if sa == "E" else a.x), (b, sb, b.x if sb == "W" else b.x + b.w))
-            for p, side, wx in walls:
-                if not (set(range(c, c + width)) & door_coords(p, side)):
-                    out.append(F.piece("door", lvl, wx - 0.5, c, 1, width))
-        else:
-            ya = a.y + a.h if sa == "S" else b.y + b.h
-            yb = b.y if sa == "S" else a.y
-            out.append(F.piece(kind, lvl, c, ya, width, max(0.5, yb - ya)))
-            walls = ((a, sa, a.y + a.h if sa == "S" else a.y), (b, sb, b.y if sb == "N" else b.y + b.h))
-            for p, side, wy in walls:
-                if not (set(range(c, c + width)) & door_coords(p, side)):
-                    out.append(F.piece("door", lvl, c, wy - 0.5, width, 1))
-        return out, (sa, c), (sb, c)
+            left, right = (a, b) if sa == "E" else (b, a)
+            il, ir = (ia, ib) if sa == "E" else (ib, ia)
+            xa, xb = left.x + left.w - il, right.x + ir
+            out.append(F.piece(kind, lvl, xa, c0, max(0.5, xb - xa), width))
+            return (left, "E", xa, il, c0), (right, "W", xb, ir, c0)
+        top, bot = (a, b) if sa == "S" else (b, a)
+        it, ibt = (ia, ib) if sa == "S" else (ib, ia)
+        ya, yb = top.y + top.h - it, bot.y + ibt
+        out.append(F.piece(kind, lvl, c0, ya, width, max(0.5, yb - ya)))
+        return (top, "S", ya, it, c0), (bot, "N", yb, ibt, c0)
 
-    # no overlap: one elbow from a door of ``a`` to a door of ``b``
-    def pick(p, side, toward):
-        cs = door_coords(p, side) or {(p.y if side in ("E", "W") else p.x) + len(p.side_cls(side)) // 2}
-        pts = [(c, boundary_point(p, side, c)) for c in cs]
-        return min(pts, key=lambda q: abs(q[1][0] - toward[0]) + abs(q[1][1] - toward[1]))
-    ca, pa = pick(a, sa, (bcx, bcy))
-    cb, pb = pick(b, sb, pa)
+    def door_at(p, side, w_, ins, c0):
+        if ins > 0 or not (set(range(c0, c0 + width)) & door_coords(p, side)):
+            if side in ("E", "W"):
+                out.append(F.piece("door", lvl, w_ - 0.5, c0, 1, width))
+            else:
+                out.append(F.piece("door", lvl, c0, w_ - 0.5, width, 1))
+    if straight:
+        def cost(item):
+            c0, ia, ib = item
+            span = set(range(c0, c0 + width))
+            both = bool(span & da and span & db)
+            return (0 if both else 1, ia + ib, abs(c0 + width / 2 - (ov_lo + ov_hi) / 2))
+        c0, ia, ib = min(straight, key=cost)
+        for p, side, w_, ins, cc in run(c0, ia, ib):
+            door_at(p, side, w_, ins, cc)
+        return out, (sa, c0), (sb, c0)
+    # one jog: each end at its own best strip (the first strip that reaches a wall, nearest the other end's centre)
 
-    def seg(x0, y0, x1, y1):
-        if abs(x1 - x0) >= abs(y1 - y0):
-            xa_, xb_ = sorted((x0, x1))
-            out.append(F.piece(kind, lvl, xa_, y0 - width / 2, max(0.5, xb_ - xa_), width))
-        else:
-            ya_, yb_ = sorted((y0, y1))
-            out.append(F.piece(kind, lvl, x0 - width / 2, ya_, width, max(0.5, yb_ - ya_)))
+    def best_strip(p, side, lo, n, target):
+        opts = []
+        for c in range(int(lo), int(lo) + int(n) - width + 1):
+            d = _strip_depth(p, side, c, width)
+            if d is not None:
+                opts.append((abs(c + width / 2 - target), c, d))
+        if not opts:
+            c = int(lo + n // 2 - width // 2)
+            return c, 0.0
+        _, c, d = min(opts)
+        return c, d
+    target = (bcy if horiz else bcx)
+    ca, ia = best_strip(a, sa, lo_a, n_a, target)
+    cb, ib = best_strip(b, sb, lo_b, n_b, ca + width / 2)
     if horiz:
-        seg(pa[0], pa[1], pb[0], pa[1])
-        seg(pb[0], pa[1], pb[0], pb[1])
+        left, right = (a, b) if sa == "E" else (b, a)
+        cl, il, cr, ir = (ca, ia, cb, ib) if sa == "E" else (cb, ib, ca, ia)
+        xa, xb = left.x + left.w - il, right.x + ir
+        mid = (left.x + left.w + right.x) / 2
+        out.append(F.piece(kind, lvl, xa, cl, max(0.5, mid + width / 2 - xa), width))
+        out.append(F.piece(kind, lvl, mid - width / 2, min(cl, cr), width, abs(cl - cr) + width))
+        out.append(F.piece(kind, lvl, mid - width / 2, cr, max(0.5, xb - mid + width / 2), width))
+        door_at(left, "E", xa, il, cl)
+        door_at(right, "W", xb, ir, cr)
     else:
-        seg(pa[0], pa[1], pa[0], pb[1])
-        seg(pa[0], pb[1], pb[0], pb[1])
+        top, bot = (a, b) if sa == "S" else (b, a)
+        ct, it, cbt, ibt = (ca, ia, cb, ib) if sa == "S" else (cb, ib, ca, ia)
+        ya, yb = top.y + top.h - it, bot.y + ibt
+        mid = (top.y + top.h + bot.y) / 2
+        out.append(F.piece(kind, lvl, ct, ya, width, max(0.5, mid + width / 2 - ya)))
+        out.append(F.piece(kind, lvl, min(ct, cbt), mid - width / 2, abs(ct - cbt) + width, width))
+        out.append(F.piece(kind, lvl, cbt, mid - width / 2, width, max(0.5, yb - mid + width / 2)))
+        door_at(top, "S", ya, it, ct)
+        door_at(bot, "N", yb, ibt, cbt)
     return out, (sa, ca), (sb, cb)
 
 

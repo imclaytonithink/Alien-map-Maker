@@ -136,10 +136,14 @@ dlg.cb_incident.setCurrentIndex(dlg.cb_incident.findData("overrun"))
 dlg.cb_where.setCurrentIndex(dlg.cb_where.findData("all"))
 dlg.sl_decor.setValue(90)
 opts = dlg.options()
-assert opts["decor"] == {"enabled": True, "density": 0.9, "incident": "overrun", "where": "all"}
+assert opts["decor"] == {"enabled": True, "density": 0.9, "incident": "overrun", "where": "all", "exterior": True}
+dlg.ck_outdoor.setChecked(False)
+assert dlg.options()["decor"]["exterior"] is False
+dlg.ck_outdoor.setChecked(True)
 dlg.generate()
 assert dlg.result.decor and dlg.result.meta["decor"]["incident"] == "overrun"
 dlg.ck_decor.setChecked(False)
+dlg.ck_outdoor.setChecked(False)
 assert "decor" not in dlg.options()
 
 assert dlg.options()["grouping"] == 0.6
