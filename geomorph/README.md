@@ -23,6 +23,7 @@ Standard tiles are used for buildings (edge tiles read as ship hull only). Add y
 Wings: one Port + one Starboard tile with the same number/variant/colour, mirrored about the centre line.
 Nose/tail: exactly one each on the centre line (bridge on the nose, engineering on the tail), optionally a 100'->50' transition between hull and nose.
 Fuel-scoop wings need a fuel nose or tail. The pack's [Mirror] file is used instead of a flipped copy so labels read correctly.
+Launch bays, barbettes/turrets, escape pods and fuel scoops always come as mirrored port/starboard pairs; maneuver/jump drive rooms only at the stern.
 AF09 wings are skipped until their root-transition geometry is modelled.
 Custom Tiles pack: `python -m geomorph --tiles <main pack> manifest --extra <custom pack>`.
 Aerofins are always a mirrored pair. One bridge on the nose, one engineering on the tail (centre line).

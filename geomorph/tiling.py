@@ -38,7 +38,7 @@ class TilePicker:
     # -- selection -----------------------------------------------------
     def choose(self, grid: LevelGrid, x, y, w, h, tags, tile_type="standard", prefer_open=(),
                fallback_tags=("multipurpose", "cargo", "recreation"), fixed=None, reuse_penalty=0.35,
-               allowed_orients=None, topn=6, strict_fit=False):
+               allowed_orients=None, topn=6, strict_fit=False, reject=None):
         """Pick ``(tile, orientation, fit)`` for the box at (x, y), or ``None``.
 
         ``prefer_open`` lists sides (N/E/S/W) that should carry doors (links to
@@ -53,6 +53,12 @@ class TilePicker:
             if not cands:
                 cands = [(0.1, t) for t in self.reg.tiles.values()
                          if t.type == tile_type and {t.w, t.h} == {w, h}]
+        if reject is not None:
+            kept = [(s_, t_) for s_, t_ in cands if not reject(t_)]
+            if not kept:                 # rule is strict: widen to any tile of this size that obeys it
+                kept = [(0.1, t_) for t_ in self.reg.tiles.values()
+                        if t_.type == tile_type and {t_.w, t_.h} == {w, h} and not reject(t_)]
+            cands = kept or cands
         scored = []
         for ts, tile in cands:
             best = None

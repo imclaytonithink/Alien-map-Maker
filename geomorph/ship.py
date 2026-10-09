@@ -21,6 +21,22 @@ SHIP_TYPES = {
     "Colony / Generational": {"extra": {"lowberth": 3, "cargo": 2, "vehicle_bay": 1, "hydroponics": 1}, "palette": {"lowberth": 4, "cargo": 3, "hydroponics": 2, "staterooms": 2, "vehicle_bay": 1, "workshop": 1, "medical": 1}},
     "Medical / Rescue": {"extra": {"medical": 3, "lab": 1, "passenger": 1}, "palette": {"medical": 4, "lab": 2, "passenger": 2, "staterooms": 2, "hangar": 1, "escape": 1}},
 }
+# RULES for ship parts that must come in pairs / only in one place
+PAIRED_TAGS = ("hangar", "weapons", "escape", "scoop")     # launch bays, barbettes/turrets, escape pods, fuel scoops
+DRIVE_TAG = "drive"                                        # maneuver / jump drive rooms: stern only
+
+
+def is_paired(tile) -> bool:
+    return any(tile.tags.get(t, 0) >= 0.9 for t in PAIRED_TAGS)
+
+
+def drive_rejector(slot):
+    """Drive sections belong only at the stern (the engineering end and its transition)."""
+    if slot.get("role") in ("stern", "stern_t"):
+        return None
+    return lambda tile: tile.tags.get(DRIVE_TAG, 0) >= 0.5
+
+
 BASE_REQUIRED = {"bridge": 1, "engineering": 1, "fuel": 1, "staterooms": 1}
 MODES = ("planned", "random", "selective", "movie")
 # where along the hull (0 bow .. 1 stern) each function likes to sit
@@ -191,16 +207,17 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
         pick = None
         # symmetric partner: reuse the mirrored tile when the port side was already placed
         # rule: aerofins are ALWAYS a mirrored pair; other port/starboard pieces follow the toggle
-        if s.get("role") == "fin" or (symmetric and s["kind"] != "end"):
+        if s.get("role") == "fin" or s["kind"] != "end":
             partner = _partner(slots, i, C)
-            if partner is not None and partner in placed:
+            # paired parts mirror their partner even with the symmetry toggle off
+            if partner is not None and partner in placed and (symmetric or is_paired(placed[partner].tile)):
                 p0 = placed[partner]
                 best = None
                 # RULE: when the pack has a [Mirror] file for the tile, use it (not a flipped copy) so labels read correctly
                 twin = mirror_twin(registry, p0.tile)
                 for tile2, want_flip in ((twin, False), (p0.tile, True)) if twin else ((p0.tile, True),):
-                    for o in orientations(tile2):
-                        if (o.w, o.h) != (s["w"], s["h"]) or (o.mirror == p0.o.mirror) == want_flip:
+                    for o in (orientation_for(tile2, rot, p0.o.mirror != want_flip) for rot in (0, 90, 180, 270)):
+                        if (o.w, o.h) != (s["w"], s["h"]):
                             continue
                         if allowed is not None and not allowed(tile2, o):
                             continue
@@ -210,12 +227,17 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
                             best = (sc, o, f, tile2)
                 if best is not None:
                     pick = (best[3], best[1], best[2])
+        rej = drive_rejector(s)
+        pr = _partner(slots, i, C) if s["kind"] != "end" else None
+        if pr is not None and pr in placed and not is_paired(placed[pr].tile):
+            base_rej = rej                       # partner is an ordinary part: this side must not be a paired part
+            rej = (lambda tile, b=base_rej: is_paired(tile) or (b is not None and b(tile)))
         if pick is None:
             if mode == "selective":
-                pick = _selective_pick(picker, grid, s, t, ttype, allowed, rng)
+                pick = _selective_pick(picker, grid, s, t, ttype, allowed, rng, rej)
             else:
                 pick = picker.choose(grid, s["x"], s["y"], s["w"], s["h"], t, ttype,
-                                     allowed_orients=allowed)
+                                     allowed_orients=allowed, reject=rej)
         if pick is None:
             issues.append(f"no tile fits {s['kind']} slot at {s['x']},{s['y']}")
             continue
@@ -297,11 +319,12 @@ def _end_allowed(slot):
     return ok
 
 
-def _selective_pick(picker, grid, s, tags, ttype, allowed, rng):
+def _selective_pick(picker, grid, s, tags, ttype, allowed, rng, reject=None):
     """Random tile, but reject placements that make no sense (bad adjacencies, hull in the wrong place)."""
     from .assign import adjacency_rules
     forbid, _prefer = adjacency_rules()
-    pool = [t for t in picker.reg.tiles.values() if t.type == ttype and {t.w, t.h} == {s["w"], s["h"]}]
+    pool = [t for t in picker.reg.tiles.values() if t.type == ttype and {t.w, t.h} == {s["w"], s["h"]}
+            and not (reject and reject(t))]
     rng.shuffle(pool)
     first = None
     for tile in pool[:60]:
@@ -322,7 +345,7 @@ def _selective_pick(picker, grid, s, tags, ttype, allowed, rng):
             if not bad:
                 picker.used[tile.id] = picker.used.get(tile.id, 0) + 1
                 return tile, o, f
-    return first or picker.choose(grid, s["x"], s["y"], s["w"], s["h"], tags, ttype, allowed_orients=allowed)
+    return first or picker.choose(grid, s["x"], s["y"], s["w"], s["h"], tags, ttype, allowed_orients=allowed, reject=reject)
 
 
 def _movie_crop(grid, rng, info):

@@ -37983,7 +37983,8 @@
 "Fuel Ops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":0.6
 },
 "image":"100x50 Edge/322 [100x50] Fuel Deck (Intake Scoops, Fuel Ops).png",
 "mirror_of":"",
@@ -45400,7 +45401,8 @@
 "fuel":0.6,
 "office":0.6,
 "workshop":0.6,
-"airlock":0.6
+"airlock":0.6,
+"drive":0.6
 },
 "image":"100x50 Edge/361 [100x50] Engineering (Maneuver Drive, Power Plant, Fuel, Offices, Repair Shop, Airlock).png",
 "mirror_of":"",
@@ -47383,7 +47385,8 @@
 "hangar":0.6,
 "vehicle_bay":0.6,
 "office":0.6,
-"multipurpose":1.0
+"multipurpose":1.0,
+"scoop":0.6
 },
 "image":"100x50 Edge/372 [100x50] Multipurpose (20-dTon Launch, Air-Raft, Cargo Hold, Fuel Intake Scoop, Engineering, Offices).png",
 "mirror_of":"",
@@ -48469,7 +48472,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"refinery":1.0
+"refinery":1.0,
+"scoop":0.6
 },
 "image":"100x50 Edge/378 [100x50] Fuel Refinery (Intake Scoops).png",
 "mirror_of":"",
@@ -58549,7 +58553,8 @@
 "Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":0.6
 },
 "image":"100x50 Edge/433 [100x50] Fuel Deck (Intake Scoops).png",
 "mirror_of":"",
@@ -58723,7 +58728,8 @@
 "Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":0.6
 },
 "image":"100x50 Edge/434 [100x50] Fuel Deck (Intake Scoops).png",
 "mirror_of":"",
@@ -66326,7 +66332,8 @@
 "Intake Scoop"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":0.6
 },
 "image":"50x50 Corner/501 [50x50] Fuel Deck (Intake Scoop).png",
 "mirror_of":"",
@@ -66460,7 +66467,8 @@
 "Intake Scoop"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":0.6
 },
 "image":"50x50 Corner/502 [50x50] Fuel Deck (Intake Scoop).png",
 "mirror_of":"",
@@ -66594,7 +66602,8 @@
 "Intake Scoop"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":0.6
 },
 "image":"50x50 Corner/502 [50x50] [Mirror] Fuel Deck (Intake Scoop).png",
 "mirror_of":"502",
@@ -66861,7 +66870,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"refinery":1.0
+"refinery":1.0,
+"scoop":0.6
 },
 "image":"50x50 Corner/504 [50x50] Fuel Refinery (Intake Scoop).png",
 "mirror_of":"",
@@ -66999,7 +67009,8 @@
 "tags":{
 "fuel":1.0,
 "weapons":1.0,
-"office":0.6
+"office":0.6,
+"scoop":0.6
 },
 "image":"50x50 Corner/505 [50x50] Fuel Deck & Gunnery (Intake Scoop, 1x Gunnery, Office).png",
 "mirror_of":"",
@@ -83885,7 +83896,8 @@
 ],
 "tags":{
 "engineering":1.0,
-"power":1.0
+"power":1.0,
+"drive":0.6
 },
 "image":"50x50 Corner/584 [50x50] Engineering (Maneuver Drive, Jump Drive, Power Plant).png",
 "mirror_of":"",
@@ -84918,7 +84930,8 @@
 "cargo":0.6,
 "vehicle_bay":0.6,
 "airlock":0.6,
-"multipurpose":1.0
+"multipurpose":1.0,
+"scoop":0.6
 },
 "image":"50x50 Corner/589 [50x50] Multipurpose (Air-Raft, Airlock, Cargo Hold, Engineering, Fuel Intake Scoop).png",
 "mirror_of":"",
@@ -85065,7 +85078,8 @@
 "cargo":0.6,
 "vehicle_bay":0.6,
 "airlock":0.6,
-"multipurpose":1.0
+"multipurpose":1.0,
+"scoop":0.6
 },
 "image":"50x50 Corner/589 [50x50] [Mirror] Multipurpose (Air-Raft, Airlock, Cargo Hold, Engineering, Fuel Intake Scoop).png",
 "mirror_of":"589",
@@ -91705,7 +91719,8 @@
 "office":0.6,
 "workshop":0.6,
 "escape":0.6,
-"bridge":1.0
+"bridge":1.0,
+"scoop":0.6
 },
 "image":"100x100 End/703 [100x100] Bridge (10 Stations, Captains Stateroom & Briefing, Galley & Mess, Engineering, Fuel, Fuel Intake Scoops, Repair Shop, Air-Raft, 2 Escape Pods).png",
 "mirror_of":"",
@@ -91925,7 +91940,8 @@
 "tags":{
 "fuel":1.0,
 "hangar":0.6,
-"recreation":0.6
+"recreation":0.6,
+"scoop":0.6
 },
 "image":"100x100 End/704 [100x100] Fuel Deck (2x 50-dTon Launches, Fuel Intake Scoops, Lounge).png",
 "mirror_of":"",
@@ -94373,7 +94389,8 @@
 "crew_quarters":0.6,
 "passenger":0.6,
 "office":0.6,
-"workshop":0.6
+"workshop":0.6,
+"drive":0.6
 },
 "image":"100x100 End/713 [100x100] [Mirror] Engineering (Office, Briefing, Fuel Intake, Staterooms, Repair Shop, Jump Drive, Maneuver Drive, Powerplant).png",
 "mirror_of":"713",
@@ -95281,7 +95298,8 @@
 "office":0.6,
 "workshop":0.6,
 "airlock":0.6,
-"refinery":1.0
+"refinery":1.0,
+"drive":0.6
 },
 "image":"100x100 End/716 [100x100] Engineering & Mine Layer (Fuel, Airlock, Office, Repair Shop, Jump Drive, Maneuver Drive, Powerplant).png",
 "mirror_of":"",
@@ -111604,7 +111622,8 @@
 "engineering":1.0,
 "power":1.0,
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF01 [50x100] Gray, Port (Fuel Intake Scoops, Missiles, Engineering).png",
 "mirror_of":"",
@@ -111804,7 +111823,8 @@
 "engineering":1.0,
 "power":1.0,
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF01 [50x100] Gray, Starboard (Fuel Intake Scoops, Missiles, Engineering).png",
 "mirror_of":"",
@@ -112008,7 +112028,8 @@
 "engineering":1.0,
 "power":1.0,
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF01 [50x100] White, Port (Fuel Intake Scoops, Missiles, Engineering).png",
 "mirror_of":"",
@@ -112208,7 +112229,8 @@
 "engineering":1.0,
 "power":1.0,
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF01 [50x100] White, Starboard (Fuel Intake Scoops, Missiles, Engineering).png",
 "mirror_of":"",
@@ -112409,7 +112431,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF02 [50x100] Port (Fuel Intake Scoops, 2x Gunnery).png",
 "mirror_of":"",
@@ -112602,7 +112625,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF02 [50x100] Starboard (Fuel Intake Scoops, 2x Gunnery).png",
 "mirror_of":"",
@@ -114370,7 +114394,8 @@
 "tags":{
 "engineering":1.0,
 "power":1.0,
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF07 [50x100] Port (Fuel Intake Scoops, Engineering).png",
 "mirror_of":"",
@@ -114564,7 +114589,8 @@
 "tags":{
 "engineering":1.0,
 "power":1.0,
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF07 [50x100] Starboard (Fuel Intake Scoops, Engineering).png",
 "mirror_of":"",
@@ -115958,7 +115984,8 @@
 "power":1.0,
 "fuel":1.0,
 "cargo":1.0,
-"airlock":1.0
+"airlock":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF11 [50x200] (1) Port (Fuel Intake Scoops, Cargo Bay, Engineering, Airlock).png",
 "mirror_of":"",
@@ -116232,7 +116259,8 @@
 "power":1.0,
 "fuel":1.0,
 "cargo":1.0,
-"airlock":1.0
+"airlock":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF11 [50x200] (1) Starboard (Fuel Intake Scoops, Cargo Bay, Engineering, Airlock).png",
 "mirror_of":"",
@@ -116506,7 +116534,8 @@
 "power":1.0,
 "fuel":1.0,
 "cargo":1.0,
-"airlock":1.0
+"airlock":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF11 [50x200] (2) Port (Fuel Intake Scoops, Cargo Bay, Engineering, Airlock).png",
 "mirror_of":"",
@@ -116780,7 +116809,8 @@
 "power":1.0,
 "fuel":1.0,
 "cargo":1.0,
-"airlock":1.0
+"airlock":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF11 [50x200] (2) Starboard (Fuel Intake Scoops, Cargo Bay, Engineering, Airlock).png",
 "mirror_of":"",
@@ -117357,7 +117387,8 @@
 "Fuel Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (1) Port (Fuel Intake Scoops).png",
 "mirror_of":"",
@@ -117552,7 +117583,8 @@
 "Fuel Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (1) Starboard (Fuel Intake Scoops).png",
 "mirror_of":"",
@@ -117749,7 +117781,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (2) Port (Fuel Intake Scoops, 1x Gunnery).png",
 "mirror_of":"",
@@ -117946,7 +117979,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (2) Starboard (Fuel Intake Scoops, 1x Gunnery).png",
 "mirror_of":"",
@@ -118143,7 +118177,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (3) Port (Fuel Intake Scoops, 1x Gunnery).png",
 "mirror_of":"",
@@ -118340,7 +118375,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (3) Starboard (Fuel Intake Scoops, 1x Gunnery).png",
 "mirror_of":"",
@@ -118535,7 +118571,8 @@
 "Fuel Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (4) Port (Fuel Intake Scoops).png",
 "mirror_of":"",
@@ -118730,7 +118767,8 @@
 "Fuel Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (4) Starboard (Fuel Intake Scoops).png",
 "mirror_of":"",
@@ -118925,7 +118963,8 @@
 "Fuel Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (5) Port (Fuel Intake Scoops).png",
 "mirror_of":"",
@@ -119120,7 +119159,8 @@
 "Fuel Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (5) Starboard (Fuel Intake Scoops).png",
 "mirror_of":"",
@@ -119315,7 +119355,8 @@
 "Fuel Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (6) Port (Fuel Intake Scoops).png",
 "mirror_of":"",
@@ -119510,7 +119551,8 @@
 "Fuel Intake Scoops"
 ],
 "tags":{
-"fuel":1.0
+"fuel":1.0,
+"scoop":1.0
 },
 "image":"Misc/AF13 [50x100] (6) Starboard (Fuel Intake Scoops).png",
 "mirror_of":"",
@@ -119707,7 +119749,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"cargo":1.0
+"cargo":1.0,
+"scoop":1.0
 },
 "image":"Misc/A103 [50x100] (1) Port (Fuel Intake Scoops, Cargo Bay).png",
 "mirror_of":"",
@@ -119904,7 +119947,8 @@
 ],
 "tags":{
 "fuel":1.0,
-"vehicle_bay":1.0
+"vehicle_bay":1.0,
+"scoop":1.0
 },
 "image":"Misc/A103 [50x100] (1) Starboard (Fuel Intake Scoops, Air Raft).png",
 "mirror_of":"",
@@ -120103,7 +120147,8 @@
 "tags":{
 "fuel":1.0,
 "cargo":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/A103 [50x100] (2) Port (Fuel Intake Scoops, Cargo Bay, Gunnery).png",
 "mirror_of":"",
@@ -120302,7 +120347,8 @@
 "tags":{
 "fuel":1.0,
 "vehicle_bay":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/A103 [50x100] (2) Starboard (Fuel Intake Scoops, Air Raft, GUnnery).png",
 "mirror_of":"",
@@ -120501,7 +120547,8 @@
 "tags":{
 "fuel":1.0,
 "cargo":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/A103 [50x100] (3) Port (Fuel Intake Scoops, Cargo Bay, Gunnery).png",
 "mirror_of":"",
@@ -120700,7 +120747,8 @@
 "tags":{
 "fuel":1.0,
 "vehicle_bay":1.0,
-"weapons":1.0
+"weapons":1.0,
+"scoop":1.0
 },
 "image":"Misc/A103 [50x100] (3) Starboard (Fuel Intake Scoops, Air Raft, GUnnery).png",
 "mirror_of":"",

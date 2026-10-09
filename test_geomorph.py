@@ -262,6 +262,28 @@ def check_ships():
     assert chains >= 5, chains
     twin = ship.mirror_twin(REG, REG.tiles["502"])
     assert twin is not None and twin.mirror_of == "502" and ship.mirror_twin(REG, twin).id == "502"
+    # RULES: launch bays, barbettes, escape pods and fuel scoops come as mirrored pairs; drives only at the stern
+    paired_seen = 0
+    for mode in ("planned", "selective", "random"):
+        for sym in (True, False):
+            for seed in range(12):
+                r = pipeline.generate(REG, {"kind": "ship", "ship_type": "Military", "tonnage": 2500, "seed": seed,
+                                            "mode": mode, "symmetric": sym})
+                g = r.grids[0]
+                b = g.bounds()
+                mids = ship.PAD + 36 + ship.choose_dims(2500, sym)[0] * 10
+                ys_stern = max(p.y for p in g.placed if p.tile.type == "end")
+                by = {(round(p.x + p.w / 2, 3), p.y, p.w, p.h): p for p in g.placed}
+                for p in g.placed:
+                    if p.tile.tags.get("drive", 0) >= 0.5:
+                        assert p.y >= ys_stern - 10 or p.zone.startswith("engineering"), "drive section outside the stern"
+                    cx = p.x + p.w / 2
+                    if ship.is_paired(p.tile) and p.tile.type in ("standard", "edge", "corner") and abs(cx - mids) > 1e-6:
+                        q = by.get((round(2 * mids - cx, 3), p.y, p.w, p.h))
+                        assert q is not None, (mode, sym, seed, p.tile.id, "paired part has no partner")
+                        assert q.tile.id.rstrip("m") == p.tile.id.rstrip("m"), (p.tile.id, q.tile.id)
+                        paired_seen += 1
+    assert paired_seen > 20, paired_seen
     no_fins = pipeline.generate(REG, {"kind": "ship", "tonnage": 2000, "seed": 1, "fins": False})
     assert not [p for p in no_fins.grids[0].placed if p.tile.type == "wing"]
     c, rws = ship.choose_dims(1000)
