@@ -1197,7 +1197,7 @@ def check_atmosphere():
     assert shadows and n_lit and n_shade, (len(shadows), n_lit, n_shade)
     assert lit_lum / n_lit > 1.8 * shade_lum / n_shade, "lit pools are much brighter than the shadows"
     assert all(0.03 <= f <= 0.9 for f in shadows), ("some light and some shadow in every dark room", sorted(shadows)[:3], sorted(shadows)[-3:])
-    assert 0.2 < sum(shadows) / len(shadows) < 0.7, "about half the floor is in shadow"
+    assert 0.1 < sum(shadows) / len(shadows) < 0.7, "corridors and halls keep some shadow, rooms stay dark"
     llvl = level_with("lockdown")
     red = lambda im: sum(1 for (r, g_, b, a) in im.getdata() if r > 235 and 40 < g_ < 90 and 30 < b < 80)
     gm_l, pl_l = look(llvl, True), look(llvl, False)
@@ -1220,8 +1220,18 @@ def check_atmosphere():
                 continue
             for cx, cy, wall in atmosphere._lamps(tp, rows):
                 dx, dy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
-                assert rows[cy][cx] in "c.r" and rows[cy + dy][cx + dx] == "#", "a lamp sits on floor against a wall"
+                assert rows[cy][cx] in atmosphere.walk_chars(rows) and rows[cy + dy][cx + dx] == "#", \
+                    "a lamp sits on corridor or hall floor against a wall"
+                if any(ch in "cr" for r_ in rows for ch in r_):
+                    assert rows[cy][cx] != ".", "never inside an enclosed room"
                 lamps_seen += 1
+            if any(ch in "cr" for r_ in rows for ch in r_) and "power_failure" in rm["states"]:
+                lm, _sp = atmosphere._light_map(tp, rows, int(tp.w * 10), int(tp.h * 10), 10, atmosphere.LIGHT_RADIUS)
+                lp2 = lm.load()
+                for cy2, row2 in enumerate(rows):
+                    for cx2, ch2 in enumerate(row2):
+                        if ch2 == ".":
+                            assert lp2[cx2 * 5 + 2, cy2 * 5 + 2] == 0, "enclosed rooms are not lit by the corridor lamps"
             im = atmosphere.room_overlay(rm, 10, "public")
             al = im.getchannel("A").load()
             for cy, row in enumerate(rows):

@@ -12,7 +12,7 @@ from __future__ import annotations
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 MAX_LAMPS = 14
-TARGET_LIT = 0.5            # add lamps until about this share of the open floor is lit
+TARGET_LIT = 0.6            # add lamps until about this share of the open floor is lit
 LIT_CELLS = 5               # cells (half squares) a lamp lights well
 LIGHT_RADIUS = 3.8          # squares a lamp reaches (walls and furniture block it)
 LIT_AT = 48                 # light level (of 255) from which a spot counts as lit rather than in shadow
@@ -94,6 +94,12 @@ def _floor(p):
     return rows if len(rows) == p.h * floors.SUB and len(rows[0]) == p.w * floors.SUB else None
 
 
+def walk_chars(rows) -> str:
+    """Floor that emergency lights serve: corridors and big open halls. Enclosed rooms stay dark (hiding places);
+    only a tile with no corridor or hall at all falls back to its room floor."""
+    return "cr" if any(ch in "cr" for r in rows for ch in r) else "c.r"
+
+
 def _room_mask(rows, W, H) -> Image.Image:
     """255 inside the building (walls and floor), 0 outside it: light and tint never leave the room."""
     if rows is None:
@@ -108,11 +114,12 @@ def _lamps(p, rows):
     (or near the corners when the room has none). The lamp sits flush against that wall."""
     SUB = 2
     cand = []
+    walk = walk_chars(rows) if rows is not None else "c.r"
     if rows is not None:
         H, W = len(rows), len(rows[0])
         for y in range(H):
             for x in range(W):
-                if rows[y][x] in "c.r":
+                if rows[y][x] in walk:
                     for d, (dx, dy) in {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}.items():
                         nx, ny = x + dx, y + dy
                         if 0 <= nx < W and 0 <= ny < H and rows[ny][nx] == "#":
@@ -123,34 +130,41 @@ def _lamps(p, rows):
     corners = [(3, 3), (SUBW - 4, 3), (3, SUBH - 4), (SUBW - 4, SUBH - 4)]
     anchors = [(int(dx * SUB), int(dy * SUB)) for dx, dy, _s in doors] + corners
     lamps = []
-    for ax, ay in anchors:                              # one by each doorway and near the corners
+    floor = {(x, y) for y, r in enumerate(rows) for x, ch in enumerate(r) if ch in walk} if rows is not None else set()
+    lit = set()
+
+    def covered():
+        return bool(floor) and len(lit & floor) / len(floor) >= TARGET_LIT
+
+    def add(cell):
+        lamps.append(cell)
+        if rows is not None:
+            lit.update(_visible_cells(rows, cell[0], cell[1], LIT_CELLS, walk))
+    for ax, ay in anchors:                              # one by each doorway and near the corners, until lit enough
+        if covered():
+            break
         near = [c for c in cand if max(abs(c[0] - ax), abs(c[1] - ay)) <= 10]
         if not near:
             continue
         best = min(near, key=lambda c: (c[0] - ax) ** 2 + (c[1] - ay) ** 2)
         if all(max(abs(best[0] - l[0]), abs(best[1] - l[1])) >= 6 for l in lamps):
-            lamps.append(best)
-    if rows is not None and cand:                       # then add lamps, spread out, until about half the floor is lit
-        floor = {(x, y) for y, r in enumerate(rows) for x, ch in enumerate(r) if ch in "c.r"}
-        lit = set()
-        for l in lamps:
-            lit |= _visible_cells(rows, l[0], l[1], LIT_CELLS)
-        while len(lamps) < MAX_LAMPS and floor and len(lit & floor) / len(floor) < TARGET_LIT:
-            far = max(cand, key=lambda c: min([max(abs(c[0] - l[0]), abs(c[1] - l[1])) for l in lamps] or [99]))
-            if min([max(abs(far[0] - l[0]), abs(far[1] - l[1])) for l in lamps] or [99]) < 6:
-                break
-            lamps.append(far)
-            lit |= _visible_cells(rows, far[0], far[1], LIT_CELLS)
+            add(best)
+    while rows is not None and cand and len(lamps) < MAX_LAMPS and floor and not covered():   # then spread more
+        far = max(cand, key=lambda c: min([max(abs(c[0] - l[0]), abs(c[1] - l[1])) for l in lamps] or [99]))
+        if min([max(abs(far[0] - l[0]), abs(far[1] - l[1])) for l in lamps] or [99]) < 6:
+            break
+        add(far)
     return lamps[:MAX_LAMPS]
 
 
-def _visible_cells(rows, cx, cy, radius_cells) -> set:
-    """Cells within ``radius_cells`` of (cx, cy) that a straight line reaches without crossing a wall or furniture."""
+def _visible_cells(rows, cx, cy, radius_cells, walk="c.r") -> set:
+    """Cells of the served floor (``walk``) within ``radius_cells`` of (cx, cy) that a straight line reaches
+    without crossing a wall or furniture."""
     CH, CW = len(rows), len(rows[0])
     out = set()
     for ty in range(max(0, cy - radius_cells), min(CH, cy + radius_cells + 1)):
         for tx in range(max(0, cx - radius_cells), min(CW, cx + radius_cells + 1)):
-            if rows[ty][tx] in "#o":
+            if rows[ty][tx] not in walk:
                 continue
             n = max(abs(tx - cx), abs(ty - cy))
             if all(rows[round(cy + (ty - cy) * k / n)][round(cx + (tx - cx) * k / n)] not in "#o" for k in range(1, n)):
@@ -158,11 +172,11 @@ def _visible_cells(rows, cx, cy, radius_cells) -> set:
     return out
 
 
-def _light_mask(rows, cx, cy, radius_cells, W, H) -> Image.Image:
+def _light_mask(rows, cx, cy, radius_cells, W, H, walk=None) -> Image.Image:
     """The lamp's line-of-sight cells as an image (blurred a touch by the resize)."""
     m = Image.new("L", (len(rows[0]), len(rows)), 0)
     px = m.load()
-    for tx, ty in _visible_cells(rows, cx, cy, radius_cells):
+    for tx, ty in _visible_cells(rows, cx, cy, radius_cells, walk or walk_chars(rows)):
         px[tx, ty] = 255
     return m.resize((W, H), Image.BILINEAR)
 
@@ -259,7 +273,7 @@ def room_overlay(room: dict, pps: int, part: str = "all") -> Image.Image | None:
 
 
 def shadow_fraction(room: dict, pps: int = 10) -> float | None:
-    """Share of a dark room's interior that no lamp lights (None without a floor map or when not dark)."""
+    """Share of a dark tile's corridor and hall floor that no lamp lights (None without a floor map or when not dark)."""
     p = room["tile"]
     rows = _floor(p)
     if rows is None or "power_failure" not in room["states"]:
@@ -268,9 +282,10 @@ def shadow_fraction(room: dict, pps: int = 10) -> float | None:
     light, _spots = _light_map(p, rows, W, H, pps, LIGHT_RADIUS)
     px = light.load()
     inside = unlit = 0
+    walk = walk_chars(rows)
     for cy, row in enumerate(rows):
         for cx, ch in enumerate(row):
-            if ch in "c.r":
+            if ch in walk:
                 inside += 1
                 if px[int((cx + 0.5) * pps / 2), int((cy + 0.5) * pps / 2)] < LIT_AT:
                     unlit += 1
