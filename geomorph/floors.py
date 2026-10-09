@@ -70,7 +70,7 @@ def analyse_floor(path, w, h, edges=None, pps=PX_PER_SQUARE, border=BORDER_SQUAR
         for yy in range(y0, y0 + rh):
             for xx in range(x0, x0 + rw):
                 if grid[yy][xx] == "c":
-                    grid[yy][xx] = "."
+                    grid[yy][xx] = "r"          # big open area behind a door: a hall or bay, furnished only indoors
     return ["".join(r) for r in grid]
 
 

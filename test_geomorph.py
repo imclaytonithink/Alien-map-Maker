@@ -470,6 +470,43 @@ def check_grouping_and_smart_decor():
     print("grouping + smart decor ok:", {k: round(v, 1) for k, v in means.items()}, checked, "items checked")
 
 
+def check_decor_stays_indoors():
+    """Every symbol stands on enclosed room floor of its own tile: never outside, in a corridor, on a wall or on art.
+    Streets and campuses (outdoors) only furnish true rooms, never open halls or yards behind a door."""
+    from geomorph import decor, floors, symbols
+    F = decor.tile_floors()
+    syms = symbols.load()
+    total = 0
+    cases = [("Company town", "street"), ("Frontier colony outpost", "campus"), ("Domed or underground town", "street"),
+             ("Spaceport / starport", "campus"), ("Surface mining operation", "campus"), ("Research facility", "stacked"),
+             ("Prison / penal colony", "stacked"), ("Deep mine", "branching"), ("Space station (ring / spindle / cylinder / modular)", "ring")]
+    for name, topo in cases:
+        for seed in (1, 5):
+            for incident in ("none", "overrun"):
+                res = pipeline.generate(REG, {"kind": "site", "archetype": name, "scale": "medium", "seed": seed,
+                                              "decor": {"enabled": True, "density": 0.9, "incident": "none"}}, ARCH)
+                assert res.layout.topology == topo
+                allowed = ".r" if topo not in ("street", "campus") else "."
+                for it in res.decor:
+                    s = syms[it["sym"]]
+                    g = res.grids[it["level"]]
+                    p = [q for q in g.placed if (q.x, q.y, q.tile.id) == (it["tx"], it["ty"], it["tile"])]
+                    assert len(p) == 1
+                    p = p[0]
+                    grid = floors.transform(floors.decode(F[p.tile.id]), p.o.rot, p.o.mirror)
+                    w, h = (s.h, s.w) if it["rot"] % 180 else (s.w, s.h)
+                    x0, y0 = (it["cx"] - w / 2 - p.x) * 2, (it["cy"] - h / 2 - p.y) * 2
+                    xs = range(int(x0 + 1e-3), int(x0 + w * 2 - 1e-3) + 1)
+                    ys = range(int(y0 + 1e-3), int(y0 + h * 2 - 1e-3) + 1)
+                    for y in ys:
+                        for x in xs:
+                            assert 0 <= y < len(grid) and 0 <= x < len(grid[0]) and grid[y][x] in allowed, \
+                                (name, s.name, grid[y][x] if 0 <= y < len(grid) and 0 <= x < len(grid[0]) else "off tile")
+                    total += 1
+    assert total > 150, total
+    print("decor stays indoors ok:", total, "items checked")
+
+
 def check_archetype_files():
     assert len(ARCH) >= 25, len(ARCH)
     groups = {a["group"] for a in ARCH.values()}
@@ -799,6 +836,7 @@ def main():
     check_ships()
     check_ship_part_options()
     check_decor()
+    check_decor_stays_indoors()
     check_grouping_and_smart_decor()
     check_archetype_files()
     check_sites()

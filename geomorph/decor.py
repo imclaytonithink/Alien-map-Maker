@@ -327,13 +327,16 @@ def apply(res, rng, symbols: dict, opts: dict):
     hot = set(ov.get("lockdown", [])) | set(ov.get("quarantine", [])) | set(ov.get("power_failure", []))
     hot |= {m.get("zone") for m in res.markers if m.get("type") in ("threat", "breach", "damage")}
     out = []
+    # streets and campuses are outdoors: furnish only enclosed rooms there, never open halls or yards behind a door
+    outdoors = res.layout is not None and res.layout.topology in ("street", "campus")
+    chars = (".",) if outdoors else (".", "r")
     for g in res.grids:
         for p in g.placed:
             rows = floors.get(p.tile.id)
             if not rows or p.tile.type == "wing":
                 continue
             grid = transform(decode(rows), p.o.rot, p.o.mirror)
-            rects = free_rects(grid)
+            rects = free_rects(grid, chars=chars)
             if not rects:
                 continue
             kind = dec.incident
@@ -349,11 +352,15 @@ def apply(res, rng, symbols: dict, opts: dict):
                 kits = symbol_kits()
                 prefer = ([z.base] if z.base in kits else list(z.tags[:2])) if z is not None else []
                 items, extra = dec.furnish(p.tile, p, rect, g.index, p.zone, kind, prefer)
+                for it in items:                      # trace each item to the tile it stands in
+                    it["tile"], it["tx"], it["ty"] = p.tile.id, p.x, p.y
                 out.extend(items)
                 for f in extra:
                     g.filler.append(f)
                 if kind == "overrun":
-                    out.extend(dec.barricade(p, g.index, p.zone, rect))
+                    for b in dec.barricade(p, g.index, p.zone, rect):
+                        b["tile"], b["tx"], b["ty"] = p.tile.id, p.x, p.y
+                        out.append(b)
     res.decor = out
     res.meta["decor"] = {"items": len(out), "incident": dec.incident, "where": dec.where}
     return res
