@@ -27,6 +27,9 @@ from ui.image_utils import load_scaled_image, load_scaled_pixmap
 ASSET_MIME = "application/x-mapbuilder-asset"
 
 
+from core.function_tags import label as function_label
+
+
 class PreviewDialog(QDialog):
     def __init__(self, asset, add_cb, parent=None):
         super().__init__(parent)
@@ -537,7 +540,7 @@ class LibraryPanel(QWidget):
         # Keep search and import actions on separate rows so the narrow side
         # panel never compresses them into clipped, overlapping controls.
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search filename, folder, size…")
+        self.search.setPlaceholderText("Search name, folder, size or function (medical, cargo…)")
         self.search.textChanged.connect(self._on_search)
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -546,6 +549,14 @@ class LibraryPanel(QWidget):
         search_row = QHBoxLayout()
         search_row.setSpacing(4)
         search_row.addWidget(self.search, 1)
+        self.function_filter = QComboBox()
+        self.function_filter.setToolTip("Show only tiles for one function: medical, cargo, hangar…")
+        self.function_filter.setMinimumContentsLength(10)
+        self.function_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.function_filter.addItem("Any function", "")
+        self.function_filter.currentIndexChanged.connect(self._on_search)
+        self._function_sig = None
+        search_row.addWidget(self.function_filter)
         # One obvious way to grow the pool with your own art.
         self.btn_add = QToolButton()
         self.btn_add.setText("＋ Add tiles")
@@ -1092,13 +1103,13 @@ class LibraryPanel(QWidget):
         else:
             assets = list(self.library.assets)
 
+        self._refresh_function_filter()
         query = self.search.text().strip()
-        if query:
-            needle = query.casefold()
-            assets = [asset for asset in assets
-                      if needle in asset.name.casefold()
-                      or needle in asset.folder.casefold()
-                      or any(needle in tag.casefold() for tag in asset.tags)]
+        function = self.function_filter.currentData() or ""
+        if query or function:
+            terms = query.casefold().split()
+            match = self.library.matches
+            assets = [asset for asset in assets if match(asset, terms, function)]
 
         # A model-backed view creates no QListWidgetItem per file, which keeps
         # both memory use and filter/refresh time bounded for large packs.
@@ -1113,6 +1124,8 @@ class LibraryPanel(QWidget):
         count_text = f"{len(assets):,} asset(s) · {scope}"
         if query:
             count_text += f" · search: {query}"
+        if function:
+            count_text += f" · function: {function_label(function)}"
         hidden = len(self.library.hidden_duplicates)
         if hidden and self.library.show_duplicates:
             count_text += f" · duplicates shown ({hidden:,} tagged 'duplicate')"
@@ -1125,6 +1138,24 @@ class LibraryPanel(QWidget):
         self._count_base = count_text
         self._update_pick_label()
         self._schedule_visible_thumbnails()
+
+    def _refresh_function_filter(self):
+        """List the functions present in the library (only rebuilt when the set changes)."""
+        counts = self.library.function_counts()
+        sig = tuple(counts)
+        if sig == self._function_sig:
+            return
+        self._function_sig = sig
+        keep = self.function_filter.currentData() or ""
+        self.function_filter.blockSignals(True)
+        self.function_filter.clear()
+        self.function_filter.addItem("Any function", "")
+        for func, n in counts:
+            self.function_filter.addItem(f"{function_label(func)} ({n:,})", func)
+        i = self.function_filter.findData(keep)
+        self.function_filter.setCurrentIndex(max(0, i))
+        self.function_filter.setVisible(bool(counts))
+        self.function_filter.blockSignals(False)
 
     def _schedule_visible_thumbnails(self, *_args):
         if hasattr(self, "_thumb_timer"):
@@ -1468,6 +1499,9 @@ class LibraryPanel(QWidget):
         self.search.blockSignals(True)
         self.search.clear()
         self.search.blockSignals(False)
+        self.function_filter.blockSignals(True)
+        self.function_filter.setCurrentIndex(0)
+        self.function_filter.blockSignals(False)
         self.coll_combo.blockSignals(True)
         self.coll_combo.setCurrentIndex(0)
         self.coll_combo.blockSignals(False)
@@ -1622,7 +1656,8 @@ class LibraryPanel(QWidget):
 
     def visible_assets(self) -> list:
         """Every asset the list is showing right now (folder + search filter)."""
-        return list(getattr(self, "_visible_assets", None) or self.library.assets)
+        shown = getattr(self, "_visible_assets", None)
+        return list(self.library.assets if shown is None else shown)       # an empty filter result is empty
 
     def select_paths(self, paths) -> int:
         """Pick exactly these assets — as if their checkboxes were ticked —
