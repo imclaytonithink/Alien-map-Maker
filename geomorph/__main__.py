@@ -39,6 +39,7 @@ def main(argv=None):
     g.add_argument("--theme", default=names.DEFAULT_THEME)
     g.add_argument("--overlays", default="", help="comma list: lockdown,power_failure,breach,quarantine,salvage,battle,threat,secrets")
     g.add_argument("--intensity", type=float, default=0.5)
+    g.add_argument("--grouping", type=float, default=0.6, help="0..1: how strongly related rooms are kept together")
     g.add_argument("--decor", action="store_true", help="furnish open rooms with Symbols-pack items at real size")
     g.add_argument("--incident", choices=("none", "struggle", "ransacked", "overrun"), default="none")
     g.add_argument("--incident-where", choices=("all", "overlay", "random"), default="all")
@@ -92,7 +93,7 @@ def main(argv=None):
                 "condition": a.condition, "mode": a.mode, "ship_type": a.ship_type, "tonnage": a.tonnage,
                 "symmetric": not a.no_symmetry, "fins": not a.no_fins, "orientation": a.orientation,
                 "seed": a.seed, "theme": a.theme, "overlays": [o for o in a.overlays.split(",") if o],
-                "intensity": a.intensity,
+                "intensity": a.intensity, "grouping": a.grouping,
                 "decor": {"enabled": True, "incident": a.incident, "where": a.incident_where} if a.decor else None}
         res = pipeline.generate(reg, opts)
         print(f"{res.meta['name']}: {sum(len(g.placed) for g in res.grids)} tiles, {len(res.grids)} level(s)")

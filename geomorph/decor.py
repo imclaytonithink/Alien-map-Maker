@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 from . import DATA_DIR
 from . import filler as F
@@ -21,6 +22,7 @@ from .placement import DIRS
 from .symbols import SYM_PPS
 
 _MAP = None
+_KITS = None
 _FLOORS = None
 MIN_SIDE = 4          # cells (2 squares): smaller pockets are not rooms worth furnishing
 INCIDENTS = ("none", "struggle", "ransacked", "overrun")
@@ -31,6 +33,13 @@ def symbol_map():
     if _MAP is None:
         _MAP = json.loads((DATA_DIR / "symbol_map.json").read_text(encoding="utf-8"))
     return _MAP
+
+
+def symbol_kits():
+    global _KITS
+    if _KITS is None:
+        _KITS = json.loads((DATA_DIR / "symbol_kits.json").read_text(encoding="utf-8"))["kits"]
+    return _KITS
 
 
 def tile_floors():
@@ -67,22 +76,52 @@ class Decorator:
         self.only = set(cats) if cats else None
         by = {}
         for s in symbols.values():
-            if s.role == "item" and max(s.w, s.h) >= 0.4:
+            if 0.4 <= max(s.w, s.h) <= 3.6:
                 by.setdefault(s.cat, []).append(s)
         self.items = by
+        self._pools = {}
+
+    # -- what belongs in this room -------------------------------------------
+    def kit(self, tile, prefer=()):
+        """Entries (with their symbol pools) for the room function that fits best.
+
+        ``prefer`` are the functions the generator assigned to this room; they win over whatever else the (often
+        multipurpose) tile happens to contain.
+        """
+        kits = symbol_kits()
+        assigned = [t for t in prefer if t in kits]
+        if assigned:                           # the function the generator gave this room decides, nothing else
+            tags = [(1.0, t) for t in assigned]
+        else:
+            tags = [(w, t) for t, w in tile.tags.items() if w >= 0.5 and t in kits]
+        if not tags:
+            return []
+        tag = self.rng.choices([t for _w, t in tags], weights=[w for w, _t in tags])[0]
+        room_text = " ".join(list(tile.rooms) + [tile.title]).lower()
+        out = []
+        for e in kits[tag]:
+            if e.get("if_room") and not re.search(e["if_room"], room_text):
+                continue
+            key = (e["cat"], e.get("name", ""))
+            if key not in self._pools:
+                rx = re.compile(e["name"], re.I) if e.get("name") else None
+                self._pools[key] = [s for s in self.items.get(e["cat"], []) if rx is None or rx.search(s.name)]
+            pool = self._pools[key]
+            if pool and (not self.only or e["cat"] in self.only):
+                out.append(dict(e, pool=pool))
+        return out
 
     # -- one room rectangle -------------------------------------------------
-    def furnish(self, tile, p, rect, level, zone, incident):
+    def furnish(self, tile, p, rect, level, zone, incident, prefer=()):
         """Place items in ``rect`` (cells of tile ``p``); returns decor dicts and filler pieces."""
         rng = self.rng
-        cats = [c for c in _categories(tile, self.only) if self.items.get(c)] or \
-            [c for c in ("Furniture, Consoles, & Equipment",) if self.items.get(c)]
-        if not cats:
+        entries = self.kit(tile, prefer)
+        if not entries:
             return [], []
         x, y, w, h = rect
-        cw = cell_w = 1.0 / SUB
         used = [[False] * w for _ in range(h)]
         placed, extra = [], []
+        counts = {}
 
         def fits(ix, iy, iw, ih):
             if ix < 0 or iy < 0 or ix + iw > w or iy + ih > h:
@@ -94,47 +133,109 @@ class Decorator:
                 for xx in range(ix, ix + iw):
                     used[yy][xx] = True
 
-        def put(sym, ix, iy, rot, flip=False, kind="item"):
-            sw, sh = (sym.h, sym.w) if rot % 180 else (sym.w, sym.h)
-            cx = p.x + (x + ix) * cell_w + sw / 2
-            cy = p.y + (y + iy) * cell_w + sh / 2
-            placed.append({"sym": sym.id, "level": level, "cx": round(cx, 3), "cy": round(cy, 3), "rot": rot,
-                           "flip": bool(flip), "zone": zone, "kind": kind, "cat": sym.cat})
-
-        target = max(1, round((w * h) / (SUB * SUB) * 0.18 * self.density * 2))
-        style_map = symbol_map()["style"]
-        tries = 0
-        n = 0
-        while n < target and tries < target * 12:
-            tries += 1
-            cat = rng.choice(cats)
-            sym = rng.choice(self.items[cat])
-            rot = rng.choice((0, 90))
+        def dims(sym, rot):
             sw, sh = (sym.h, sym.w) if rot else (sym.w, sym.h)
-            cw_, ch_ = max(1, math.ceil(sw * SUB)), max(1, math.ceil(sh * SUB))
-            if cw_ > w - 2 or ch_ > h - 2:
-                continue
-            style = style_map.get(cat, style_map["default"])
-            if style == "center" or (style == "mixed" and rng.random() < 0.4):
-                ix, iy = (w - cw_) // 2 + rng.randint(-1, 1), (h - ch_) // 2 + rng.randint(-1, 1)
-            else:                                    # against a wall, leaving the middle for walking
-                side = rng.choice("NESW")
-                if side in "NS":
-                    ix = rng.randint(0, w - cw_)
-                    iy = 0 if side == "N" else h - ch_
-                    rot = 0 if sw >= sh else 90
-                else:
-                    iy = rng.randint(0, h - ch_)
-                    ix = 0 if side == "W" else w - cw_
-                    rot = 90 if sw >= sh else 0
-                sw, sh = (sym.h, sym.w) if rot else (sym.w, sym.h)
-                cw_, ch_ = max(1, math.ceil(sw * SUB)), max(1, math.ceil(sh * SUB))
-                ix = min(ix, w - cw_)
-                iy = min(iy, h - ch_)
+            return max(1, math.ceil(sw * SUB - 1e-6)), max(1, math.ceil(sh * SUB - 1e-6)), sw, sh
+
+        def put(sym, ix, iy, rot, ent, flip=False):
+            cw_, ch_, sw, sh = dims(sym, rot)
+            take(ix, iy, cw_, ch_)
+            cx = p.x + (x + ix) / SUB + sw / 2
+            cy = p.y + (y + iy) / SUB + sh / 2
+            placed.append({"sym": sym.id, "level": level, "cx": round(cx, 3), "cy": round(cy, 3), "rot": rot,
+                           "flip": bool(flip), "zone": zone, "kind": "item", "cat": sym.cat})
+            counts[id(ent)] = counts.get(id(ent), 0) + 1
+
+        def place_wall(ent, sym, side=None, start=None):
+            side = side or rng.choice("NESW")
+            rot = 0 if (side in "NS") == (sym.w >= sym.h) else 90
+            cw_, ch_, _sw, _sh = dims(sym, rot)
+            if cw_ > w - 1 or ch_ > h - 1:
+                return None
+            if side in "NS":
+                ix = start if start is not None else rng.randint(0, w - cw_)
+                iy = 0 if side == "N" else h - ch_
+            else:
+                iy = start if start is not None else rng.randint(0, h - ch_)
+                ix = 0 if side == "W" else w - cw_
             if fits(ix, iy, cw_, ch_):
-                take(ix, iy, cw_, ch_)
-                put(sym, ix, iy, rot, flip=rng.random() < 0.3)
-                n += 1
+                put(sym, ix, iy, rot, ent, flip=rng.random() < 0.3)
+                return (side, ix, iy, cw_, ch_)
+            return None
+
+        def place_center(ent, sym):
+            for _ in range(8):
+                rot = rng.choice((0, 90))
+                cw_, ch_, _sw, _sh = dims(sym, rot)
+                if cw_ > w - 2 or ch_ > h - 2:
+                    continue
+                ix = (w - cw_) // 2 + rng.randint(-max(1, w // 5), max(1, w // 5))
+                iy = (h - ch_) // 2 + rng.randint(-max(1, h // 5), max(1, h // 5))
+                ix, iy = max(1, min(ix, w - cw_ - 1)), max(1, min(iy, h - ch_ - 1))
+                if fits(ix, iy, cw_, ch_):
+                    put(sym, ix, iy, rot, ent)
+                    return True
+            return False
+
+        def place_corner(ent, sym):
+            corner = rng.choice(("NW", "NE", "SW", "SE"))
+            for _ in range(6):
+                cw_, ch_, _sw, _sh = dims(sym, 0)
+                ix = 0 if corner[1] == "W" else w - cw_
+                iy = 0 if corner[0] == "N" else h - ch_
+                # stack outward from the corner along the walls
+                step = rng.randint(0, max(0, w // 3)), rng.randint(0, max(0, h // 3))
+                ix = max(0, min(w - cw_, ix + (step[0] if corner[1] == "W" else -step[0])))
+                iy = max(0, min(h - ch_, iy + (step[1] if corner[0] == "N" else -step[1])))
+                if fits(ix, iy, cw_, ch_):
+                    put(sym, ix, iy, 0, ent, flip=rng.random() < 0.3)
+                    return True
+            return False
+
+        def place_row(ent, sym):
+            side = rng.choice("NESW")
+            first = place_wall(ent, sym, side)
+            if not first:
+                return False
+            _s, ix, iy, cw_, ch_ = first
+            while counts.get(id(ent), 0) < ent.get("max", 4):
+                nxt = rng.choice(ent["pool"]) if rng.random() < 0.5 else sym
+                if side in "NS":
+                    ix += cw_
+                    ok = place_wall(ent, nxt, side, ix)
+                else:
+                    iy += ch_
+                    ok = place_wall(ent, nxt, side, iy)
+                if not ok:
+                    break
+                _s, ix, iy, cw_, ch_ = ok
+            return True
+
+        def place(ent):
+            sym = rng.choice(ent["pool"])
+            style = ent.get("style", "wall")
+            if style == "center":
+                return place_center(ent, sym)
+            if style == "corner":
+                return place_corner(ent, sym)
+            if style == "row":
+                return place_row(ent, sym)
+            return bool(place_wall(ent, sym))
+
+        target = max(1, round((w * h) / (SUB * SUB) * 0.4 * self.density))
+        for ent in entries:                               # the anchor piece(s) first (a bed in a cabin, tables in a mess)
+            if ent.get("must"):
+                for _ in range(6):
+                    if place(ent):
+                        break
+        tries = 0
+        while len(placed) < target and tries < target * 10:
+            tries += 1
+            open_ = [e for e in entries if counts.get(id(e), 0) < e.get("max", 3)]
+            if not open_:
+                break
+            ent = rng.choices(open_, weights=[e.get("w", 1) for e in open_])[0]
+            place(ent)
         if incident != "none":
             self._incident(placed, extra, incident, p, rect, level, used)
         return placed, extra
@@ -242,7 +343,12 @@ def apply(res, rng, symbols: dict, opts: dict):
                 elif dec.where == "random" and rng.random() > 0.3:
                     kind = "none"
             for rect in rects:
-                items, extra = dec.furnish(p.tile, p, rect, g.index, p.zone, kind)
+                z = res.zones.get(p.zone)
+                if z is not None and (z.base == "core" or list(z.tags) == ["vertical"]):
+                    continue                          # stair/lift cores are circulation: no furniture
+                kits = symbol_kits()
+                prefer = ([z.base] if z.base in kits else list(z.tags[:2])) if z is not None else []
+                items, extra = dec.furnish(p.tile, p, rect, g.index, p.zone, kind, prefer)
                 out.extend(items)
                 for f in extra:
                     g.filler.append(f)

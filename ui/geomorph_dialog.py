@@ -273,6 +273,13 @@ class GeomorphDialog(QDialog):
         f.addRow(self.ck_mixed)
         f.addRow("Theme", self.cb_theme)
         f.addRow("Quirks & perks", self.sp_pec)
+        self.sl_group = QSlider(Qt.Orientation.Horizontal)
+        self.sl_group.setRange(0, 100)
+        self.sl_group.setValue(60)
+        self.sl_group.setToolTip("Smart grouping: related rooms are generated close together (medical with labs and the "
+                                 "morgue, cargo with loading bays, quarters with freshers, canteens with the galley...). "
+                                 "0 turns it off. The rules are in geomorph/data/affinity.json.")
+        f.addRow("Room grouping", self.sl_group)
         left.addWidget(box)
 
         box = QGroupBox("Symbols (furniture, machinery, cargo…)")
@@ -452,7 +459,7 @@ class GeomorphDialog(QDialog):
         self.ed_seed.setText(seed)
         o = {"kind": kind, "seed": seed, "theme": self.cb_theme.currentData(), "name": self.ed_name.text().strip(),
              "condition": self.cb_cond.currentData() or None, "mixed_conditions": self.ck_mixed.isChecked(),
-             "peculiarities": self.sp_pec.value(), "intensity": self.sl_int.value() / 100.0,
+             "peculiarities": self.sp_pec.value(), "grouping": self.sl_group.value() / 100.0, "intensity": self.sl_int.value() / 100.0,
              "overlays": [k for k, c in self.overlay_checks.items() if c.isChecked()]}
         if self.ck_decor.isChecked():
             o["decor"] = {"enabled": True, "density": self.sl_decor.value() / 100.0,

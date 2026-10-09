@@ -21,13 +21,13 @@ DEFAULTS = {
     "archetype": "Research facility", "scale": "medium", "environment": None, "mode": "planned",
     "ship_type": "Merchant", "tonnage": 1000, "symmetric": True, "fins": True, "orientation": "N",
     "condition": None, "mixed_conditions": False, "zone_conditions": {}, "peculiarities": 2,
-    "overlays": [], "intensity": 0.5, "parts": {}, "craft": None, "decor": None,
+    "overlays": [], "intensity": 0.5, "parts": {}, "craft": None, "decor": None, "grouping": 0.6,
 }
 
 
 def _ship_result(registry, o, rng) -> Result:
     grid, info = ship.generate_ship(registry, rng, int(o["tonnage"]), o["ship_type"], o["mode"],
-                                    bool(o["symmetric"]), bool(o["fins"]), o["orientation"], parts=o.get("parts"))
+                                    bool(o["symmetric"]), bool(o["fins"]), o["orientation"], parts=dict(o.get("parts") or {}, grouping=o.get("grouping", 0.6)))
     zones = {}
     counts = {}
     for p in grid.placed:

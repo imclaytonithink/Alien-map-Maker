@@ -21569,7 +21569,8 @@
 "medical":1.0,
 "lab":0.6,
 "office":0.6,
-"lowberth":0.6
+"lowberth":0.6,
+"morgue":0.6
 },
 "image":"100x100 Core/186 [100x100] Medical Bay (4x Surgeries, 6x Exam Rooms, Lab, Morgue, Pharmacy, 7x Low Berths, Office).png",
 "mirror_of":"",
@@ -28583,7 +28584,8 @@
 "rooms":[],
 "tags":{
 "recreation":1.0,
-"concourse":1.0
+"concourse":1.0,
+"galley":1.0
 },
 "image":"100x100 Core/213 [100x100] Promenade - Retail, Food, & Bar.png",
 "mirror_of":"",
@@ -30579,7 +30581,8 @@
 "recreation":0.6,
 "office":0.6,
 "lowberth":0.6,
-"airlock":0.6
+"airlock":0.6,
+"morgue":0.6
 },
 "image":"100x100 Core/221 [100x100] Medical Isolation Ward (2 Exam Rooms, 28 Isolation Beds, 2 Treatment Beds, Morgue, Lab, Pharmacy, 3 Low Berths, Airlocks, Office, Lounge).png",
 "mirror_of":"",
@@ -53985,7 +53988,8 @@
 "staterooms":0.6,
 "medical":1.0,
 "office":0.6,
-"lowberth":0.6
+"lowberth":0.6,
+"morgue":0.6
 },
 "image":"100x50 Edge/408 [100x50] Medical Bay (8 Bed Sickbay, 7 Low Berths, 2 Exam Rooms, 2 Surgeries, Morgue, Office).png",
 "mirror_of":"",
@@ -56706,7 +56710,8 @@
 "hangar":0.6,
 "medical":1.0,
 "lab":1.0,
-"recreation":0.6
+"recreation":0.6,
+"morgue":0.6
 },
 "image":"100x50 Edge/423 [100x50] Medical Research (20-dTon Hunting Launch, Animal Pens, Surgery, Labs, Morgue Lounge).png",
 "mirror_of":"",
@@ -59966,7 +59971,8 @@
 "rooms":[],
 "tags":{
 "recreation":1.0,
-"concourse":1.0
+"concourse":1.0,
+"galley":1.0
 },
 "image":"100x50 Edge/441 [100x50] Promenade - Food Court.png",
 "mirror_of":"",
@@ -75552,7 +75558,8 @@
 ],
 "tags":{
 "hydroponics":1.0,
-"recreation":1.0
+"recreation":1.0,
+"fresher":0.6
 },
 "image":"50x50 Corner/548 [50x50] (2) Arboretum - Lower (Fresher).png",
 "mirror_of":"",
@@ -80979,7 +80986,8 @@
 "tags":{
 "medical":1.0,
 "recreation":0.6,
-"lab":1.0
+"lab":1.0,
+"morgue":0.6
 },
 "image":"50x50 Corner/574 [50x50] Medical Research (Morgue, Decon Vault, Lounge).png",
 "mirror_of":"",
@@ -88372,7 +88380,8 @@
 "Observation Window"
 ],
 "tags":{
-"sensors":0.6
+"sensors":0.6,
+"galley":1.0
 },
 "image":"50x50 Corner/603 [50x50] Food Court (Observation Window).png",
 "mirror_of":"",
@@ -139190,7 +139199,8 @@
 "4 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E726 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -139325,7 +139335,8 @@
 ],
 "tags":{
 "weapons":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E727 [50x50] 4 Stations, 2 Turrets, Fresher.png",
 "mirror_of":"",
@@ -140265,7 +140276,8 @@
 "4 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E734 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -140535,7 +140547,8 @@
 "tags":{
 "recreation":1.0,
 "office":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E736 [50x50] 4 Stations, Fresher, Office, Briefing Room, Lounge.png",
 "mirror_of":"",
@@ -140671,7 +140684,8 @@
 "tags":{
 "recreation":1.0,
 "office":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E737 [50x50] 6 Stations, Fresher, Office, Lounge.png",
 "mirror_of":"",
@@ -141343,7 +141357,8 @@
 "5 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"",
@@ -141745,7 +141760,8 @@
 "9 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E745 [50x50] 9 Stations, Fresher.png",
 "mirror_of":"",
@@ -142819,7 +142835,8 @@
 ],
 "tags":{
 "office":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E753 [50x50] 6 Stations, Fresher, Office.png",
 "mirror_of":"",
@@ -142953,7 +142970,8 @@
 "6 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E754 [50x50] 6 Stations, Fresher.png",
 "mirror_of":"",
@@ -143357,7 +143375,8 @@
 "tags":{
 "recreation":1.0,
 "office":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E758 [50x50] 12 Stations, Fresher, Office, Briefing Room, Lounge.png",
 "mirror_of":"",
@@ -143491,7 +143510,8 @@
 "8 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E759 [50x50] 8 Stations, Fresher.png",
 "mirror_of":"",
@@ -143625,7 +143645,8 @@
 "8 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Ends/E760 [50x50] 8 Stations, Fresher.png",
 "mirror_of":"",
@@ -147872,7 +147893,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Air-Raft, Medical, Gunnery x2/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"",
@@ -152941,7 +152963,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Air-Raft, Medical, Gunnery x2 [Mirror]/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"bE742:Bridge, Pointed Nose, Air-Raft, Medical, Gunnery x2",
@@ -157274,7 +157297,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"fuel":1.0
+"fuel":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Fuel Intake/E726 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -158221,7 +158245,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"fuel":1.0
+"fuel":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Fuel Intake/E734 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -158761,7 +158786,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"fuel":1.0
+"fuel":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Fuel Intake/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"",
@@ -159978,7 +160004,8 @@
 "tags":{
 "office":1.0,
 "bridge":1.0,
-"fuel":1.0
+"fuel":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Fuel Intake/E753 [50x50] 6 Stations, Fresher, Office.png",
 "mirror_of":"",
@@ -163514,7 +163541,8 @@
 "tags":{
 "bridge":1.0,
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Fuel Intake, Gunnery x 2/E726 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -164330,7 +164358,8 @@
 "tags":{
 "bridge":1.0,
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Fuel Intake, Gunnery x 2/E734 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -164874,7 +164903,8 @@
 "tags":{
 "bridge":1.0,
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Fuel Intake, Gunnery x 2/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"",
@@ -165963,7 +165993,8 @@
 "office":1.0,
 "bridge":1.0,
 "fuel":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Fuel Intake, Gunnery x 2/E753 [50x50] 6 Stations, Fresher, Office.png",
 "mirror_of":"",
@@ -169473,7 +169504,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x2/E726 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -169608,7 +169640,8 @@
 ],
 "tags":{
 "weapons":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x2/E727 [50x50] 4 Stations, 2 Turrets, Fresher.png",
 "mirror_of":"",
@@ -170553,7 +170586,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x2/E734 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -171093,7 +171127,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x2/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"",
@@ -172309,7 +172344,8 @@
 "tags":{
 "office":1.0,
 "bridge":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x2/E753 [50x50] 6 Stations, Fresher, Office.png",
 "mirror_of":"",
@@ -175819,7 +175855,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x4/E726 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -175954,7 +175991,8 @@
 ],
 "tags":{
 "weapons":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x4/E727 [50x50] 4 Stations, 2 Turrets, Fresher.png",
 "mirror_of":"",
@@ -176764,7 +176802,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x4/E734 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -177304,7 +177343,8 @@
 ],
 "tags":{
 "bridge":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x4/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"",
@@ -178520,7 +178560,8 @@
 "tags":{
 "office":1.0,
 "bridge":1.0,
-"weapons":1.0
+"weapons":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Pointed Nose, Gunnery x4/E753 [50x50] 6 Stations, Fresher, Office.png",
 "mirror_of":"",
@@ -182005,7 +182046,8 @@
 "4 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E726 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -182140,7 +182182,8 @@
 ],
 "tags":{
 "weapons":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E727 [50x50] 4 Stations, 2 Turrets, Fresher.png",
 "mirror_of":"",
@@ -182945,7 +182988,8 @@
 "4 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E734 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -183215,7 +183259,8 @@
 "tags":{
 "recreation":1.0,
 "office":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E736 [50x50] 4 Stations, Fresher, Office, Briefing Room, Lounge.png",
 "mirror_of":"",
@@ -183351,7 +183396,8 @@
 "tags":{
 "recreation":1.0,
 "office":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E737 [50x50] 6 Stations, Fresher, Office, Lounge.png",
 "mirror_of":"",
@@ -183888,7 +183934,8 @@
 "5 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"",
@@ -184290,7 +184337,8 @@
 "9 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E745 [50x50] 9 Stations, Fresher.png",
 "mirror_of":"",
@@ -185230,7 +185278,8 @@
 ],
 "tags":{
 "office":1.0,
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E753 [50x50] 6 Stations, Fresher, Office.png",
 "mirror_of":"",
@@ -185364,7 +185413,8 @@
 "6 Stations, Fresher"
 ],
 "tags":{
-"bridge":1.0
+"bridge":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose/E754 [50x50] 6 Stations, Fresher.png",
 "mirror_of":"",
@@ -188926,7 +188976,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2/E726 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -189748,7 +189799,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2/E734 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"",
@@ -190296,7 +190348,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"",
@@ -190707,7 +190760,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2/E745 [50x50] 9 Stations, Fresher.png",
 "mirror_of":"",
@@ -191530,7 +191584,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2/E753 [50x50] 6 Stations, Fresher, Office.png",
 "mirror_of":"",
@@ -195092,7 +195147,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2 [Mirror]/E726 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"bE726:Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2",
@@ -195914,7 +195970,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2 [Mirror]/E734 [50x50] 4 Stations, Fresher.png",
 "mirror_of":"bE734:Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2",
@@ -196462,7 +196519,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2 [Mirror]/E742 [50x50] 5 Stations, Fresher.png",
 "mirror_of":"bE742:Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2",
@@ -196873,7 +196931,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2 [Mirror]/E745 [50x50] 9 Stations, Fresher.png",
 "mirror_of":"bE745:Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2",
@@ -197696,7 +197755,8 @@
 "bridge":1.0,
 "vehicle_bay":1.0,
 "weapons":1.0,
-"medical":1.0
+"medical":1.0,
+"fresher":1.0
 },
 "image":"Bridge/Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2 [Mirror]/E753 [50x50] 6 Stations, Fresher, Office.png",
 "mirror_of":"bE753:Bridge, Rounded Nose, Air-Raft, Medical, Gunnery x2",

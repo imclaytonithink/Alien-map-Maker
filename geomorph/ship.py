@@ -165,6 +165,63 @@ def tags_for_slots(slots, ship_type, rng, mode, counts=None, C=1):
     return tags
 
 
+FIXED_ROLES = ("bow", "stern", "bow_t", "stern_t", "fin")
+
+
+def optimize_tags(slots, tags, rng, C, grouping=0.6, iters=None):
+    """Smart grouping: swap room functions between slots of the same kind so that related rooms end up near each
+    other (medical with lab, cargo with loading bays, quarters with freshers...) while keeping each function
+    roughly where it belongs along the hull (bridge fore, engines aft)."""
+    from . import affinity
+    if grouping <= 0:
+        return 0
+    pos = [(s["x"] + s["w"] / 2, s["y"] + s["h"] / 2, 0) for s in slots]
+    movable = {}
+    for i, s in enumerate(slots):
+        if s.get("role") not in FIXED_ROLES and tags.get(i):
+            movable.setdefault(s["kind"], []).append(i)
+    ts = [set(tags.get(i) or ()) for i in range(len(slots))]
+    ts_fixed = ts
+
+    def pref_pen(i):
+        tg = tags.get(i) or []
+        if not tg:
+            return 0.0
+        return 0.8 * abs(slots[i]["row"] - LONG_PREF.get(tg[0], 0.5))
+
+    def local(i):
+        return affinity.local(i, pos, [set(tags.get(k) or ()) for k in range(len(slots))], grouping) - pref_pen(i)
+    accepted = 0
+    pools = [p for p in movable.values() if len(p) >= 2]
+    if not pools:
+        return 0
+    n = iters if iters is not None else 250 + 30 * len(slots)
+    # cache tag sets so each evaluation is O(n)
+    cache = [set(tags.get(k) or ()) for k in range(len(slots))]
+
+    def loc(i):
+        return affinity.local(i, pos, cache, grouping) - pref_pen(i)
+    for _ in range(n):
+        pool = rng.choice(pools)
+        a, b = rng.sample(pool, 2)
+        if tags[a] == tags[b]:
+            continue
+        for new_tag, slot in ((tags[b], a), (tags[a], b)):
+            if new_tag and new_tag[0] in PAIRED_TAGS and _partner(slots, slot, C) is None:
+                break
+        else:
+            before = loc(a) + loc(b)
+            tags[a], tags[b] = tags[b], tags[a]
+            cache[a], cache[b] = cache[b], cache[a]
+            after = loc(a) + loc(b)
+            if after >= before - 1e-9:
+                accepted += after > before
+            else:
+                tags[a], tags[b] = tags[b], tags[a]
+                cache[a], cache[b] = cache[b], cache[a]
+    return accepted
+
+
 def _allowed(slot):
     kind, out = slot["kind"], frozenset(slot["out"])
     if kind == "standard":
@@ -229,6 +286,8 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
         tags = {i: None for i in range(len(slots))}
     else:
         tags = tags_for_slots(slots, ship_type, rng, mode, counts, C)
+        if mode == "planned":
+            optimize_tags(slots, tags, rng, C, parts.get("grouping", 0.6))
     banned = {k for k, v in counts.items() if v == 0}
     for i, sl in enumerate(slots):
         if sl.get("role") in ("bow_t", "stern_t"):

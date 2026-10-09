@@ -70,7 +70,7 @@ def special_zones(arch, lay: Layout):
             s.zone = z
 
 
-def run_assign(arch, lay, rng, taken, mode="planned"):
+def run_assign(arch, lay, rng, taken, mode="planned", options=None):
     free = [s for s in lay.slots if s.zone is None and not s.reserved]
     arch2 = dict(arch)
     prog, shortfall = make_program(arch2, rng, len(free))
@@ -85,12 +85,13 @@ def run_assign(arch, lay, rng, taken, mode="planned"):
     from .program import general_zone
     while len(prog) < len(free):
         prog.append(zone_from_spec(general_zone(len(prog) + 1), len(prog) + 1, "", None))
+    g = 3.0 * ((options or {}).get("grouping", 0.6) if options else 0.6)
     if mode == "random":                       # function ignored: no scoring at all
         rep = assign.assign_zones(lay, prog, rng, restarts=1, iters=0)
     elif mode == "selective":                  # light repair only
         rep = assign.assign_zones(lay, prog, rng, restarts=1, iters=40)
     else:
-        rep = assign.assign_zones(lay, prog, rng)
+        rep = assign.assign_zones(lay, prog, rng, grouping=g)
     return prog, rep, shortfall
 
 
@@ -113,7 +114,7 @@ def generate_site(registry, arch: dict, rng: random.Random, scale="medium", env=
             break
         need = need + (need - len(free) - len(taken))
     taken_counts = taken
-    prog, rep, shortfall = run_assign(arch, lay, rng, taken_counts, mode)
+    prog, rep, shortfall = run_assign(arch, lay, rng, taken_counts, mode, options)
     if rep["unplaced"]:
         issues.append(f"zones with no legal slot: {', '.join(rep['unplaced'])}")
     zones = {s.zone.id: s.zone for s in lay.slots if s.zone}

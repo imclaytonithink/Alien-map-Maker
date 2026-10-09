@@ -109,10 +109,13 @@
       "pod-bed"
     ],
     "galley": [
-      "galley",
-      "mess",
+      "cafeteria",
+      "canteen",
       "dining",
+      "food",
+      "galley",
       "kitchen",
+      "mess",
       "snack"
     ],
     "medical": [
@@ -277,6 +280,18 @@
     "scoop": [
       "intake scoop",
       "fuel scoop"
+    ],
+    "fresher": [
+      "fresher",
+      "shower",
+      "restroom",
+      "toilet",
+      "bathroom"
+    ],
+    "morgue": [
+      "morgue",
+      "autopsy",
+      "mortuary"
     ]
   },
   "ship_required": [

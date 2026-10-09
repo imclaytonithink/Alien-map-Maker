@@ -333,7 +333,7 @@ def check_decor():
         p = host[0]
         assert p.x - 1e-6 <= it["cx"] - w / 2 and it["cx"] + w / 2 <= p.x + p.w + 1e-6, "inside the tile (real size)"
         assert p.y - 1e-6 <= it["cy"] - h / 2 and it["cy"] + h / 2 <= p.y + p.h + 1e-6
-        assert max(s.w, s.h) <= 2.5 and it["kind"] == "item"
+        assert max(s.w, s.h) <= 3.6 and it["kind"] == "item"
         assert it["zone"] == p.zone and p.tile.id in floors
     # nothing overlaps in a tidy room, items are never rotated off-grid
     boxes = []
@@ -399,6 +399,75 @@ def check_decor():
         ccy = d["y"] + s.px[1] * d["scale"] / 2 + dx * math.sin(a) + dy * math.cos(a)
         assert abs(ccx - it["cx"] * 70) < 1e-6 and abs(ccy - it["cy"] * 70) < 1e-6
     print("decor ok:", len(plain.decor), "items;", {k: len(v[1]) for k, v in mess.items()}, "incident marks")
+
+
+def check_grouping_and_smart_decor():
+    import re
+    import statistics
+    from geomorph import affinity, decor, symbols
+    # the affinity table: related functions attract, unrelated ones repel
+    W = affinity.tags_weight
+    assert W(["medical"], ["lab"]) > 0.5 and W(["medical"], ["morgue"]) > 0.5 and W(["cargo"], ["docking"]) > 0.5
+    assert W(["galley"], ["recreation"]) > 0.5 and W(["barracks"], ["fresher"]) > 0.5 and W(["staterooms"], ["fresher"]) > 0.5
+    assert W(["medical"], ["medical"]) > 0.5, "rooms of one function cluster together"
+    assert W(["waste"], ["galley"]) < 0 and W(["engineering"], ["staterooms"]) < 0
+    # ships: related rooms end up measurably closer with grouping on
+    def spread(res, tag):
+        ps = [p for p in res.grids[0].placed if p.zone.split("#")[0] == tag and p.tile.type in ("standard", "edge", "corner")]
+        pos = [(p.x + p.w / 2, p.y + p.h / 2, 0) for p in ps]
+        return affinity.cluster_spread(pos, [{tag}] * len(ps), tag) if len(ps) > 1 else None
+    means = {}
+    for g in (0.0, 0.8):
+        vals = []
+        for seed in range(10):
+            res = pipeline.generate(REG, {"kind": "ship", "ship_type": "Luxury Liner", "tonnage": 4000, "seed": seed,
+                                          "parts": {"grouping": g}, "grouping": g})
+            for tag in ("medical", "passenger", "recreation"):
+                v = spread(res, tag)
+                if v is not None:
+                    vals.append(v)
+        means[g] = statistics.mean(vals)
+    assert means[0.8] < means[0.0] * 0.8, means
+    # sites: the affinity objective improves with grouping on
+    def aff(res):
+        sl = res.layout.slots
+        return affinity.total([(s.cx, s.cy, s.level) for s in sl], [set(s.zone.tags) if s.zone else set() for s in sl], 1.0)
+    for name in ("Company town", "Prison / penal colony"):
+        a0 = statistics.mean(aff(pipeline.generate(REG, {"kind": "site", "archetype": name, "scale": "large", "seed": s, "grouping": 0.0}, ARCH)) for s in range(6))
+        a1 = statistics.mean(aff(pipeline.generate(REG, {"kind": "site", "archetype": name, "scale": "large", "seed": s, "grouping": 1.0}, ARCH)) for s in range(6))
+        assert a1 > a0, (name, a0, a1)
+    # smart decor: every item belongs to the kit of its room's function (no beds in cargo, no crates in a ward)
+    kits = decor.symbol_kits()
+    syms = symbols.load()
+    checked = 0
+    for kind_opts in ({"kind": "ship", "ship_type": "Military", "tonnage": 3000},
+                      {"kind": "ship", "ship_type": "Research", "tonnage": 3000},
+                      {"kind": "site", "archetype": "Prison / penal colony", "scale": "large"},
+                      {"kind": "site", "archetype": "Xeno-biology containment lab", "scale": "large"}):
+        for seed in (1, 2):
+            res = pipeline.generate(REG, dict(kind_opts, seed=seed, decor={"enabled": True, "density": 0.9}), ARCH)
+            for it in res.decor:
+                z = res.zones[it["zone"]]
+                s = syms[it["sym"]]
+                funcs = [z.base] if z.base in kits else list(z.tags[:2])
+                allowed = [e for f in funcs for e in kits.get(f, [])]
+                if not allowed:
+                    continue
+                assert any(e["cat"] == s.cat and (not e.get("name") or re.search(e["name"], s.name, re.I)) for e in allowed), \
+                    (z.base, z.tags, s.cat, s.name)
+                checked += 1
+    assert checked > 40, checked
+    # a ward gets medical beds, cargo gets crates, a cell gets bunks and brig fixtures
+    res = pipeline.generate(REG, {"kind": "ship", "ship_type": "Medical / Rescue", "tonnage": 3000, "seed": 4,
+                                  "decor": {"enabled": True, "density": 0.9}})
+    names = [(res.zones[i["zone"]].base, syms[i["sym"]].name) for i in res.decor]
+    assert any(b == "medical" and n.startswith("Medical Bed") for b, n in names), "wards have medical beds"
+    assert not any(b == "cargo" and n.startswith(("Bed", "Medical Bed")) for b, n in names)
+    # stair and lift cores are never furnished
+    pr = pipeline.generate(REG, {"kind": "site", "archetype": "Prison / penal colony", "scale": "large", "seed": 2,
+                                 "decor": {"enabled": True, "density": 0.9}}, ARCH)
+    assert not [i for i in pr.decor if pr.zones[i["zone"]].base == "core"]
+    print("grouping + smart decor ok:", {k: round(v, 1) for k, v in means.items()}, checked, "items checked")
 
 
 def check_archetype_files():
@@ -730,6 +799,7 @@ def main():
     check_ships()
     check_ship_part_options()
     check_decor()
+    check_grouping_and_smart_decor()
     check_archetype_files()
     check_sites()
     check_vertical_alignment()

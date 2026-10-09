@@ -29,12 +29,21 @@ Custom Tiles pack: `python -m geomorph --tiles <main pack> manifest --extra <cus
 Aerofins are always a mirrored pair. One bridge on the nose, one engineering on the tail (centre line).
 Hull sides always face outward. Secure zones are only entered through a checkpoint. Stairs/lifts sit at the same X/Y on every level.
 
+## Smart grouping
+Related rooms are generated close together: medical with labs and the morgue, cargo with loading bays and docks, dining
+with the galley, quarters with freshers, engineering with fuel and workshops, security with the brig and armory, and
+so on (and rooms of one function cluster). `data/affinity.json` holds the groups and the pairs that should stay apart
+(waste away from the galley, engines away from cabins); add your own. The pull works over distance across the whole
+building (a level change counts as 25 squares), not just touching neighbours. Strength: the *Room grouping* slider or
+`--grouping 0..1`.
+
 ## Symbols (furniture, machinery, cargo...)
 `--decor` (or the Symbols box in the dialog) furnishes open rooms from the Symbols pack. The pack draws at 60 px
 per foot (300 px per grid square) with transparent padding, so each symbol's real size is its measured opaque box;
 nothing is ever stretched. Only enclosed room floor from `data/tile_floor.json` is used, so corridors stay clear and
-items go against the walls (tables in the middle). `data/symbol_map.json` says which folders furnish which room
-function. "Something bad happened" (`--incident struggle|ransacked|overrun`, `--incident-where all|overlay|random`)
+items go against the walls (tables in the middle). `data/symbol_kits.json` is the per-room kit (a ward gets medical beds, counters and consoles; a mess gets tables, chairs and a counter; a cell
+gets bunks and brig fixtures; cargo gets crates; hydroponics gets plants) and the room's assigned function decides, never the odd
+thing a multipurpose tile contains. Stair/lift cores are never furnished. "Something bad happened" (`--incident struggle|ransacked|overrun`, `--incident-where all|overlay|random`)
 displaces and rotates items, adds debris, and for *overrun* barricaded doors, scorch/acid burns, resin and drag marks.
 Rebuild the symbol sizes with `symbols.build(<Symbols folder>)`.
 

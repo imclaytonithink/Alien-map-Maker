@@ -173,7 +173,7 @@ def score(lay: Layout, pairs, edges) -> float:
     return total
 
 
-def assign_zones(lay: Layout, zones: list, rng, restarts=3, iters=None):
+def assign_zones(lay: Layout, zones: list, rng, restarts=3, iters=None, grouping=0.6):
     """Assign zone instances to free slots. Returns a report dict."""
     free = [s for s in lay.slots if s.zone is None and not s.reserved and s.role not in ("vertical",)]
     lo, hi = building_levels(lay)
@@ -198,12 +198,20 @@ def assign_zones(lay: Layout, zones: list, rng, restarts=3, iters=None):
                 continue
             cands[0].zone = z
 
+    from . import affinity
+    pos = [(s.cx, s.cy, s.level) for s in lay.slots]
+
+    def tagsets():
+        return [set(s.zone.tags) if s.zone is not None else set() for s in lay.slots]
+
     best = None
     n_iter = iters if iters is not None else (300 + 25 * len(free))
     for _ in range(restarts):
         report["relaxed"], report["unplaced"] = [], []
         initial()
-        cur = score(lay, pairs, edges)
+        base = score(lay, pairs, edges)
+        ts = tagsets()
+        aff = affinity.total(pos, ts, grouping) if grouping > 0 else 0.0
         movable = list(free)
         for _i in range(n_iter):
             if len(movable) < 2:
@@ -216,12 +224,20 @@ def assign_zones(lay: Layout, zones: list, rng, restarts=3, iters=None):
                 continue
             if zb is not None and not constraint_ok(zb, a, lo, hi, relax=zb.id in report["relaxed"]):
                 continue
+            aff_before = (affinity.local(a.idx, pos, ts, grouping) + affinity.local(b.idx, pos, ts, grouping)) \
+                if grouping > 0 else 0.0
             a.zone, b.zone = zb, za
-            new = score(lay, pairs, edges)
-            if new >= cur:
-                cur = new
+            ts[a.idx], ts[b.idx] = ts[b.idx], ts[a.idx]
+            aff_after = (affinity.local(a.idx, pos, ts, grouping) + affinity.local(b.idx, pos, ts, grouping)) \
+                if grouping > 0 else 0.0
+            new_base = score(lay, pairs, edges)
+            d_aff = aff_after - aff_before
+            if new_base + d_aff >= base:
+                base, aff = new_base, aff + d_aff
             else:
                 a.zone, b.zone = za, zb
+                ts[a.idx], ts[b.idx] = ts[b.idx], ts[a.idx]
+        cur = base + aff
         if best is None or cur > best[0]:
             best = (cur, {s.idx: s.zone for s in free}, list(report["relaxed"]), list(report["unplaced"]))
     cur, zmap, rel, unp = best

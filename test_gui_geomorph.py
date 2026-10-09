@@ -142,6 +142,10 @@ assert dlg.result.decor and dlg.result.meta["decor"]["incident"] == "overrun"
 dlg.ck_decor.setChecked(False)
 assert "decor" not in dlg.options()
 
+assert dlg.options()["grouping"] == 0.6
+dlg.sl_group.setValue(0)
+assert dlg.options()["grouping"] == 0.0
+
 # ---- tile folder detection --------------------------------------------------
 fake_pack = tempfile.mkdtemp()
 os.makedirs(os.path.join(fake_pack, "x", "100x100 Core"))
