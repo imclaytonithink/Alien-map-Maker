@@ -2,176 +2,766 @@
  "_about": "What belongs in each kind of room. Per room function (tile tag): entries of {cat: Symbols folder, name: optional regex on the symbol name, w: weight, style: wall|row|center|corner, max: most per room, must: place at least one, if_room: only when the tile's room list matches}. Edit freely.",
  "kits": {
   "medical": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Medical Bed", "w": 4, "style": "row", "max": 6, "must": true},
-   {"cat": "Medical", "w": 2, "style": "wall", "max": 3},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Counter", "w": 1.5, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1, "style": "wall", "max": 2},
-   {"cat": "Lab", "name": "^Medical", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Medical Bed",
+    "w": 4,
+    "style": "row",
+    "max": 6,
+    "must": true
+   },
+   {
+    "cat": "Medical",
+    "w": 2,
+    "style": "wall",
+    "max": 3
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Counter",
+    "w": 1.5,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Lab",
+    "name": "^Medical",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "morgue": [
-   {"cat": "Low Berth", "w": 3, "style": "row", "max": 4, "must": true},
-   {"cat": "Medical", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Low Berth",
+    "w": 3,
+    "style": "row",
+    "max": 4,
+    "must": true
+   },
+   {
+    "cat": "Medical",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "lowberth": [
-   {"cat": "Low Berth", "w": 4, "style": "row", "max": 6, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1.5, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Medical Bed", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Low Berth",
+    "w": 4,
+    "style": "row",
+    "max": 6,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1.5,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Medical Bed",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "staterooms": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Bed", "w": 4, "style": "wall", "max": 2, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Desk", "w": 2, "style": "wall", "max": 1},
-   {"cat": "Ship's Locker", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Couch", "w": 0.6, "style": "wall", "max": 1}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Bed",
+    "w": 4,
+    "style": "wall",
+    "max": 2,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Desk",
+    "w": 2,
+    "style": "wall",
+    "max": 1
+   },
+   {
+    "cat": "Ship's Locker",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Couch",
+    "w": 0.6,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "crew_quarters": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Bed", "w": 4, "style": "wall", "max": 2, "must": true},
-   {"cat": "Ship's Locker", "w": 3, "style": "wall", "max": 3},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Desk", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Bed",
+    "w": 4,
+    "style": "wall",
+    "max": 2,
+    "must": true
+   },
+   {
+    "cat": "Ship's Locker",
+    "w": 3,
+    "style": "wall",
+    "max": 3
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Desk",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "passenger": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Bed", "w": 3, "style": "wall", "max": 2, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Couch", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Desk", "w": 1.5, "style": "wall", "max": 1},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Table", "w": 1, "style": "center", "max": 1}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Bed",
+    "w": 3,
+    "style": "wall",
+    "max": 2,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Couch",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Desk",
+    "w": 1.5,
+    "style": "wall",
+    "max": 1
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Table",
+    "w": 1,
+    "style": "center",
+    "max": 1
+   }
   ],
   "barracks": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Bed", "w": 5, "style": "row", "max": 8, "must": true},
-   {"cat": "Ship's Locker", "w": 3, "style": "row", "max": 4}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Bed",
+    "w": 5,
+    "style": "row",
+    "max": 8,
+    "must": true
+   },
+   {
+    "cat": "Ship's Locker",
+    "w": 3,
+    "style": "row",
+    "max": 4
+   }
   ],
   "fresher": [
-   {"cat": "Fresher", "w": 4, "style": "wall", "max": 5, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Fresher", "w": 2, "style": "wall", "max": 2}
+   {
+    "cat": "Fresher",
+    "w": 4,
+    "style": "wall",
+    "max": 5,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Fresher",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "galley": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Table", "w": 4, "style": "center", "max": 3, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Couch", "w": 2, "style": "center", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Counter", "w": 3, "style": "wall", "max": 3},
-   {"cat": "Galley & Mess", "w": 2, "style": "wall", "max": 2}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Table",
+    "w": 4,
+    "style": "center",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Couch",
+    "w": 2,
+    "style": "center",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Counter",
+    "w": 3,
+    "style": "wall",
+    "max": 3
+   },
+   {
+    "cat": "Galley & Mess",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "recreation": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Couch", "w": 3, "style": "wall", "max": 3, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Table", "w": 2, "style": "center", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Gaming", "w": 1.5, "style": "center", "max": 1},
-   {"cat": "Lounge", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Gym", "w": 3, "style": "wall", "max": 3, "if_room": "gym"},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Piano", "w": 2, "style": "wall", "max": 1, "if_room": "piano|stage|dance"}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Couch",
+    "w": 3,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Table",
+    "w": 2,
+    "style": "center",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Gaming",
+    "w": 1.5,
+    "style": "center",
+    "max": 1
+   },
+   {
+    "cat": "Lounge",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Gym",
+    "w": 3,
+    "style": "wall",
+    "max": 3,
+    "if_room": "gym"
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Piano",
+    "w": 2,
+    "style": "wall",
+    "max": 1,
+    "if_room": "piano|stage|dance"
+   }
   ],
   "concourse": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Couch", "w": 2, "style": "wall", "max": 3},
-   {"cat": "Retail", "w": 2, "style": "center", "max": 1},
-   {"cat": "Misc", "name": "^Landscaping", "w": 1.5, "style": "wall", "max": 3}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Couch",
+    "w": 2,
+    "style": "wall",
+    "max": 3
+   },
+   {
+    "cat": "Retail",
+    "w": 2,
+    "style": "center",
+    "max": 1
+   },
+   {
+    "cat": "Misc",
+    "name": "^Landscaping",
+    "w": 1.5,
+    "style": "wall",
+    "max": 3
+   }
   ],
   "office": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Desk", "w": 4, "style": "wall", "max": 3, "must": true},
-   {"cat": "Offices", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Computer", "w": 1.5, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Desk",
+    "w": 4,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Offices",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Computer",
+    "w": 1.5,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "bridge": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Azhanti", "w": 4, "style": "wall", "max": 3, "must": true},
-   {"cat": "Bridge", "w": 3, "style": "wall", "max": 3},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1.5, "style": "wall", "max": 2}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Azhanti",
+    "w": 4,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Bridge",
+    "w": 3,
+    "style": "wall",
+    "max": 3
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1.5,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "sensors": [
-   {"cat": "Sensors", "w": 3, "style": "wall", "max": 2, "must": true},
-   {"cat": "Computer", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1.5, "style": "wall", "max": 2}
+   {
+    "cat": "Sensors",
+    "w": 3,
+    "style": "wall",
+    "max": 2,
+    "must": true
+   },
+   {
+    "cat": "Computer",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1.5,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "comms": [
-   {"cat": "Computer", "w": 3, "style": "wall", "max": 2, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 2, "style": "wall", "max": 2}
+   {
+    "cat": "Computer",
+    "w": 3,
+    "style": "wall",
+    "max": 2,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "lab": [
-   {"cat": "Lab", "w": 4, "style": "wall", "max": 3, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Table", "w": 1.5, "style": "center", "max": 1},
-   {"cat": "Computer", "w": 1.5, "style": "wall", "max": 1},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Lab",
+    "w": 4,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Table",
+    "w": 1.5,
+    "style": "center",
+    "max": 1
+   },
+   {
+    "cat": "Computer",
+    "w": 1.5,
+    "style": "wall",
+    "max": 1
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "workshop": [
-   {"cat": "Shop & Repair Area", "w": 4, "style": "wall", "max": 3, "must": true},
-   {"cat": "Machinery", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 0.8, "style": "wall", "max": 1}
+   {
+    "cat": "Shop & Repair Area",
+    "w": 4,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Machinery",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 0.8,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "engineering": [
-   {"cat": "Machinery", "w": 4, "style": "wall", "max": 5, "must": true},
-   {"cat": "Battery", "w": 1.5, "style": "wall", "max": 2},
-   {"cat": "Engineering", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Machinery",
+    "w": 4,
+    "style": "wall",
+    "max": 5,
+    "must": true
+   },
+   {
+    "cat": "Battery",
+    "w": 1.5,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Engineering",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "power": [
-   {"cat": "Battery", "w": 3, "style": "row", "max": 4, "must": true},
-   {"cat": "Machinery", "w": 3, "style": "wall", "max": 3},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Battery",
+    "w": 3,
+    "style": "row",
+    "max": 4,
+    "must": true
+   },
+   {
+    "cat": "Machinery",
+    "w": 3,
+    "style": "wall",
+    "max": 3
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "fuel": [
-   {"cat": "Fuel", "w": 4, "style": "wall", "max": 3, "must": true},
-   {"cat": "Machinery", "w": 2, "style": "wall", "max": 3}
+   {
+    "cat": "Fuel",
+    "w": 4,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Machinery",
+    "w": 2,
+    "style": "wall",
+    "max": 3
+   }
   ],
   "refinery": [
-   {"cat": "Machinery", "w": 4, "style": "wall", "max": 5, "must": true},
-   {"cat": "Fuel", "w": 2, "style": "wall", "max": 2}
+   {
+    "cat": "Machinery",
+    "w": 4,
+    "style": "wall",
+    "max": 5,
+    "must": true
+   },
+   {
+    "cat": "Fuel",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "cargo": [
-   {"cat": "Cargo", "w": 4, "style": "corner", "max": 6, "must": true},
-   {"cat": "Storage", "w": 2, "style": "wall", "max": 3},
-   {"cat": "Ship's Locker", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Cargo",
+    "w": 4,
+    "style": "row",
+    "max": 8,
+    "must": true
+   },
+   {
+    "cat": "Cargo",
+    "w": 1.5,
+    "style": "corner",
+    "max": 3
+   },
+   {
+    "cat": "Storage",
+    "w": 2,
+    "style": "row",
+    "max": 3
+   },
+   {
+    "cat": "Ship's Locker",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "hangar": [
-   {"cat": "Cargo", "w": 2, "style": "corner", "max": 3},
-   {"cat": "Storage", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Machinery", "w": 2, "style": "wall", "max": 3},
-   {"cat": "Shop & Repair Area", "w": 1.5, "style": "wall", "max": 1}
+   {
+    "cat": "Cargo",
+    "w": 2,
+    "style": "corner",
+    "max": 3
+   },
+   {
+    "cat": "Storage",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Machinery",
+    "w": 2,
+    "style": "wall",
+    "max": 3
+   },
+   {
+    "cat": "Shop & Repair Area",
+    "w": 1.5,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "vehicle_bay": [
-   {"cat": "Machinery", "w": 2, "style": "wall", "max": 3},
-   {"cat": "Shop & Repair Area", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Cargo", "w": 1, "style": "corner", "max": 2}
+   {
+    "cat": "Machinery",
+    "w": 2,
+    "style": "wall",
+    "max": 3
+   },
+   {
+    "cat": "Shop & Repair Area",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Cargo",
+    "w": 1,
+    "style": "corner",
+    "max": 2
+   }
   ],
   "docking": [
-   {"cat": "Cargo", "w": 3, "style": "corner", "max": 3},
-   {"cat": "Storage", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Ship's Locker", "w": 2, "style": "wall", "max": 2}
+   {
+    "cat": "Cargo",
+    "w": 3,
+    "style": "row",
+    "max": 5
+   },
+   {
+    "cat": "Storage",
+    "w": 2,
+    "style": "row",
+    "max": 2
+   },
+   {
+    "cat": "Ship's Locker",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "security": [
-   {"cat": "Brig & Security", "w": 3, "style": "wall", "max": 3, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Desk", "w": 1.5, "style": "wall", "max": 1},
-   {"cat": "Ship's Locker", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Console", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Brig & Security",
+    "w": 3,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Desk",
+    "w": 1.5,
+    "style": "wall",
+    "max": 1
+   },
+   {
+    "cat": "Ship's Locker",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Console",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "brig": [
-   {"cat": "Brig & Security", "w": 4, "style": "wall", "max": 4, "must": true},
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Bed", "w": 1, "style": "wall", "max": 2}
+   {
+    "cat": "Brig & Security",
+    "w": 4,
+    "style": "wall",
+    "max": 4,
+    "must": true
+   },
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Bed",
+    "w": 1,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "weapons": [
-   {"cat": "Weaponry", "w": 4, "style": "wall", "max": 3, "must": true},
-   {"cat": "Ship's Locker", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Weaponry",
+    "w": 4,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Ship's Locker",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ],
   "armory": [
-   {"cat": "Weaponry", "w": 3, "style": "row", "max": 4, "must": true},
-   {"cat": "Ship's Locker", "w": 3, "style": "row", "max": 4}
+   {
+    "cat": "Weaponry",
+    "w": 3,
+    "style": "row",
+    "max": 4,
+    "must": true
+   },
+   {
+    "cat": "Ship's Locker",
+    "w": 3,
+    "style": "row",
+    "max": 4
+   }
   ],
   "hydroponics": [
-   {"cat": "Misc", "name": "^Landscaping", "w": 4, "style": "row", "max": 8, "must": true}
+   {
+    "cat": "Misc",
+    "name": "^Landscaping",
+    "w": 4,
+    "style": "row",
+    "max": 8,
+    "must": true
+   }
   ],
   "waste": [
-   {"cat": "Utility", "w": 3, "style": "wall", "max": 3, "must": true},
-   {"cat": "Machinery", "w": 2, "style": "wall", "max": 2}
+   {
+    "cat": "Utility",
+    "w": 3,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Machinery",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "water": [
-   {"cat": "Utility", "w": 3, "style": "wall", "max": 3, "must": true},
-   {"cat": "Machinery", "w": 2, "style": "wall", "max": 2}
+   {
+    "cat": "Utility",
+    "w": 3,
+    "style": "wall",
+    "max": 3,
+    "must": true
+   },
+   {
+    "cat": "Machinery",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   }
   ],
   "escape": [
-   {"cat": "Ship's Locker", "w": 3, "style": "wall", "max": 3}
+   {
+    "cat": "Ship's Locker",
+    "w": 3,
+    "style": "wall",
+    "max": 3
+   }
   ],
   "airlock": [
-   {"cat": "Ship's Locker", "w": 3, "style": "wall", "max": 3}
+   {
+    "cat": "Ship's Locker",
+    "w": 3,
+    "style": "wall",
+    "max": 3
+   }
   ],
   "multipurpose": [
-   {"cat": "Furniture, Consoles, & Equipment", "name": "^Desk", "w": 2, "style": "wall", "max": 2},
-   {"cat": "Cargo", "w": 2, "style": "corner", "max": 2},
-   {"cat": "Offices", "w": 1, "style": "wall", "max": 1}
+   {
+    "cat": "Furniture, Consoles, & Equipment",
+    "name": "^Desk",
+    "w": 2,
+    "style": "wall",
+    "max": 2
+   },
+   {
+    "cat": "Cargo",
+    "w": 2,
+    "style": "corner",
+    "max": 2
+   },
+   {
+    "cat": "Offices",
+    "w": 1,
+    "style": "wall",
+    "max": 1
+   }
   ]
  }
 }

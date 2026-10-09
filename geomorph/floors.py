@@ -15,7 +15,7 @@ from .registry import BORDER_SQUARES, PX_PER_SQUARE
 
 Image.MAX_IMAGE_PIXELS = None
 SUB = 2                    # cells per grid square (half-square resolution)
-SOLID_AT = 0.10            # fraction of opaque pixels that makes a cell solid
+SOLID_AT = 0.002           # fraction of opaque pixels that makes a cell solid (catches thin dashed outlines too)
 
 
 def analyse_floor(path, w, h, edges=None, pps=PX_PER_SQUARE, border=BORDER_SQUARES):
@@ -25,7 +25,7 @@ def analyse_floor(path, w, h, edges=None, pps=PX_PER_SQUARE, border=BORDER_SQUAR
     boundary is circulation ('c'); enclosed room floor stays '.'.
     """
     im = Image.open(path) if not isinstance(path, Image.Image) else path
-    a = im.convert("RGBA").getchannel("A")
+    a = im.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 64 else 0)   # any visible line counts
     box = (border * pps, border * pps, (border + w) * pps, (border + h) * pps)
     a = a.crop(box).resize((w * SUB, h * SUB), Image.BOX)
     px = a.load()
