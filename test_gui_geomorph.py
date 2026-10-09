@@ -271,6 +271,19 @@ dlg._reroll_level()
 assert "tile(s) changed" in dlg.lbl_status.text()
 dlg._show_level()
 assert not dlg.preview.pixmap().isNull()
+# editable room notes flow into the exports; player version stays free of GM text
+assert dlg.lst_notes.count() == len(res.key)
+dlg.lst_notes.setCurrentRow(0)
+dlg.ed_note_gm.setPlainText("GM ONLY: the vent leads to the nest.")
+dlg.ed_note_player.setPlainText("A quiet corridor.")
+assert res.key[0]["text"].startswith("GM ONLY") and res.key[0]["player"] == "A quiet corridor."
+assert "GM ONLY" in dlg.txt_key.toPlainText()
+from geomorph import exporter as _ex
+pk = _ex.to_package(res, gm=False)
+assert "GM ONLY" not in str(pk) and pk["key"][0]["text"] == "A quiet corridor."
+assert "GM ONLY" in str(_ex.to_package(res, gm=True))
+dlg._preview_clicked(int((cand.x + 1 - bx0) * 8), int(24 + (cand.y + 1 - by0) * 8))
+assert dlg.lst_notes.currentRow() >= 0
 # gap warning label follows the result
 res.gaps = {"Test zone": "no tile"}
 dlg._generated(res, None)

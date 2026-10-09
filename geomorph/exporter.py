@@ -44,7 +44,7 @@ def to_package(res: Result, gm=True) -> dict:
         "zones": {zid: {"name": z.name, "tags": z.tags, "access": z.access, "checkpoint": z.checkpoint,
                         "base": z.base, "entrance": z.entrance} for zid, z in res.zones.items()},
         "key": [{k: v for k, v in e.items()} for e in res.key] if gm else
-               [{"n": e["n"], "level": e["level"], "title": e["title"]} for e in res.key],
+               [{"n": e["n"], "level": e["level"], "title": e["title"], "text": e.get("player", "")} for e in res.key],
         "markers": markers, "overlays": res.overlays if gm else {k: v for k, v in res.overlays.items() if k != "lockdown"},
         "decor": getattr(res, "decor", []),
         "links": res.links, "section": res.section, "issues": res.issues, "gaps": res.gaps,
@@ -214,7 +214,8 @@ def build_pdf_pages(res: Result, images: render.TileImages, gm=True, pps=14):
     kp = _Page()
     kp.heading("Key", 38)
     for e in res.key:
-        text = f"{e['n']}. {e['title']}" if not gm else f"{e['n']}. {e['title']} — {e.get('text', '')}"
+        player = e.get("player", "")
+        text = (f"{e['n']}. {e['title']}" + (f" — {player}" if player else "")) if not gm else f"{e['n']}. {e['title']} — {e.get('text', '')}"
         if not kp.room(90):
             pages.append(kp); kp = _Page()
         kp.paragraph(text, 20, gap=6)

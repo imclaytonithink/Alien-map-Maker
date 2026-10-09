@@ -14,7 +14,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, QStandardPaths, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
-    QAbstractSpinBox, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+    QAbstractSpinBox, QCheckBox, QComboBox, QDialog, QListWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget,
     QVBoxLayout, QWidget,
 )
@@ -420,6 +420,24 @@ class GeomorphDialog(QDialog):
         for t, name in ((self.txt_main, "Description & hooks"), (self.txt_key, "Key"), (self.txt_report, "Checks & gaps")):
             t.setReadOnly(True)
             self.info_tabs.addTab(t, name)
+        # editable per-room notes (what the GM sees / what players get)
+        w = QWidget()
+        h = QHBoxLayout(w)
+        self.lst_notes = QListWidget()
+        self.lst_notes.setMaximumWidth(260)
+        self.lst_notes.currentRowChanged.connect(self._note_selected)
+        h.addWidget(self.lst_notes)
+        col = QVBoxLayout()
+        col.addWidget(QLabel("GM note (never in the player version)"))
+        self.ed_note_gm = QPlainTextEdit()
+        self.ed_note_gm.textChanged.connect(lambda: self._note_edited("text", self.ed_note_gm))
+        col.addWidget(self.ed_note_gm)
+        col.addWidget(QLabel("Player note (shown in the player key)"))
+        self.ed_note_player = QPlainTextEdit()
+        self.ed_note_player.textChanged.connect(lambda: self._note_edited("player", self.ed_note_player))
+        col.addWidget(self.ed_note_player)
+        h.addLayout(col, 1)
+        self.info_tabs.addTab(w, "Room notes")
         right.addWidget(self.info_tabs, 2)
         row = QHBoxLayout()
         self.cb_zone = QComboBox()
@@ -657,8 +675,44 @@ class GeomorphDialog(QDialog):
                 _set_combo(self.cb_zone, p.zone)
                 return
 
+    def _fill_notes(self):
+        self.lst_notes.blockSignals(True)
+        self.lst_notes.clear()
+        for e in self.result.key:
+            self.lst_notes.addItem(f"{e['n']}. {e['title']}")
+        self.lst_notes.blockSignals(False)
+        self.ed_note_gm.clear()
+        self.ed_note_player.clear()
+
+    def _note_selected(self, row):
+        key = self.result.key if self.result is not None else []
+        if not 0 <= row < len(key):
+            return
+        e = key[row]
+        for ed, field in ((self.ed_note_gm, "text"), (self.ed_note_player, "player")):
+            ed.blockSignals(True)
+            ed.setPlainText(e.get(field, ""))
+            ed.blockSignals(False)
+
+    def _note_edited(self, field, editor):
+        row = self.lst_notes.currentRow()
+        if self.result is not None and 0 <= row < len(self.result.key):
+            self.result.key[row][field] = editor.toPlainText()
+            if field == "text":
+                self._rebuild_key_text()
+
+    def _rebuild_key_text(self):
+        res = self.result
+        self.txt_key.setPlainText("\n".join(f"{e['n']}. {e['title']} (level {e['level'] + 1}) — {e.get('text', '')}"
+                                            for e in res.key))
+
     def _zone_changed(self, *_a):
         self.selected_zone = self.cb_zone.currentData()
+        if self.result is not None:
+            for i, e in enumerate(self.result.key):
+                if e.get("zone") == self.selected_zone and self.selected_zone:
+                    self.lst_notes.setCurrentRow(i)
+                    break
         self.ck_lock.blockSignals(True)
         self.ck_lock.setChecked(self.selected_zone in self.locked)
         self.ck_lock.blockSignals(False)
@@ -901,6 +955,7 @@ class GeomorphDialog(QDialog):
         self.txt_main.setPlainText("\n".join(lines))
         self.txt_key.setPlainText("\n".join(f"{e['n']}. {e['title']} (level {e['level'] + 1}) — {e.get('text', '')}"
                                             for e in res.key))
+        self._fill_notes()
         from geomorph import reports
         rep = ["Issues:"] + ([f"  - {i}" for i in res.issues] or ["  none"])
         rep += ["", "Zones with no suitable tile (drawn procedurally or substituted):"]

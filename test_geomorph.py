@@ -879,7 +879,7 @@ def check_package_and_save_load():
     assert gm["hooks"] and gm["notes"] and not pl["hooks"] and not pl["notes"]
     assert any(m["type"] == "threat" for m in gm["markers"]) and any(m["type"] == "secret" for m in gm["markers"])
     assert not any(m.get("gm_only") for m in pl["markers"]), "player version hides secrets and the threat overlay"
-    assert all(set(e) <= {"n", "level", "title"} for e in pl["key"])
+    assert all(set(e) <= {"n", "level", "title", "text"} for e in pl["key"])
     assert gm["description"] and gm["title"] and len(gm["key"]) >= len(res.zones)
     types = {h["type"] for h in gm["hooks"]}
     assert len(types) >= 3 and types <= set(json.load(open(Path("geomorph/data/common.json")))["hook_types"])
@@ -1000,6 +1000,31 @@ def check_custom_tiles():
     print("custom tiles ok")
 
 
+def check_keyed_notes_and_rerolls():
+    from geomorph import exporter
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="site", seed="notes", archetype="Research facility", scale="medium",
+                                      overlays=["lockdown", "threat", "secrets", "power_failure"], intensity=0.9,
+                                      decor={"enabled": True, "incident": "struggle", "where": "all"}))
+    gm_text = " ".join(e["text"] for e in res.key)
+    assert "THREAT:" in gm_text and "LOCKDOWN:" in gm_text, "GM notes list states and threats per room"
+    assert all("player" in e for e in res.key if e["zone"])
+    player = str(exporter.to_package(res, gm=False))
+    for word in ("THREAT", "SECRET", "LOCKDOWN", "POWER OUT", "Furnished with"):
+        assert word not in player, f"{word} leaked into the player version"
+    # per-level re-roll keeps locked tiles and stair/lift cores
+    lvl = 1
+    locked = {p.zone for p in res.grids[lvl].placed[:1]}
+    before = {p.zone: p.tile.id for p in res.grids[lvl].placed}
+    fixed = pipeline._fixed_zone_ids(res)
+    changed = pipeline.reroll_level(res, lvl, locked, seed=3)
+    after = {p.zone: p.tile.id for p in res.grids[lvl].placed}
+    assert changed >= 0 and set(before) == set(after)
+    for z in locked | fixed:
+        assert before.get(z) == after.get(z), f"{z} must not change"
+    print("keyed notes, player leak check and level re-roll ok")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1021,6 +1046,7 @@ def main():
     check_package_and_save_load()
     check_condition_and_text()
     check_reroll_and_gaps()
+    check_keyed_notes_and_rerolls()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")
