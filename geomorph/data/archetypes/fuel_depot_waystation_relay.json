@@ -1,0 +1,166 @@
+{
+ "name": "Fuel depot / waystation / relay",
+ "group": "Industry",
+ "topology": "hub",
+ "scales": {
+  "small": {
+   "modules": 4
+  },
+  "medium": {
+   "modules": 5
+  },
+  "large": {
+   "modules": 8
+  }
+ },
+ "environments": [
+  "vacuum",
+  "orbital",
+  "breathable"
+ ],
+ "zones": [
+  {
+   "id": "tanks",
+   "name": "Tanks",
+   "tags": [
+    "fuel",
+    "cargo"
+   ],
+   "min": 1,
+   "max": 3,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "crew"
+   ]
+  },
+  {
+   "id": "dock",
+   "name": "Docking",
+   "tags": [
+    "docking",
+    "hangar"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "crew",
+   "name": "Minimal crew quarters",
+   "tags": [
+    "staterooms",
+    "crew_quarters",
+    "galley"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "tanks"
+   ]
+  },
+  {
+   "id": "comms",
+   "name": "Comms",
+   "tags": [
+    "comms",
+    "sensors",
+    "bridge"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "repair",
+   "name": "Repair",
+   "tags": [
+    "workshop",
+    "engineering"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "The last cheap fuel for six jumps. The two-person crew has opinions about visitors."
+  ],
+  "hooks": [
+   {
+    "type": "Defend",
+    "text": "A raiding crew is inbound and the depot's guns have never been fired."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "fuel depot",
+ "name_table": "stations",
+ "entrance_zone": "dock"
+}

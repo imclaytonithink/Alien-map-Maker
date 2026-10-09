@@ -1,0 +1,238 @@
+{
+ "name": "Spaceport / starport",
+ "group": "Colony",
+ "topology": "campus",
+ "scales": {
+  "small": {
+   "buildings": [
+    6,
+    7
+   ],
+   "levels": 1
+  },
+  "medium": {
+   "buildings": [
+    9,
+    11
+   ],
+   "levels": 1
+  },
+  "large": {
+   "buildings": [
+    13,
+    16
+   ],
+   "levels": 2
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "vacuum"
+ ],
+ "zones": [
+  {
+   "id": "terminal",
+   "name": "Passenger terminal",
+   "tags": [
+    "concourse",
+    "passenger",
+    "recreation"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [
+    "customs"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "customs",
+   "name": "Customs",
+   "tags": [
+    "security",
+    "office"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "terminal"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "hangar",
+   "name": "Hangars",
+   "tags": [
+    "hangar"
+   ],
+   "min": 1,
+   "max": 3,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "cargo",
+    "fuel"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "pad",
+   "name": "Landing pads",
+   "tags": [
+    "hangar"
+   ],
+   "min": 1,
+   "max": 3,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "filler": "pad",
+   "filler_only": true
+  },
+  {
+   "id": "cargo",
+   "name": "Cargo handling",
+   "tags": [
+    "cargo"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "hangar"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "fuel",
+   "name": "Fuel",
+   "tags": [
+    "fuel",
+    "refinery"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [
+    "hangar"
+   ],
+   "forbid_adjacent": [
+    "hotel",
+    "terminal"
+   ]
+  },
+  {
+   "id": "hotel",
+   "name": "Hotels & bars",
+   "tags": [
+    "staterooms",
+    "recreation",
+    "galley"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [
+    "terminal"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "security",
+   "name": "Security",
+   "tags": [
+    "security",
+    "brig"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Traffic never stops: haulers, couriers, tramp freighters and the odd military shuttle."
+  ],
+  "hooks": [
+   {
+    "type": "Break In",
+    "text": "A sealed cargo container in hangar bay two is not on any manifest."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "starport",
+ "name_table": "stations",
+ "entrance_zone": "terminal",
+ "perimeter": "fence"
+}

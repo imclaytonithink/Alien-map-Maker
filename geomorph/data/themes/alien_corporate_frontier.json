@@ -1,0 +1,198 @@
+{
+ "label": "Alien-style corporate frontier",
+ "corporations": {
+  "first": [
+   "Weyland",
+   "Hadley",
+   "Sevastopol",
+   "Lasalle",
+   "Armitage",
+   "Gateway",
+   "Jovian",
+   "Bionational",
+   "Seegson",
+   "Rexxon",
+   "Kelland",
+   "Carmack",
+   "Torrance",
+   "Tanaka",
+   "Nostrom"
+  ],
+  "second": [
+   "Yutani",
+   "Dynamics",
+   "Industrial",
+   "Extraction",
+   "Heavy Industries",
+   "Mining Co.",
+   "Biomedical",
+   "Colonial Services",
+   "Freight & Salvage",
+   "Terraforming Group",
+   "Logistics",
+   "Ordnance"
+  ],
+  "patterns": [
+   "{first}-{second}",
+   "{first} {second}",
+   "The {first} {second} Corporation"
+  ]
+ },
+ "colonies": {
+  "prefix": [
+   "Hadley's",
+   "Acheron",
+   "Calpamos",
+   "Fiorina",
+   "Origae",
+   "Tartarus",
+   "Kilgore",
+   "Lazarus",
+   "Sulaco",
+   "Avalon",
+   "Thule",
+   "Marrow"
+  ],
+  "suffix": [
+   "Hope",
+   "Landing",
+   "Reach",
+   "Station",
+   "Crossing",
+   "Settlement",
+   "Outpost",
+   "Yard",
+   "Ridge",
+   "Rest"
+  ],
+  "patterns": [
+   "{prefix} {suffix}",
+   "{prefix}",
+   "Colony {number}"
+  ]
+ },
+ "facilities": {
+  "prefix": [
+   "Delta",
+   "Gateway",
+   "Anchorpoint",
+   "Helix",
+   "Cassandra",
+   "Prometheus",
+   "Lazarus",
+   "Medusa",
+   "Tartarus",
+   "Nerio",
+   "Kaleidoscope",
+   "Orpheus"
+  ],
+  "suffix": [
+   "Research Facility",
+   "Processing Plant",
+   "Containment Site",
+   "Relay Station",
+   "Depot",
+   "Complex",
+   "Annex",
+   "Array",
+   "Works",
+   "Block"
+  ],
+  "patterns": [
+   "{prefix} {suffix}",
+   "{prefix}-{number}",
+   "Site {number}: {prefix}"
+  ]
+ },
+ "mines": {
+  "prefix": [
+   "Deep",
+   "Black",
+   "Iron",
+   "Cinder",
+   "Bitter",
+   "Marrow",
+   "Hollow",
+   "Gravel",
+   "Ashfall",
+   "Redrock"
+  ],
+  "suffix": [
+   "Shaft",
+   "Pit",
+   "Drift",
+   "Dig",
+   "Workings",
+   "Lode",
+   "Seam",
+   "Gulch"
+  ],
+  "patterns": [
+   "{prefix} {suffix} {number}",
+   "{prefix} {suffix}",
+   "{corp} {prefix} {suffix}"
+  ]
+ },
+ "stations": {
+  "prefix": [
+   "Gateway",
+   "Anchor",
+   "Sevastopol",
+   "Lazarus",
+   "Frontier",
+   "Mercy",
+   "Lagrange",
+   "Perihelion",
+   "Aphelion",
+   "Long Haul"
+  ],
+  "suffix": [
+   "Station",
+   "Platform",
+   "Spindle",
+   "Ring",
+   "Relay",
+   "Hub",
+   "Terminal",
+   "Waystation"
+  ],
+  "patterns": [
+   "{prefix} {suffix}",
+   "{prefix}-{number}",
+   "{corp} {suffix} {number}"
+  ]
+ },
+ "ships": {
+  "prefix": [
+   "Nostromo",
+   "Sulaco",
+   "Narcissus",
+   "Auriga",
+   "Onager",
+   "Patna",
+   "Verdant",
+   "Betty",
+   "Torrens",
+   "Marlow",
+   "Rhea",
+   "Covenant"
+  ],
+  "suffix": [
+   "Star",
+   "Runner",
+   "Hauler",
+   "Drifter",
+   "Maru",
+   "Queen",
+   "Venture",
+   "Resolve",
+   "Mercy"
+  ],
+  "patterns": [
+   "{prefix}",
+   "{prefix} {suffix}",
+   "MSV {prefix}",
+   "USCSS {prefix}"
+  ]
+ }
+}

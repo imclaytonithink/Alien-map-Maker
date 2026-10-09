@@ -1,0 +1,299 @@
+{
+ "name": "Frontier colony outpost",
+ "group": "Colony",
+ "topology": "campus",
+ "scales": {
+  "small": {
+   "buildings": [
+    5,
+    6
+   ],
+   "levels": 1
+  },
+  "medium": {
+   "buildings": [
+    8,
+    10
+   ],
+   "levels": 1
+  },
+  "large": {
+   "buildings": [
+    12,
+    14
+   ],
+   "levels": 2
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "vacuum"
+ ],
+ "zones": [
+  {
+   "id": "command",
+   "name": "Command & admin",
+   "tags": [
+    "bridge",
+    "office"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "comms"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "habitat",
+   "name": "Habitat module",
+   "tags": [
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 1,
+   "max": 4,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [
+    "mess"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "mess",
+   "name": "Mess hall",
+   "tags": [
+    "galley",
+    "recreation"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [
+    "habitat"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "medical",
+   "name": "Medical clinic",
+   "tags": [
+    "medical"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "power",
+   "name": "Power plant",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "habitat",
+    "mess",
+    "medical"
+   ]
+  },
+  {
+   "id": "water",
+   "name": "Water & air plant",
+   "tags": [
+    "water",
+    "engineering"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "power"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "workshop",
+   "name": "Workshop",
+   "tags": [
+    "workshop"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "garage"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "garage",
+   "name": "Vehicle bay",
+   "tags": [
+    "vehicle_bay",
+    "hangar"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "pad",
+   "name": "Landing pad",
+   "tags": [
+    "hangar"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "filler": "pad",
+   "filler_only": true
+  },
+  {
+   "id": "store",
+   "name": "Stores",
+   "tags": [
+    "cargo"
+   ],
+   "min": 0,
+   "max": 2,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "rec",
+   "name": "Rec hall",
+   "tags": [
+    "recreation"
+   ],
+   "min": 0,
+   "max": 2,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "comms",
+   "name": "Comms shack",
+   "tags": [
+    "comms",
+    "sensors"
+   ],
+   "min": 0,
+   "max": 1,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "A handful of prefab modules and one working power plant make up the whole settlement."
+  ],
+  "notes": [
+   "The outpost is lightly staffed. At night only the power plant and the clinic show lights."
+  ],
+  "hooks": [
+   {
+    "type": "Rescue",
+    "text": "Contact with the outpost was lost three days ago. The last message asked for medical supplies."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "frontier colony outpost",
+ "name_table": "colonies",
+ "entrance_zone": "pad",
+ "perimeter": "fence"
+}

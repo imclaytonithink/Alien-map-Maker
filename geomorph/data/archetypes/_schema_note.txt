@@ -1,0 +1,1 @@
+Each *.json file here is one archetype. Add a file, no code changes needed. See geomorph/README.md.

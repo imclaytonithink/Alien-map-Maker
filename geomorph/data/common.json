@@ -1,0 +1,338 @@
+{
+ "_about": "Shared, editable text and option tables used by every ship and site. Archetype files can add their own entries.",
+ "conditions": [
+  "Scrap",
+  "Derelict",
+  "Disrepair",
+  "Average",
+  "Cluttered",
+  "Sleeper",
+  "Well Maintained",
+  "Top of the Line"
+ ],
+ "condition_notes": {
+  "Scrap": "Barely held together; most systems are stripped or failing.",
+  "Derelict": "Long abandoned. Dust, ice and decay; little works without repair.",
+  "Disrepair": "Worn out and neglected. Systems fail without warning.",
+  "Average": "Ordinary working order, worn but serviceable.",
+  "Cluttered": "Crammed with crates, gear and personal junk. Cover everywhere, movement slow.",
+  "Sleeper": "Quiet and tidy on the surface; much of it is shut down or on standby.",
+  "Well Maintained": "Clean, serviced and orderly. Someone cares about this place.",
+  "Top of the Line": "Pristine and state of the art. The company spared no expense."
+ },
+ "peculiarities": [
+  {
+   "name": "Flickering lights",
+   "kind": "quirk",
+   "text": "Lighting stutters in the lower corridors. Hard to tell what moves in the dark."
+  },
+  {
+   "name": "Phantom alarms",
+   "kind": "quirk",
+   "text": "A fire alarm sounds without cause every few hours; everyone has stopped reacting to it."
+  },
+  {
+   "name": "Unreliable lifts",
+   "kind": "quirk",
+   "text": "Lifts stall between decks about one trip in six."
+  },
+  {
+   "name": "Company store debt",
+   "kind": "quirk",
+   "text": "Nearly every resident owes the company; loyalty is purchased, not freely given."
+  },
+  {
+   "name": "Missing logs",
+   "kind": "quirk",
+   "text": "Maintenance logs for one entire week have been wiped."
+  },
+  {
+   "name": "Sticky doors",
+   "kind": "quirk",
+   "text": "Several doors jam half-open and need a hard shove."
+  },
+  {
+   "name": "Excellent water",
+   "kind": "perk",
+   "text": "The water recyclers are unusually good; supplies last far longer than expected."
+  },
+  {
+   "name": "Hidden stash",
+   "kind": "perk",
+   "text": "A previous occupant left a sealed locker of useful equipment behind a service panel."
+  },
+  {
+   "name": "Redundant power",
+   "kind": "perk",
+   "text": "A forgotten backup generator can restore power to one zone."
+  },
+  {
+   "name": "Friendly foreman",
+   "kind": "perk",
+   "text": "A senior worker quietly sympathises with outsiders and can bend the rules once."
+  },
+  {
+   "name": "Strong hull",
+   "kind": "perk",
+   "text": "Reinforced structure; breaches are rare and slow."
+  },
+  {
+   "name": "Good coffee",
+   "kind": "perk",
+   "text": "The mess serves the best coffee on the frontier. Morale is surprisingly high."
+  }
+ ],
+ "hook_types": [
+  "Break In",
+  "Break Out",
+  "Rescue",
+  "Salvage",
+  "Investigate",
+  "Defend",
+  "Sabotage",
+  "Cover-up",
+  "Escape",
+  "Abandoned Facility"
+ ],
+ "hooks": {
+  "Break In": [
+   "The party must reach {zone:secure} unseen and copy what is stored there before the next shift change.",
+   "Someone hired the party to get into {zone:restricted} and leave no trace of the visit."
+  ],
+  "Break Out": [
+   "A contact is held in {zone:secure}. The party has until the next resupply flight to get them out.",
+   "An alarm sealed the party in near {zone:public}; they must reach a way out through {zone:staff}."
+  ],
+  "Rescue": [
+   "A distress call came from {zone:staff}. Survivors may still be alive, and they are not alone.",
+   "A survey team failed to report in. Their last position was {zone:any}."
+  ],
+  "Salvage": [
+   "The company wrote this place off. Anything left in {zone:any} belongs to whoever hauls it out first.",
+   "A rival crew has already stripped half the complex. The party races them to {zone:restricted}."
+  ],
+  "Investigate": [
+   "Production stopped without explanation. Records point to {zone:restricted}.",
+   "Three workers died the same night in {zone:staff}. The official report says accident."
+  ],
+  "Defend": [
+   "Something is coming. The party must hold {zone:public} until the transport can lift off.",
+   "The facility is under attack and the only working comms are in {zone:staff}."
+  ],
+  "Sabotage": [
+   "The company is hiding something in {zone:restricted}. Destroy it before it ships.",
+   "Shut down {zone:any} without raising the alarm and without hurting the crew."
+  ],
+  "Cover-up": [
+   "Corporate wants every trace removed from {zone:restricted}, including the witnesses.",
+   "An accident in {zone:staff} must look like it never happened."
+  ],
+  "Escape": [
+   "Containment failed. The only route to the surface runs through {zone:any}.",
+   "Quarantine seals drop in minutes. The party is on the wrong side."
+  ],
+  "Abandoned Facility": [
+   "No one has answered hails for months. The lights are still on in {zone:any}.",
+   "The facility looks untouched, yet every person is gone. Something stayed behind."
+  ]
+ },
+ "notes": [
+  "Lighting, climate and noise can change the mood of a room without changing a single wall.",
+  "Doors marked as locked can be opened with the matching access level; secure zones should need more than a keycard.",
+  "Treat unmarked corridors as the shortest routes between numbered rooms; use the key for what is inside.",
+  "Use the player version of the map at the table and keep the GM version, with secrets and threat markers, behind the screen."
+ ],
+ "environment": {
+  "breathable": {
+   "label": "Breathable surface",
+   "airlocks": false,
+   "eva": false,
+   "surface_head": false,
+   "note": "The air is breathable, if cold and thin in places."
+  },
+  "hostile": {
+   "label": "Hostile atmosphere",
+   "airlocks": true,
+   "eva": true,
+   "surface_head": false,
+   "note": "The air outside is toxic or corrosive. Everything seals; suits are required outdoors."
+  },
+  "vacuum": {
+   "label": "Vacuum",
+   "airlocks": true,
+   "eva": true,
+   "surface_head": false,
+   "note": "No atmosphere outside. Every exterior door is an airlock."
+  },
+  "underground": {
+   "label": "Underground",
+   "airlocks": false,
+   "eva": false,
+   "surface_head": true,
+   "note": "Only a small structure is visible at the surface; the rest is carved into rock."
+  },
+  "orbital": {
+   "label": "Orbital or underwater / ice",
+   "airlocks": true,
+   "eva": true,
+   "surface_head": false,
+   "note": "Outside is hard vacuum or deep water or ice; treat every exterior door as an airlock."
+  }
+ },
+ "threat": {
+  "labels": [
+   "Sign of infestation",
+   "Nest material",
+   "Dragged marks",
+   "Cocooned remains",
+   "Burrowed vent",
+   "Unexplained movement",
+   "Claw marks",
+   "Resin on the walls"
+  ],
+  "spots": [
+   "vent",
+   "service",
+   "lowtraffic",
+   "sealed"
+  ],
+  "note": "Threat markers are generic. Describe the creature, intruder or hazard however your game needs."
+ },
+ "secrets": [
+  "Hidden room behind a false wall",
+  "Disguised service door",
+  "Concealed floor hatch",
+  "Hidden safe behind a panel",
+  "Secret lab behind a vending alcove"
+ ],
+ "descriptions": {
+  "openers": [
+   "A {condition_lower} {kind} {env_phrase}.",
+   "{name} is a {condition_lower} {kind} {env_phrase}.",
+   "Run by {corp}, {name} is a {condition_lower} {kind} {env_phrase}."
+  ],
+  "closers": [
+   "Few outsiders see more than the front desk.",
+   "Nothing here is quite what the company records claim.",
+   "Supplies arrive late and questions are not welcome.",
+   "The crew keeps to routine and avoids certain rooms."
+  ]
+ },
+ "room_text": {
+  "bridge": [
+   "The nerve centre: consoles, a command chair and a wall of status displays.",
+   "Command stations ring a central holo-table; the screens never fully go dark."
+  ],
+  "engineering": [
+   "Machinery hums behind guard rails; gauges, pipes and warning placards everywhere.",
+   "A noisy, hot space of coolant lines, spare parts and tool racks."
+  ],
+  "power": [
+   "Power cabling thicker than a wrist runs from the main buses into the walls."
+  ],
+  "fuel": [
+   "Tank housings and transfer lines; the air smells faintly of hydrocarbon."
+  ],
+  "cargo": [
+   "Racks, crates and cargo cradles under strapping nets.",
+   "Stacked containers, loader machinery and manifest terminals."
+  ],
+  "hangar": [
+   "A high bay with docking cradles, tie-downs and a fuel cart left where it was parked."
+  ],
+  "vehicle_bay": [
+   "Vehicle racks, charging cables and a workbench scattered with parts."
+  ],
+  "docking": [
+   "Docking collars and boarding tubes; scuffed decals mark who last parked here."
+  ],
+  "weapons": [
+   "Gun mounts and ammunition feeds; every surface is scuffed from handling."
+  ],
+  "armory": [
+   "Locked racks, a signed-out register and a heavy door that sticks when it's closed."
+  ],
+  "staterooms": [
+   "Narrow cabins with bunks, lockers and personal belongings.",
+   "Rows of cramped cabins off a short central corridor."
+  ],
+  "crew_quarters": [
+   "Personal effects, bunks and a shared fresher at the end of the row."
+  ],
+  "barracks": [
+   "Rows of bunks and footlockers, kept neat out of habit."
+  ],
+  "galley": [
+   "A galley and mess: steel counters, a long table, the smell of reheated food."
+  ],
+  "medical": [
+   "Beds, scanners and a supply cabinet that is never quite full.",
+   "A clinic with exam bays, a surgery and a small pharmacy."
+  ],
+  "lab": [
+   "Benches, sample cabinets and analyzers; some work is still under cloth.",
+   "A laboratory: fume hoods, centrifuges and a wall of sealed specimen drawers."
+  ],
+  "hydroponics": [
+   "Racks of growing plants under purple light; the air is humid and green."
+  ],
+  "recreation": [
+   "A lounge with worn seating, a bar and a games table.",
+   "A common area where people trade rumours and spend wages."
+  ],
+  "concourse": [
+   "A busy concourse with benches, signage and vending alcoves."
+  ],
+  "passenger": [
+   "Passenger accommodation, better kept than the crew's."
+  ],
+  "security": [
+   "A security station with monitors, a weapons locker and holding benches."
+  ],
+  "brig": [
+   "Cells with fixed bunks and a guard desk with a clear view."
+  ],
+  "office": [
+   "Desks, terminals and filing cabinets; paper trails beat digital ones here."
+  ],
+  "workshop": [
+   "Benches, tool racks and half-finished repairs."
+  ],
+  "waste": [
+   "Compactors, sorting bins and an incinerator with a heavy, scorched door."
+  ],
+  "water": [
+   "Tanks, filters and pumps; the sound of running water echoes."
+  ],
+  "refinery": [
+   "Processing machinery and vats; everything is stained and warm."
+  ],
+  "sensors": [
+   "Sensor consoles and antenna feeds; operators sit hunched over scopes."
+  ],
+  "comms": [
+   "Comm racks, a relay console and a tangle of patch cables."
+  ],
+  "escape": [
+   "Escape pod bays with alarm placards and sealed hatches."
+  ],
+  "lowberth": [
+   "Rows of sleeper pods, frosted and humming softly."
+  ],
+  "airlock": [
+   "An airlock chamber with suit lockers and a pressure gauge."
+  ],
+  "vertical": [
+   "Lifts, stairs and shaft access; the one place everyone passes through."
+  ],
+  "interstitial": [
+   "Maintenance crawlspace, pipes and cable runs."
+  ],
+  "multipurpose": [
+   "A mix of rooms: offices, stores and cabins under one roof."
+  ],
+  "_default": [
+   "A working space; its purpose is clear from the equipment."
+  ]
+ }
+}

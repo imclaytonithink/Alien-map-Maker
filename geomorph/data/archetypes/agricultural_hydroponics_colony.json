@@ -1,0 +1,212 @@
+{
+ "name": "Agricultural / hydroponics colony",
+ "group": "Colony",
+ "topology": "campus",
+ "scales": {
+  "small": {
+   "buildings": [
+    4,
+    5
+   ],
+   "levels": 1
+  },
+  "medium": {
+   "buildings": [
+    6,
+    8
+   ],
+   "levels": 1
+  },
+  "large": {
+   "buildings": [
+    9,
+    12
+   ],
+   "levels": 2
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "underground"
+ ],
+ "zones": [
+  {
+   "id": "hydro",
+   "name": "Hydroponics",
+   "tags": [
+    "hydroponics"
+   ],
+   "min": 1,
+   "max": 4,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "water"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "storage",
+   "name": "Crop storage",
+   "tags": [
+    "cargo"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "processing"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "processing",
+   "name": "Processing",
+   "tags": [
+    "workshop",
+    "refinery"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "storage"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "bunk",
+   "name": "Bunkhouse",
+   "tags": [
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [
+    "mess"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "mess",
+   "name": "Mess",
+   "tags": [
+    "galley",
+    "recreation"
+   ],
+   "min": 0,
+   "max": 1,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "water",
+   "name": "Water plant",
+   "tags": [
+    "water",
+    "engineering"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "hydro"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "garage",
+   "name": "Vehicle bay",
+   "tags": [
+    "vehicle_bay"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Rows of grow-lamps feed a whole sector. The crop is the only thing the company counts carefully."
+  ],
+  "hooks": [
+   {
+    "type": "Investigate",
+    "text": "The harvest has been spoiling in ways the agronomists cannot explain."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "agricultural colony",
+ "name_table": "colonies",
+ "entrance_zone": "bunk",
+ "perimeter": "fence"
+}

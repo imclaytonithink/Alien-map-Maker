@@ -1,0 +1,197 @@
+{
+ "name": "Asteroid mining station",
+ "group": "Industry",
+ "topology": "spine",
+ "scales": {
+  "small": {
+   "modules": 5
+  },
+  "medium": {
+   "modules": 8
+  },
+  "large": {
+   "modules": 12
+  }
+ },
+ "environments": [
+  "vacuum"
+ ],
+ "zones": [
+  {
+   "id": "dock",
+   "name": "Docking arms",
+   "tags": [
+    "docking",
+    "hangar"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "edge",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "ore",
+   "name": "Ore processing",
+   "tags": [
+    "refinery",
+    "cargo",
+    "workshop"
+   ],
+   "min": 1,
+   "max": 3,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "dock"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "bunks",
+   "name": "Bunks",
+   "tags": [
+    "staterooms",
+    "crew_quarters"
+   ],
+   "min": 1,
+   "max": 3,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "power",
+    "ore"
+   ]
+  },
+  {
+   "id": "mess",
+   "name": "Mess",
+   "tags": [
+    "galley",
+    "recreation"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [
+    "bunks"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "command",
+   "name": "Command",
+   "tags": [
+    "bridge",
+    "office"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "storage",
+   "name": "Storage",
+   "tags": [
+    "cargo"
+   ],
+   "min": 0,
+   "max": 2,
+   "required": false,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Modules bolted to a drifting rock. Everything smells of machine oil and recycled sweat."
+  ],
+  "hooks": [
+   {
+    "type": "Salvage",
+    "text": "The station lost power six weeks ago. A claim jumper tows it away unless the party stops them."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "asteroid mining station",
+ "name_table": "stations",
+ "entrance_zone": "dock"
+}

@@ -39,3 +39,9 @@ dist/
 /asset_store/**/*.bmp
 /asset_store/**/*.tiff
 /asset_store/**/.sceneboard-import.json
+
+# Geomorph generator: tile packs and thumbnail caches are never committed.
+/geomorph_tiles/
+/geomorph/_cache/
+/user_archetypes/
+/geomorph_out/

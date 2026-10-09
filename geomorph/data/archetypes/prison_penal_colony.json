@@ -1,0 +1,255 @@
+{
+ "name": "Prison / penal colony",
+ "group": "Security",
+ "topology": "stacked",
+ "scales": {
+  "small": {
+   "cols": 2,
+   "rows": 2,
+   "levels": 3
+  },
+  "medium": {
+   "cols": 3,
+   "rows": 2,
+   "levels": 4
+  },
+  "large": {
+   "cols": 3,
+   "rows": 3,
+   "levels": 4
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "vacuum",
+  "underground"
+ ],
+ "zones": [
+  {
+   "id": "intake",
+   "name": "Intake",
+   "tags": [
+    "security",
+    "office",
+    "airlock"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "checkpoint": true,
+   "entrance_zone": true
+  },
+  {
+   "id": "cells",
+   "name": "Cell blocks",
+   "tags": [
+    "brig",
+    "security"
+   ],
+   "min": 2,
+   "max": 6,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "containment",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "intake"
+   ]
+  },
+  {
+   "id": "dayroom",
+   "name": "Day room",
+   "tags": [
+    "recreation",
+    "galley"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "containment",
+   "prefer_adjacent": [
+    "cells",
+    "monitor"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "monitor",
+   "name": "Monitoring station",
+   "tags": [
+    "security",
+    "bridge"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "secure",
+   "prefer_adjacent": [
+    "dayroom"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "guards",
+   "name": "Guard quarters",
+   "tags": [
+    "staterooms",
+    "barracks",
+    "galley"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "cells"
+   ]
+  },
+  {
+   "id": "mech",
+   "name": "Mechanical",
+   "tags": [
+    "engineering",
+    "power",
+    "water",
+    "waste"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "bottom",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [
+    "cells"
+   ]
+  },
+  {
+   "id": "medical",
+   "name": "Infirmary",
+   "tags": [
+    "medical"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "secure",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "armory",
+   "name": "Armory",
+   "tags": [
+    "armory",
+    "weapons",
+    "security"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "top",
+   "position": "any",
+   "access": "secure",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted",
+   "secure"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "prisoner": [
+   "containment",
+   "secure"
+  ],
+  "specimen": [
+   "containment",
+   "secure",
+   "restricted"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff",
+   "prisoner"
+  ],
+  "shafts": [
+   "water",
+   "sewer",
+   "power",
+   "comms",
+   "ventilation"
+  ],
+  "special_volumes": [
+   {
+    "zone": "monitor",
+    "height": 2,
+    "open_below": true
+   }
+  ]
+ },
+ "text": {
+  "description": [
+   "A penal facility where the cells are deeper than the paperwork admits."
+  ],
+  "notes": [
+   "Staff and prisoner routes never share a lift. The guard observation deck looks down on the day room."
+  ],
+  "hooks": [
+   {
+    "type": "Break Out",
+    "text": "A prisoner with a corporate friend must be out before the audit; the party arranges a riot."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets",
+  "quarantine"
+ ],
+ "kind": "prison",
+ "name_table": "facilities",
+ "entrance_zone": "intake"
+}

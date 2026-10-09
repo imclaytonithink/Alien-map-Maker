@@ -1,0 +1,162 @@
+{
+ "name": "Transit / tram hub",
+ "group": "Orbital",
+ "topology": "hub",
+ "scales": {
+  "small": {
+   "modules": 4
+  },
+  "medium": {
+   "modules": 6
+  },
+  "large": {
+   "modules": 8
+  }
+ },
+ "environments": [
+  "breathable",
+  "orbital",
+  "vacuum",
+  "underground"
+ ],
+ "zones": [
+  {
+   "id": "platform",
+   "name": "Platforms",
+   "tags": [
+    "concourse",
+    "docking"
+   ],
+   "min": 2,
+   "max": 4,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "concourse",
+   "name": "Concourse",
+   "tags": [
+    "concourse",
+    "recreation",
+    "passenger"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "control",
+   "name": "Control",
+   "tags": [
+    "bridge",
+    "office"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "maintenance",
+   "name": "Maintenance",
+   "tags": [
+    "workshop",
+    "engineering"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "security",
+   "name": "Security",
+   "tags": [
+    "security",
+    "brig"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "Everyone passes through. Few stay, and nobody looks too long at anybody else."
+  ],
+  "hooks": [
+   {
+    "type": "Sabotage",
+    "text": "A time-locked cargo moves through the hub tonight; the party must stop the transfer without stopping the trains."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "transit hub",
+ "name_table": "stations",
+ "entrance_zone": "concourse"
+}

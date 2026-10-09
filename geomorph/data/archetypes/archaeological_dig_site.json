@@ -1,0 +1,192 @@
+{
+ "name": "Archaeological / dig site",
+ "group": "Research",
+ "topology": "campus",
+ "scales": {
+  "small": {
+   "buildings": [
+    4,
+    5
+   ],
+   "levels": 1
+  },
+  "medium": {
+   "buildings": [
+    6,
+    8
+   ],
+   "levels": 1
+  },
+  "large": {
+   "buildings": [
+    8,
+    11
+   ],
+   "levels": 2
+  }
+ },
+ "environments": [
+  "breathable",
+  "hostile",
+  "underground"
+ ],
+ "zones": [
+  {
+   "id": "dig",
+   "name": "Excavation area",
+   "tags": [
+    "cargo",
+    "vehicle_bay"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "restricted",
+   "prefer_adjacent": [],
+   "forbid_adjacent": [],
+   "filler": "pit",
+   "filler_only": true
+  },
+  {
+   "id": "camp",
+   "name": "Camp",
+   "tags": [
+    "staterooms",
+    "crew_quarters",
+    "galley"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "public",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "finds",
+   "name": "Finds lab",
+   "tags": [
+    "lab"
+   ],
+   "min": 1,
+   "max": 2,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [
+    "dig"
+   ],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "security",
+   "name": "Security",
+   "tags": [
+    "security"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "vehicles",
+   "name": "Vehicle bay",
+   "tags": [
+    "vehicle_bay",
+    "hangar"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "tags": [
+    "engineering",
+    "power"
+   ],
+   "min": 1,
+   "max": 1,
+   "required": true,
+   "level": "any",
+   "position": "any",
+   "access": "staff",
+   "prefer_adjacent": [],
+   "forbid_adjacent": []
+  }
+ ],
+ "routes": {
+  "staff": [
+   "public",
+   "staff",
+   "restricted"
+  ],
+  "visitor": [
+   "public"
+  ],
+  "cargo": [
+   "public",
+   "staff"
+  ],
+  "emergency": [
+   "public",
+   "staff",
+   "restricted",
+   "secure",
+   "containment"
+  ]
+ },
+ "condition_default": "Average",
+ "vertical": {
+  "stairs": true,
+  "lifts": [
+   "staff"
+  ],
+  "shafts": [
+   "power",
+   "ventilation"
+  ],
+  "special_volumes": []
+ },
+ "text": {
+  "description": [
+   "A trench cut into something older than the colony charter. The team keeps finding more of it."
+  ],
+  "hooks": [
+   {
+    "type": "Investigate",
+    "text": "A sealed chamber was opened last week. Nobody will say what came out, or what went in."
+   }
+  ]
+ },
+ "overlays": [
+  "lockdown",
+  "power_failure",
+  "breach",
+  "quarantine",
+  "salvage",
+  "battle",
+  "threat",
+  "secrets"
+ ],
+ "kind": "dig site",
+ "name_table": "facilities",
+ "entrance_zone": "camp",
+ "perimeter": "fence"
+}
