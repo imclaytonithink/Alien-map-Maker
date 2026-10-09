@@ -137,7 +137,7 @@ dlg.cb_incident.setCurrentIndex(dlg.cb_incident.findData("overrun"))
 dlg.cb_where.setCurrentIndex(dlg.cb_where.findData("all"))
 dlg.sl_decor.setValue(90)
 opts = dlg.options()
-assert opts["decor"] == {"enabled": True, "density": 0.9, "incident": "overrun", "where": "all", "exterior": True}
+assert opts["decor"] == {"enabled": True, "density": 0.9, "incident": "overrun", "where": "all", "exterior": True, "origin": "random", "reach": "medium"}
 dlg.ck_outdoor.setChecked(False)
 assert dlg.options()["decor"]["exterior"] is False
 dlg.ck_outdoor.setChecked(True)
@@ -242,6 +242,9 @@ assert dlg.cb_preset.findData("user:Mine") < 0
 dlg.cb_preset.setCurrentIndex(dlg.cb_preset.findText("Scenario: Derelict with a nest"))
 dlg._apply_preset()
 assert dlg.tabs.currentIndex() == 0 and dlg.cb_cond.currentData() == "Derelict" and dlg.sp_tonnage.value() == 2000
+assert dlg.cb_where.currentData() == "spread" and dlg.options()["decor"]["origin"] == "cargo" \
+    and dlg.options()["decor"]["reach"] == "medium", "the nest scenario spreads from a cargo hold"
+assert "origin" in dlg.result.meta["decor"] and dlg.result.meta["decor"]["origin"] in dlg.result.zones
 # live preview regenerates after an option changes
 before_result = dlg.result
 dlg.ck_live.setChecked(True)

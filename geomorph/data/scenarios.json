@@ -18,8 +18,10 @@
      "enabled": true,
      "density": 0.6,
      "incident": "overrun",
-     "where": "all",
-     "exterior": false
+     "where": "spread",
+     "exterior": false,
+     "origin": "cargo",
+     "reach": "medium"
     }
    },
    "hooks": [
@@ -45,8 +47,10 @@
      "enabled": true,
      "density": 0.6,
      "incident": "overrun",
-     "where": "all",
-     "exterior": true
+     "where": "spread",
+     "exterior": true,
+     "origin": "entrance",
+     "reach": "far"
     }
    },
    "hooks": [

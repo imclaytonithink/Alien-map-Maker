@@ -352,11 +352,25 @@ class GeomorphDialog(QDialog):
             self.cb_incident.addItem(label, key)
         self.cb_where = QComboBox()
         for key, label in (("all", "In every room"), ("overlay", "Only lockdown / quarantine / threat zones"),
-                           ("random", "In about a third of the rooms")):
+                           ("random", "In about a third of the rooms"),
+                           ("spread", "Spreading from a starting room (nest, breach…)")):
             self.cb_where.addItem(label, key)
+        self.cb_origin = QComboBox()
+        for key, label in (("random", "A random room"), ("entrance", "The entrance"), ("medical", "A medical room"),
+                           ("lab", "A laboratory"), ("cargo", "A cargo hold"), ("engineering", "Engineering"),
+                           ("staterooms", "Crew quarters")):
+            self.cb_origin.addItem(label, key)
+        self.cb_origin.setToolTip("Where it started. The worst damage is here (resin and burns all over); it thins out "
+                                  "with every door away, barricades stand on the doors facing it, and drag marks lead toward it.")
+        self.cb_reach = QComboBox()
+        for key, label in (("short", "Short — about 2 doors"), ("medium", "Medium — about 3 doors"), ("far", "Far — about 5 doors")):
+            self.cb_reach.addItem(label, key)
+        self.cb_reach.setCurrentIndex(1)
         f2 = QFormLayout()
         f2.addRow("Something bad happened", self.cb_incident)
         f2.addRow("Where", self.cb_where)
+        f2.addRow("Starting from", self.cb_origin)
+        f2.addRow("How far it spreads", self.cb_reach)
         v.addLayout(f2)
         left.addWidget(box)
 
@@ -633,6 +647,8 @@ class GeomorphDialog(QDialog):
                 self.sl_decor.setValue(int(round(d["density"] * 100)))
             _set_combo(self.cb_incident, d.get("incident", "none"))
             _set_combo(self.cb_where, d.get("where", "all"))
+            _set_combo(self.cb_origin, d.get("origin", "random"))
+            _set_combo(self.cb_reach, d.get("reach", "medium"))
             if o.get("kind") == "ship":
                 if "ship_type" in o:
                     self.cb_ship_type.setCurrentText(o["ship_type"])
@@ -779,8 +795,8 @@ class GeomorphDialog(QDialog):
         head = f"{len(changes)} tile(s) changed{where}" + (f" ({shown})" if shown else "")
         diff = quality.compare(before["quality"], res.quality)
         self.lbl_changes.setText(f"{label}: {head}. {diff}.")
-        self.lbl_status.setText(f"{label}. {len(changes)} tile(s) changed; locked tiles kept." if n or changes else
-                                f"{label}: nothing else fits here.")
+        self.lbl_status.setText(f"{label}. {len(changes)} tile(s) changed; locked tiles kept." if changes else
+                                f"{label}: 0 tile(s) changed, nothing else fits here.")
 
     def _push_undo(self, entry):
         self.undo_stack.append(entry)
@@ -907,7 +923,8 @@ class GeomorphDialog(QDialog):
         if self.ck_decor.isChecked() or self.ck_outdoor.isChecked():
             o["decor"] = {"enabled": self.ck_decor.isChecked(), "density": self.sl_decor.value() / 100.0,
                           "incident": self.cb_incident.currentData(), "where": self.cb_where.currentData(),
-                          "exterior": self.ck_outdoor.isChecked()}
+                          "exterior": self.ck_outdoor.isChecked(),
+                          "origin": self.cb_origin.currentData(), "reach": self.cb_reach.currentData()}
         if kind == "ship":
             counts = {t: sp.value() for t, sp in self.count_spins.items() if sp.value() >= 0}
             parts = {"wing": self.cb_wing.currentData(), "nose": self.cb_nose.currentData(),

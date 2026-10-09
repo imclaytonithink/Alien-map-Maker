@@ -1292,6 +1292,56 @@ def check_reroll_refresh_and_undo():
     print("re-roll refresh and undo ok")
 
 
+def check_spread():
+    """An outbreak starts in one room and thins out with every door away; barricades stand on the doors that
+    face the source; the GM is told where it started."""
+    import collections
+    reg = Registry.load()
+    opts = dict(kind="site", seed="sp1", archetype="Research facility", scale="large",
+                decor={"enabled": True, "incident": "overrun", "where": "spread", "origin": "lab", "reach": "medium"})
+    res = pipeline.generate(reg, opts)
+    dm = res.meta["decor"]
+    src, dist, reach = dm["origin"], dm["spread"], dm["reach"]
+    assert "lab" in res.zones[src].tags and dist[src] == 0 and reach == 3
+    assert any(m.get("label") == "Source of the outbreak" and m["zone"] == src and m.get("gm_only") for m in res.markers)
+    assert pipeline.generate(reg, opts).meta["decor"]["origin"] == src, "same seed, same starting room"
+    where = {}
+    for g in res.grids:
+        for p in g.placed:
+            where[(g.index, p.x, p.y)] = p.zone
+    marks, severe = collections.Counter(), collections.Counter()
+    for g in res.grids:
+        for f in g.filler:
+            if f.get("decor"):
+                z = next((where.get((g.index, p.x, p.y)) for p in g.placed if p.x <= f["x"] < p.x + p.w and p.y <= f["y"] < p.y + p.h), None)
+                marks[dist.get(z)] += 1
+                if f["kind"] in ("resin", "scorch", "drag"):
+                    severe[dist.get(z)] += 1
+    assert severe[0] >= 1 and any(f["kind"] == "resin" for g in res.grids for f in g.filler if f.get("decor")), "a nest at the source"
+    assert not [k for k, v in severe.items() if v and (k is None or k > reach // 2)], \
+        "resin, burns and drag marks only near the source; further out it is just a struggle"
+    assert sum(v for k, v in marks.items() if k is not None and reach // 2 < k <= reach) > 0, "a struggle further out"
+    assert not [k for k, v in marks.items() if v and (k is None or k > reach)], "nothing beyond the reach"
+    bars = [d for d in res.decor if d.get("kind") == "barricade"]
+    assert bars, "barricades on the doors facing the source"
+    for b in bars:
+        zone = where[(b["level"], b["tx"], b["ty"])]
+        assert 0 < dist[zone] <= reach, "barricades only in the rooms between the source and the quiet"
+    # the key tells the GM how far each room is
+    texts = {e["zone"]: e["text"] for e in res.key if e.get("zone")}
+    near = next(z for z, d in dist.items() if d == 1 and z in texts)
+    assert "from the source" in texts[near] and "THREAT: Source of the outbreak" in texts[src]
+    # a ship works too, and the entrance can be the source; other modes are untouched
+    ship = pipeline.generate(reg, dict(kind="ship", seed="sp2", tonnage=2000,
+                                       decor={"enabled": True, "incident": "overrun", "where": "spread", "origin": "random"}))
+    assert ship.meta["decor"]["origin"] in ship.zones
+    ent = pipeline.generate(reg, dict(opts, decor=dict(opts["decor"], origin="entrance")))
+    assert ent.meta["decor"]["origin"] == pipeline.validate.entrance_zone_id(ent)
+    plain = pipeline.generate(reg, dict(opts, decor=dict(opts["decor"], where="all")))
+    assert "origin" not in plain.meta["decor"]
+    print("outbreak spread ok")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1319,6 +1369,7 @@ def main():
     check_overlooks()
     check_atmosphere()
     check_reroll_refresh_and_undo()
+    check_spread()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")
