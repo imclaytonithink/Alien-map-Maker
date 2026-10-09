@@ -128,6 +128,10 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
         if p.o.rot:
             t = t.transpose({90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[p.o.rot])
         border = int(BORDER_SQUARES * pps)
+        if p.tile.bbox:
+            ox, oy, _w, _h = p.tile.image_geometry(p.o.rot, p.o.mirror)
+            _paste_clipped(layer, t, bx0 - int(ox * pps), by0 - int(oy * pps))
+            continue
         layer.alpha_composite(t, (bx0 - border, by0 - border)) if bx0 - border >= 0 and by0 - border >= 0 \
             else _paste_clipped(layer, t, bx0 - border, by0 - border)
     d = ImageDraw.Draw(layer)

@@ -36,7 +36,7 @@ def hull_sides(tile: Tile) -> set:
     Connecting sides are flat (no see-through squares) and carry the doors; hull
     sides are chamfered/open or, when the hull is a flat wall, door-less.
     """
-    if tile.type in ("standard", "megamorph") or not tile.edges:
+    if tile.type in ("standard", "megamorph", "wing") or not tile.edges:
         return set()
     avg = {s: sum(tile.edges[s]["raw"]) / max(1, len(tile.edges[s]["raw"])) for s in SIDES}
     doors = {s: sum(1 for c in tile.edges[s]["cls"] if c == DOOR) for s in SIDES}
@@ -288,6 +288,16 @@ def tile_piece(placed: Placed, cell: float, layer="Generated", asset_path=None, 
     border), so the visible footprint is the plan area and the border overhangs.
     """
     t = placed.tile
+    if t.bbox:                       # custom tile (wing): plan box is offset inside the image
+        l, tt, Wr, Hr = t.image_geometry(placed.o.rot, placed.o.mirror)
+        pw, ph = t.px
+        sc = cell / PX_PER_SQUARE
+        cx = (placed.x - l + Wr / 2) * cell
+        cy = (placed.y - tt + Hr / 2) * cell
+        return {"asset_path": asset_path or t.image, "name": f"{t.number} {t.title}".strip(),
+                "x": cx - pw * sc / 2, "y": cy - ph * sc / 2, "w": pw, "h": ph, "scale": sc,
+                "rotation": placed.o.rot, "flip_h": placed.o.mirror, "flip_v": False, "layer_name": layer,
+                "snap": True, "opacity": 1.0, "tile": t.id, "zone": placed.zone, "level": placed.level}
     S, B = PX_PER_SQUARE, BORDER_SQUARES
     w_px = (t.w + 2 * B) * S
     h_px = (t.h + 2 * B) * S

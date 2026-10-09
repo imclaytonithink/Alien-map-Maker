@@ -152,7 +152,7 @@ def check_placement():
     # hull sides: edge tiles have exactly one, corners two, ends three
     for tile in REG.tiles.values():
         n = len(hull_sides(tile))
-        assert n == {"standard": 0, "megamorph": 0, "edge": 1, "corner": 2, "end": 3}[tile.type], tile.id
+        assert n == {"standard": 0, "megamorph": 0, "wing": 0, "edge": 1, "corner": 2, "end": 3}[tile.type], tile.id
     # a standard tile has orientation variants and sizes swap on 90 degrees
     e = REG.tiles[[k for k, v in REG.tiles.items() if v.type == "edge"][0]]
     dims = {(o.w, o.h) for o in orientations(e)}
@@ -221,6 +221,20 @@ def check_ships():
         assert sorted(p.tile.id for p in r.grids[0].placed) == sorted(p.tile.id for p in base.grids[0].placed)
         assert hull_ok(r.grids[0]), ori
         assert len(r.grids[0].connections()) == len(base.grids[0].connections()), ori
+    # RULE: wings are always a Port + Starboard pair of the same A-number, mirrored about the centre line
+    for seed in range(15):
+        for sym in (True, False):
+            r = pipeline.generate(REG, {"kind": "ship", "tonnage": 2000, "seed": seed, "symmetric": sym, "fins": True})
+            g = r.grids[0]
+            wings = sorted((p for p in g.placed if p.tile.type == "wing"), key=lambda p: p.x)
+            assert len(wings) == 2, wings
+            a, b = wings
+            assert a.tile.id.endswith("P") and b.tile.id.endswith("S") and a.tile.pair == b.tile.id
+            assert (a.w, a.h, a.y) == (b.w, b.h, b.y)
+            mid = ship.PAD + 36 + (ship.choose_dims(2000, True)[0] * 20) / 2
+            assert abs((a.x + a.w / 2) + (b.x + b.w / 2) - 2 * mid) < 1e-6, "mirrored about the centre line"
+    no_fins = pipeline.generate(REG, {"kind": "ship", "tonnage": 2000, "seed": 1, "fins": False})
+    assert not [p for p in no_fins.grids[0].placed if p.tile.type == "wing"]
     c, rws = ship.choose_dims(1000)
     assert ship.slots_area(ship.hull_slots(c, rws)) // 2 == 1000, "the guide's ~1000-ton sample deck"
     print("ships ok")

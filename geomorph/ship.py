@@ -9,7 +9,7 @@ are one displacement ton.
 from __future__ import annotations
 
 from . import filler as F
-from .placement import LevelGrid, OPPOSITE, orientations, rot_side, side_of_dir
+from .placement import LevelGrid, OPPOSITE, orientation_for, orientations, rot_side, side_of_dir
 from .tiling import TilePicker
 
 SHIP_TYPES = {
@@ -34,7 +34,7 @@ PAD = 6
 def hull_slots(C, R, fins=True):
     """All slots of a C x R ship: standard block, edge ring, corners, ends, fins."""
     S = 20
-    ox = oy = PAD + 20
+    ox, oy = PAD + 36, PAD + 20      # left margin leaves room for wings
     out = []
     for r in range(R):
         for c in range(C):
@@ -142,9 +142,10 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
     if ship_type not in SHIP_TYPES:
         ship_type = "Merchant"
     C, R = choose_dims(tonnage, symmetric, fins)
-    slots = hull_slots(C, R, fins)
+    pairs = registry.wing_pairs() if fins else []
+    slots = hull_slots(C, R, fins and not pairs)
     picker = TilePicker(registry, rng)
-    grid = LevelGrid(0, "Main deck", cols=PAD * 2 + 20 * (C + 4) + 20, rows=PAD * 2 + 20 * (R + 4) + 20)
+    grid = LevelGrid(0, "Main deck", cols=PAD * 2 + 72 + 20 * (C + 4) + 20, rows=PAD * 2 + 20 * (R + 4) + 80)
     if mode == "random":
         tags = {i: None for i in range(len(slots))}
     else:
@@ -194,6 +195,8 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
             continue
         tile, o, f = pick
         placed[i] = grid.place(tile, s["x"], s["y"], o, zone=(t[0] if t else ""))
+    if pairs:
+        _place_wings(grid, registry, rng, pairs, ship_type, C, R, issues)
     info = {"C": C, "R": R, "tonnage_target": tonnage, "ship_type": ship_type, "mode": mode,
             "symmetric": symmetric, "issues": issues}
     info["tonnage"] = round(sum(p.w * p.h for p in grid.placed) / 2)
@@ -205,6 +208,30 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
         rotate_grid(grid, k)
     info["bow"] = orientation
     return grid, info
+
+
+WING_PREF = {"Military": "weapons", "Merchant": "cargo", "Luxury Liner": "passenger", "Scout": "sensors",
+             "Research": "lab", "Colony / Generational": "cargo", "Medical / Rescue": "medical"}
+
+
+def _place_wings(grid, registry, rng, pairs, ship_type, C, R, issues):
+    """RULE: wings come as a Port + Starboard pair (same A-number and variant), mirrored about the centre line.
+
+    The port wing sits on the left of a bow-up ship, the starboard on the right, each flush against the hull
+    ring and centred along the hull.
+    """
+    pref = WING_PREF.get(ship_type, "cargo")
+    weights = [0.3 + sum(p.tags.get(t, 0) for t in (pref,)) + 0.2 * (len(p.tags) > 0) for p, s in pairs]
+    port, star = rng.choices(pairs, weights=weights)[0]
+    ox, oy = PAD + 36, PAD + 20
+    mid_y = oy + R * 10
+    for tile, x in ((port, ox - 10 - port.w), (star, ox + C * 20 + 10)):
+        y = max(1, mid_y - tile.h // 2)
+        o = orientation_for(tile, 0, False)
+        if not grid.fit(x, y, o, "wing").ok:
+            issues.append(f"wing {tile.id} does not fit")
+            continue
+        grid.place(tile, x, y, o, zone=tile.tags and max(tile.tags, key=tile.tags.get) or "wing")
 
 
 def _partner(slots, i, C):

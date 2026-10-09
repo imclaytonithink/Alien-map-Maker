@@ -45,7 +45,7 @@ def _ship_result(registry, o, rng) -> Result:
     grid.filler.extend(pieces)
     comps = connect.level_components(grid, links)
     # a corner piece pressed only against other hull pieces needs no door
-    comps = [c for c in comps if not (len(c) == 1 and c[0].tile.type == "corner")]
+    comps = [c for c in comps if not (len(c) == 1 and c[0].tile.type in ("corner", "wing"))]
     # patched doors keep it connected; report anything still split
     if len(comps) > 1 and not o.get("_damaged"):
         res.issues.append(f"ship is in {len(comps)} separate parts after repair")

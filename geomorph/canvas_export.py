@@ -87,6 +87,12 @@ def to_canvas(res, cell: float, resolver=None, tile_images=None, filler_dir=None
                 px_w = px_w or (t.w + 2 * BORDER_SQUARES) * PX_PER_SQUARE
                 px_h = px_h or (t.h + 2 * BORDER_SQUARES) * PX_PER_SQUARE
             d = tile_piece(p, cell, LAYER_TILES, asset_path=path)
+            if t.bbox:
+                if emb:
+                    d["embedded"], d["asset_path"] = emb, ""
+                pieces.append(d)
+                n_tiles += 1
+                continue
             d["w"], d["h"] = px_w, px_h
             d["scale"] = cell * (t.w + 2 * BORDER_SQUARES) / px_w
             # re-centre with the true pixel size (library copy may be lower resolution)

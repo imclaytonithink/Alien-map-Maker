@@ -56,6 +56,24 @@ class Tile:
     px: tuple = (0, 0)
     edges: dict = field(default_factory=dict)   # side -> {"cls":[0 wall|1 door|2 void ..],"raw":[..],"conf":f}
     review: bool = False
+    bbox: list = field(default_factory=list)    # custom tiles: plan box in squares inside the image [l, t, r, b]
+    pair: str = ""                              # wings: id of the matching port/starboard tile
+
+    def origin(self):
+        """Squares from the image's top-left corner to the plan's top-left."""
+        return tuple(self.bbox[:2]) if self.bbox else (BORDER_SQUARES, BORDER_SQUARES)
+
+    def image_geometry(self, rot=0, mirror=False):
+        """Plan origin and image size in squares after mirror + clockwise rotation."""
+        S = PX_PER_SQUARE
+        W, H = (self.px[0] / S, self.px[1] / S) if self.px[0] else (self.w + 4, self.h + 4)
+        l, t, rr, b = self.bbox if self.bbox else (BORDER_SQUARES, BORDER_SQUARES, BORDER_SQUARES + self.w, BORDER_SQUARES + self.h)
+        if mirror:
+            l, rr = W - rr, W - l
+        for _ in range((rot % 360) // 90):
+            l, t, rr, b = H - b, l, H - t, rr
+            W, H = H, W
+        return l, t, W, H
 
     def to_json(self):
         d = dict(self.__dict__)
@@ -143,6 +161,49 @@ def scan_tiles(tiles_dir, table=None) -> list:
     return list(tiles.values())
 
 
+WING_RE = re.compile(r"^(?P<num>A\d+)\s*\[(?P<w>\d+)[xX](?P<h>\d+)\]\s*(?:\((?P<var>\d+)\)\s*)?(?P<side>Port|Starboard)\s*(?P<rest>.*)\.png$")
+
+
+def scan_wings(tiles_dir, table=None) -> list:
+    """Aerofin wing tiles from the Custom Tiles pack (``Misc/A###`` Port/Starboard files).
+
+    A wing is not a rectangle with a clear border, so its plan box is measured from the
+    image. Port and starboard files with the same number and variant are paired.
+    """
+    from PIL import Image
+    Image.MAX_IMAGE_PIXELS = None
+    table = table or tag_table()
+    d = Path(tiles_dir) / "Misc"
+    out = {}
+    for f in sorted(d.glob("*.png")) if d.is_dir() else []:
+        m = WING_RE.match(f.name)
+        if not m or "overlay" in f.name.lower():
+            continue
+        side = "P" if m["side"] == "Port" else "S"
+        wid = f"{m['num']}{('-' + m['var']) if m['var'] else ''}{side}"
+        im = Image.open(f)
+        px = im.size
+        a = im.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 8 else 0)
+        bb = a.getbbox()
+        if not bb:
+            continue
+        S = PX_PER_SQUARE
+        box = [bb[0] // S, bb[1] // S, -(-bb[2] // S), -(-bb[3] // S)]
+        rest = m["rest"].strip(" ()")
+        rooms = [x.strip() for x in rest.split(",") if x.strip()]
+        w, h = box[2] - box[0], box[3] - box[1]
+        edges = {s: {"cls": [0] * (w if s in "NS" else h), "raw": [0.0] * (w if s in "NS" else h), "conf": 1.0}
+                 for s in SIDES}
+        out[wid] = Tile(id=wid, number=m["num"], type="wing", w=w, h=h, title=f"Wing {m['side']} {rest}".strip(),
+                        rooms=rooms, tags=derive_tags(rest, rooms, table), image=f"Misc/{f.name}", px=px,
+                        edges=edges, bbox=box)
+    for wid, t in out.items():
+        other = wid[:-1] + ("S" if wid.endswith("P") else "P")
+        if other in out:
+            t.pair = other
+    return list(out.values())
+
+
 class Registry:
     """Loaded manifest. ``tiles_dir`` is only needed to draw or re-analyse."""
 
@@ -187,6 +248,16 @@ class Registry:
             t.review = False
 
     # -- queries --------------------------------------------------------
+    def wing_pairs(self, max_w=20, max_h=60):
+        """[(port, starboard)] with matching shapes that fit the ship grid."""
+        out = []
+        for t in self.tiles.values():
+            if t.type == "wing" and t.id.endswith("P") and t.pair in self.tiles:
+                s = self.tiles[t.pair]
+                if (t.w, t.h) == (s.w, s.h) and t.w <= max_w and t.h <= max_h:
+                    out.append((t, s))
+        return sorted(out, key=lambda p: p[0].id)
+
     def by_type(self, ttype):
         return [t for t in self.tiles.values() if t.type == ttype]
 
