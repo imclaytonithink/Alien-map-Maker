@@ -218,11 +218,24 @@ class GeneratorDialog(QDialog):
         self.chk_rotate.setToolTip(
             "Place some copies turned sideways to fill gaps and add variety.")
         form.addRow("", self.chk_rotate)
+        self.chk_flip = QCheckBox("Mirror some copies")
+        self.chk_flip.setToolTip(
+            "Also flip some copies left-right or top-bottom for variety. "
+            "Mirroring never breaks grid alignment.")
+        form.addRow("", self.chk_flip)
         self.chk_shuffle = QCheckBox("Shuffle the placement order")
         self.chk_shuffle.setToolTip(
             "Off: assets are placed in the order the library lists them.\n"
             "On: the seed decides the order.")
         form.addRow("", self.chk_shuffle)
+        self.spin_margin = QSpinBox()
+        self.spin_margin.setRange(0, 40)
+        self.spin_margin.setValue(0)
+        self.spin_margin.setSuffix(" squares")
+        self.spin_margin.setToolTip(
+            "An empty border of this many grid squares left around the whole "
+            "layout, so the map does not start at the very edge.")
+        form.addRow("Empty border", self.spin_margin)
         self.sl_scale.valueChanged.emit(self.sl_scale.value())
 
     def _build_size_section(self):
@@ -239,6 +252,12 @@ class GeneratorDialog(QDialog):
             "selected on the canvas.")
         self.cmb_mode.currentIndexChanged.connect(self._on_mode_changed)
         self.size_form.addRow("Build into", self.cmb_mode)
+
+        self.edit_layer = QLineEdit("Generated")
+        self.edit_layer.setToolTip(
+            "The name of the layer the generated pieces are placed on, so "
+            "you can keep them grouped and toggle them together.")
+        self.size_form.addRow("Layer name", self.edit_layer)
 
         self.cmb_preset = QComboBox()
         for label, size in MAP_PRESETS:
@@ -490,7 +509,10 @@ class GeneratorDialog(QDialog):
             "gap": self.spin_gap.value(),
             "scale": self.sl_scale.value() / 100.0,
             "rotate": self.chk_rotate.isChecked(),
+            "flips": self.chk_flip.isChecked(),
             "shuffle": self.chk_shuffle.isChecked(),
+            "margin": self.spin_margin.value(),
+            "layer_name": self.edit_layer.text().strip() or "Generated",
             "mode": self.cmb_mode.currentData(),
             "size": (self.spin_cols.value(), self.spin_rows.value()),
             "auto_size": self.cmb_preset.currentData() == "auto",

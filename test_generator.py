@@ -94,6 +94,20 @@ for layout in ("grid", "scatter"):
                     or a[1] + a[3] <= b[1] + 1e-6 or b[1] + b[3] <= a[1] + 1e-6), \
                 f"{layout} overlapped two pieces"
 
+# ---- border, mirror flips and layer name are honoured ---------------------
+margined = mapbuilder.build_map(dict(base, layout="grid", copies=2, margin=3))
+assert margined["pieces"]
+for p in margined["pieces"]:
+    assert p["_box"][0] >= 3 * cell and p["_box"][1] >= 3 * cell, \
+        ("empty border not kept", p)
+assert not any(p["flip_h"] or p["flip_v"] for p in margined["pieces"])
+flipped = mapbuilder.build_map(dict(base, layout="scatter", copies=3,
+                                    flips=True, seed=11))
+assert any(p["flip_h"] or p["flip_v"] for p in flipped["pieces"]), \
+    "flips requested but none applied"
+layered = mapbuilder.build_map(dict(base, layout="grid", layer_name="Rooms"))
+assert all(p["layer_name"] == "Rooms" for p in layered["pieces"])
+
 # ---- through the app: build a new level from the selection -----------------
 win.library.select_paths([a.path for a in picked])
 assert win.library.selected_paths() == [a.path for a in picked]
@@ -161,6 +175,19 @@ assert len(win.project.levels) == levels_before + 1 - kept_levels
 assert len(win._gen_output["new"]["levels"]) == 1
 assert not previous_ids.intersection(
     piece.id for level in win.project.levels for piece in level.pieces)
+
+# the customisation controls reach the placed pieces
+dlg.edit_layer.setText("Rooms A")
+dlg.chk_flip.setChecked(True)
+dlg.spin_margin.setValue(2)
+assert dlg._generate(), dlg.lbl_status.text()
+lvl2 = win.project.levels[-1]
+assert any(layer.name == "Rooms A" for layer in lvl2.layers), \
+    [layer.name for layer in lvl2.layers]
+assert any(p.flip_h or p.flip_v for p in lvl2.pieces), \
+    "mirror flips requested but none placed"
+for p in lvl2.pieces:
+    assert p.x >= 0, p
 
 # an empty selection is refused by the window as well as by the builder
 assert win._run_generator(dict(tracked, selection=[])) is None

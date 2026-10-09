@@ -1979,6 +1979,8 @@ class MainWindow(QMainWindow):
                 asset_path=data["asset_path"], name=data["name"],
                 x=data["x"], y=data["y"], w=data["w"], h=data["h"],
                 scale=data["scale"], rotation=data["rotation"],
+                flip_h=bool(data.get("flip_h", False)),
+                flip_v=bool(data.get("flip_v", False)),
                 layer=layer_ids[lname], snap=True)
             level.add(piece)
             created.append(piece)

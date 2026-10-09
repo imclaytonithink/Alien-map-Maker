@@ -323,8 +323,11 @@ says what it does.
      for floor, deck and terrain tiles.
    Plus: **copies of each asset**, **spacing** in whole squares, an **asset
    size** percentage (100% is the size the asset gets when you drag it onto the
-   canvas yourself), **allow 90° rotations**, and **shuffle the placement
-   order**.
+   canvas yourself), **allow 90° rotations**, **mirror some copies**, **shuffle
+   the placement order**, and an **empty border** of squares left around the
+   whole layout. Every control has a plain-language tooltip. The generated
+   pieces land on a layer you can name (default "Generated"), so you can keep
+   them grouped and toggle them together.
 3. **Size and placement** — a new level or the area of the nodes you have
    selected on the canvas. The default size, **Automatic**, makes the map just
    big enough to hold everything you picked, so large rooms always fit; fixed

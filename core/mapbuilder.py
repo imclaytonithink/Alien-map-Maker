@@ -158,6 +158,7 @@ def suggest_region(opts: dict, cap: int = 800) -> tuple[int, int, int, int]:
     rotations = ROTATIONS if rotate else (0,)
     copies = max(1, int(opts.get("copies", 1) or 1)) if layout != "fill" else 1
     gap = max(0, int(opts.get("gap", 0) or 0))
+    border = max(0, int(opts.get("margin", 0) or 0))
 
     items = [item for item in
              (make_item(entry, cell, fps, scale)
@@ -187,15 +188,16 @@ def suggest_region(opts: dict, cap: int = 800) -> tuple[int, int, int, int]:
                          for item, cx, _cy, rotation in placements)
             used_h = max(cy + _footprint(item, rotation)[1]
                          for item, _cx, cy, rotation in placements)
-            return (0, 0, min(cap, used_w) - 1, min(cap, used_h) - 1)
+            return (0, 0, min(cap, used_w + 2 * border) - 1,
+                    min(cap, used_h + 2 * border) - 1)
         layout = "scatter"        # fall through to the area estimate
 
-    margin = {"scatter": 1.7, "fill": 1.05}.get(layout, 1.7)
-    area = int(total * margin) + 16
+    headroom = {"scatter": 1.7, "fill": 1.05}.get(layout, 1.7)
+    area = int(total * headroom) + 16
     cols = max(min_w, round((area * 1.6) ** 0.5))
     rows = max(min_h, -(-area // max(1, cols)))
-    cols = min(cap, max(8, cols))
-    rows = min(cap, max(8, rows))
+    cols = min(cap, max(8, cols) + 2 * border)
+    rows = min(cap, max(8, rows) + 2 * border)
     return (0, 0, cols - 1, rows - 1)
 
 
@@ -219,7 +221,7 @@ def _piece(item: dict, cx: int, cy: int, rotation: int, cell_size: float,
             "x": centre_x - w_px / 2.0, "y": centre_y - h_px / 2.0,
             "w": item["w"], "h": item["h"], "scale": item["scale"],
             "rotation": rotation, "layer_name": layer, "snap": True,
-            "opacity": 1.0,
+            "opacity": 1.0, "flip_h": False, "flip_v": False,
             "_box": (cx * cell_size, cy * cell_size, box_w, box_h)}
 
 
@@ -350,6 +352,8 @@ def build_map(opts: dict) -> dict:
         ``scale``           extra size factor applied to every asset
         ``rotate``          allow 90° steps as well as upright
         ``shuffle``         randomise the placement order
+        ``flips``           also mirror some copies (adds variety)
+        ``margin``          empty border squares kept around the layout
         ``layer_name``      layer the pieces are reported under
         ``seed``            seed for every random choice
     """
@@ -369,8 +373,16 @@ def build_map(opts: dict) -> dict:
     scale = min(MAX_SCALE, max(MIN_SCALE, float(opts.get("scale", 1.0) or 1.0)))
     rotate = bool(opts.get("rotate", False))
     shuffle = bool(opts.get("shuffle", layout == "scatter"))
+    flips = bool(opts.get("flips", False))
+    margin = max(0, int(opts.get("margin", 0) or 0))
     layer = opts.get("layer_name") or "Generated"
     rotations = ROTATIONS if rotate else (0,)
+    # The layout happens inside the border; a border bigger than the area is
+    # simply ignored.
+    ix, iy = x0 + margin, y0 + margin
+    icols, irows = cols - 2 * margin, rows - 2 * margin
+    if icols < 1 or irows < 1:
+        ix, iy, icols, irows = x0, y0, cols, rows
 
     items = [item for item in
              (make_item(entry, cell, fps, scale)
@@ -382,8 +394,8 @@ def build_map(opts: dict) -> dict:
     warnings: list[str] = []
 
     def fits_area(item) -> bool:
-        return any(_footprint(item, rotation)[0] <= cols
-                   and _footprint(item, rotation)[1] <= rows
+        return any(_footprint(item, rotation)[0] <= icols
+                   and _footprint(item, rotation)[1] <= irows
                    for rotation in rotations)
 
     unusable = [item for item in items if not fits_area(item)]
@@ -410,19 +422,19 @@ def build_map(opts: dict) -> dict:
             if shuffle:
                 rng.shuffle(batch)
             order.extend(batch)
-        placements, _skipped, _full = pack_rows(order, x0, y0, cols, rows, gap,
-                                                rotations)
+        placements, _skipped, _full = pack_rows(order, ix, iy, icols, irows,
+                                                gap, rotations)
         skipped = 0
     else:
         order = list(usable) * copies
         if shuffle:
             rng.shuffle(order)
         if layout == "scatter":
-            placements, skipped = pack_scatter(rng, order, x0, y0, cols, rows,
+            placements, skipped = pack_scatter(rng, order, ix, iy, icols, irows,
                                                gap, rotations)
         else:
             placements, skipped, _full = pack_rows(
-                order, x0, y0, cols, rows, gap, rotations)
+                order, ix, iy, icols, irows, gap, rotations)
 
     if skipped:
         warnings.append(
@@ -432,8 +444,14 @@ def build_map(opts: dict) -> dict:
         return _empty(seed, "Nothing fit in that area. Make the map larger or "
                             "pick smaller assets.", layout)
 
-    pieces = [_piece(item, cx, cy, rotation, cell, layer)
-              for item, cx, cy, rotation in placements]
+    pieces = []
+    for item, cx, cy, rotation in placements:
+        piece = _piece(item, cx, cy, rotation, cell, layer)
+        if flips:
+            # Mirroring keeps the footprint, so alignment is unaffected.
+            piece["flip_h"] = rng.random() < 0.5
+            piece["flip_v"] = rng.random() < 0.5
+        pieces.append(piece)
     used_w = max(cx - x0 + _footprint(item, rotation)[0]
                  for item, cx, _cy, rotation in placements)
     used_h = max(cy - y0 + _footprint(item, rotation)[1]
