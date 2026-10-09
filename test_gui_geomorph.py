@@ -317,6 +317,43 @@ assert dlg.result is not before_result and dlg.lbl_changes.text().startswith("Ne
 dlg._undo()
 assert dlg.result is before_result and dlg.ed_seed.text() == before_seed, "undo brings back the previous map and seed"
 assert dlg.cb_zone.count() == len(before_result.zones)
+# ratings teach the generator; best of 6 ranks candidates; learning can be switched off and reset
+from geomorph import learning as _learning
+dlg.ck_learn.setChecked(True)
+dlg._forget()
+assert "Nothing learned" in dlg.lbl_learn.text()
+dlg._rate(+1)
+assert "1 vote" in dlg.lbl_learn.text() and "1 liked" in dlg.lbl_learn.text(), dlg.lbl_learn.text()
+assert (dlg.user_dir / "preferences.json").exists() and _learning.net_by_tile()
+dlg._rate(-1)
+assert "2 vote" in dlg.lbl_learn.text() and "1 not" in dlg.lbl_learn.text()
+dlg.ck_learn.setChecked(False)
+dlg._rate(+1)                                              # off: nothing is recorded
+assert dlg.lbl_learn.text() == "Learning is off." and _learning.PATH is None
+dlg.ck_learn.setChecked(True)
+dlg._update_learn_label()
+assert "2 vote" in dlg.lbl_learn.text()
+dlg.ed_seed.setText("bo-gui")
+before_best = dlg.result
+dlg._best_of()
+assert len(dlg.candidates) == 6 and dlg.result is dlg.candidates[0], "the top-ranked candidate is taken in tests"
+scores = [c.quality["score"] for c in dlg.candidates]
+assert dlg.ed_seed.text() == dlg.candidates[0].options["seed"] and dlg.lbl_changes.text().startswith("Picked candidate 1 of 6")
+assert dlg.btn_undo.isEnabled()
+dlg._undo()
+assert dlg.result is before_best, "a picked candidate can be undone"
+from ui.geomorph_dialog import _BestOfDialog
+box = _BestOfDialog(dlg, dlg.candidates)
+assert box.chosen is None
+box._pick(3)
+assert box.chosen == 3
+dlg._forget()
+assert "Nothing learned" in dlg.lbl_learn.text() and not _learning.net_by_tile()
+# a placed or exported map votes softly by its score
+dlg.result.quality = dict(dlg.result.quality, score=96)
+dlg._soft_vote()
+assert _learning.summary()["maps"] == 1 and "1 vote" in dlg.lbl_learn.text()
+dlg._forget()
 # gap warning label follows the result
 res.gaps = {"Test zone": "no tile"}
 dlg._generated(res, None)

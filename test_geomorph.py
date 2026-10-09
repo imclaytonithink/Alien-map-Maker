@@ -1342,6 +1342,59 @@ def check_spread():
     print("outbreak spread ok")
 
 
+def check_learning():
+    """Votes nudge tile choice (never the rules), shrink toward neutral, can be reset, and rank 'best of N'."""
+    import tempfile
+    from geomorph import learning
+    reg = Registry.load()
+    base = dict(kind="site", seed="ln1", archetype="Research facility", scale="medium")
+    learning.use(None)
+    assert learning.net_by_tile() == {} and not learning.record(pipeline.generate(reg, base), rating=1), "off by default"
+    path = os.path.join(tempfile.mkdtemp(prefix="taste-"), "prefs.json")
+    learning.use(path)
+    cands = pipeline.generate_many(reg, base, 6)
+    assert [c.options["seed"] for c in cands] != [], "candidates have their own seeds"
+    assert [c.quality["score"] for c in cands] == sorted((c.quality["score"] for c in cands), reverse=True), "ranked by score"
+    again = pipeline.generate_many(reg, base, 6)
+    assert [c.options["seed"] for c in again] == [c.options["seed"] for c in cands], "same list for the same settings"
+    liked = cands[-1]
+    liked_ids = {p.tile.id for g in liked.grids for p in g.placed}
+    assert learning.record(liked, rating=1)
+    one = learning.net_by_tile()
+    assert one and all(0 < v < 0.3 for v in one.values()), "one vote barely moves anything"
+    for _ in range(5):
+        learning.record(liked, rating=1)
+    many = learning.net_by_tile()
+    assert all(many[t] > one[t] for t in liked_ids if t in one) and max(many.values()) < 1.0
+    sm = learning.summary()
+    assert sm["up"] == 6 and sm["down"] == 0 and sm["tiles"] == len(liked_ids)
+    # it changes later maps toward the liked tiles, and learn=False ignores it
+    ids = lambda r: [p.tile.id for g in r.grids for p in g.placed]
+    hits = lambda r: sum(1 for t in ids(r) if t in liked_ids)
+    plain = sum(hits(pipeline.generate(reg, dict(base, seed=f"x{i}", learn=False))) for i in range(6))
+    tasted = sum(hits(pipeline.generate(reg, dict(base, seed=f"x{i}"))) for i in range(6))
+    assert tasted > plain, ("liked tiles are used more", plain, tasted)
+    assert pipeline.generate(reg, dict(base, seed="x0", learn=False)).quality["score"] >= 0 and reg.taste == {}
+    # taste does not break rules: the maps are still sound
+    assert all(not [i for i in pipeline.generate(reg, dict(base, seed=f"x{i}")).issues if "overlap" in i] for i in range(3))
+    # disliking pulls the other way; a kept map votes by its score; reset forgets
+    bad = cands[0]
+    learning.record(bad, rating=-1)
+    assert any(v < 0 for v in learning.net_by_tile().values()) or set(ids(bad)) <= liked_ids
+    n_before = learning.summary()["maps"]
+    mid = pipeline.generate(reg, base)
+    mid.quality = dict(mid.quality, score=75)
+    assert not learning.record(mid, soft=True), "a middling map is no vote"
+    mid.quality = dict(mid.quality, score=95)
+    assert learning.record(mid, soft=True) and learning.summary()["maps"] == n_before + 1
+    learning.reset()
+    assert learning.net_by_tile() == {} and learning.summary()["maps"] == 0
+    learning.use(path)
+    assert learning.net_by_tile() == {}, "reset is saved"
+    learning.use(None)
+    print("learning ok")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1370,6 +1423,7 @@ def main():
     check_atmosphere()
     check_reroll_refresh_and_undo()
     check_spread()
+    check_learning()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")

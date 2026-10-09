@@ -89,6 +89,42 @@ def _help(text, colors):
     return label
 
 
+class _BestOfDialog(QDialog):
+    """Six candidate maps with their scores; click "Use this one" under the one you want."""
+
+    def __init__(self, parent, candidates):
+        super().__init__(parent)
+        from PyQt6.QtWidgets import QGridLayout
+        from geomorph import learning
+        self.setWindowTitle("Best of 6 — pick a map")
+        self.chosen = None
+        grid = QGridLayout(self)
+        for i, res in enumerate(candidates):
+            card = QVBoxLayout()
+            pic = QLabel()
+            pic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            pm = pil_to_pixmap(res._thumb)
+            pic.setPixmap(pm.scaled(340, 260, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            q = res.quality
+            taste = learning.taste(res)
+            text = f"{'★ ' if i == 0 else ''}Score {q['score']} · {q['label']}"
+            if abs(taste) > 0.02:
+                text += f" · your taste {'+' if taste > 0 else ''}{taste * 100:.0f}%"
+            cap = QLabel(text)
+            cap.setWordWrap(True)
+            sub = QLabel(f"{len(q['dead_ends'])} dead ends, {len(q['unreachable'])} unreachable · seed {res.options.get('seed', '')}")
+            sub.setStyleSheet("color: #8fa3ad;")
+            btn = QPushButton("Use this one")
+            btn.clicked.connect(lambda _c=False, k=i: self._pick(k))
+            for w in (pic, cap, sub, btn):
+                card.addWidget(w)
+            grid.addLayout(card, i // 3, i % 3)
+
+    def _pick(self, k):
+        self.chosen = k
+        self.accept()
+
+
 class _ClickLabel(QLabel):
     """Preview label that reports where it was clicked."""
     clicked = pyqtSignal(int, int)
@@ -135,6 +171,7 @@ class GeomorphDialog(QDialog):
         self.images = None
         self.job = None
         self.level_index = 0
+        self.candidates = []
         self.undo_stack = []                # [("snap", snapshot, label) | ("result", result, seed, label)]
         self.locked = set()                 # zone ids kept by every re-roll
         self.selected_zone = None
@@ -423,9 +460,12 @@ class GeomorphDialog(QDialog):
         self.ck_atmo.setToolTip("Dim rooms with the power out, red emergency lamps over their doors, a red shutter "
                                 "across locked-down doors (GM view only) and hazard borders on quarantined rooms.")
         self.ck_atmo.toggled.connect(lambda _c: self._show_level())
+        self.btn_best = QPushButton("Best of 6")
+        self.btn_best.setToolTip("Make 6 maps from the current settings, score them (and your taste), and pick one.")
+        self.btn_best.clicked.connect(self._best_of)
         self.ck_live = QCheckBox("Live preview")
         self.ck_live.setToolTip("Regenerate automatically a moment after any option changes.")
-        for wdg in (self.btn_gen, self.btn_regen, self.ck_live, QLabel("Level"), self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo):
+        for wdg in (self.btn_gen, self.btn_regen, self.btn_best, self.ck_live, QLabel("Level"), self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo):
             top.addWidget(wdg)
         top.addStretch(1)
         right.addLayout(top)
@@ -497,7 +537,9 @@ class GeomorphDialog(QDialog):
             row.addWidget(wdg)
         right.addLayout(row)
         self.box_check = QGroupBox("Map check")
-        hc = QHBoxLayout(self.box_check)
+        vc = QVBoxLayout(self.box_check)
+        hc = QHBoxLayout()
+        vc.addLayout(hc)
         self.lbl_score = QLabel("–")
         self.lbl_score.setMinimumWidth(64)
         self.lbl_score.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -517,6 +559,26 @@ class GeomorphDialog(QDialog):
         hc.addWidget(self.lbl_score)
         hc.addLayout(col, 1)
         hc.addWidget(self.btn_undo)
+        lr = QHBoxLayout()
+        self.btn_like = QPushButton("👍 Like this map")
+        self.btn_like.setToolTip("The tiles in this map will be picked a little more often from now on.")
+        self.btn_like.clicked.connect(lambda: self._rate(+1))
+        self.btn_dislike = QPushButton("👎 Not for me")
+        self.btn_dislike.setToolTip("The tiles in this map will be picked a little less often from now on.")
+        self.btn_dislike.clicked.connect(lambda: self._rate(-1))
+        self.ck_learn = QCheckBox("Learn from my ratings")
+        self.ck_learn.setChecked(True)
+        self.ck_learn.setToolTip("Tiles from maps you like are used more, tiles from maps you do not like less. Maps you "
+                                 "place or export also count a little, by their score. Taste never bends the rules.")
+        self.btn_forget = QPushButton("Reset")
+        self.btn_forget.setToolTip("Forget everything learned so far.")
+        self.btn_forget.clicked.connect(self._forget)
+        self.lbl_learn = QLabel("")
+        self.lbl_learn.setStyleSheet("color: #8fd3ff;")
+        for wdg in (self.btn_like, self.btn_dislike, self.ck_learn, self.btn_forget):
+            lr.addWidget(wdg)
+        lr.addWidget(self.lbl_learn, 1)
+        vc.addLayout(lr)
         right.addWidget(self.box_check)
         self.lbl_gaps = QLabel("")
         self.lbl_gaps.setWordWrap(True)
@@ -534,7 +596,7 @@ class GeomorphDialog(QDialog):
 
     def _enable(self, has):
         for b in (self.btn_place, self.btn_export, self.btn_save, self.btn_reroll, self.ck_lock,
-                  self.btn_reroll_level, self.btn_reroll_all):
+                  self.btn_reroll_level, self.btn_reroll_all, self.btn_like, self.btn_dislike):
             b.setEnabled(has)
 
     # ---- presets & scenarios ------------------------------------------
@@ -682,7 +744,7 @@ class GeomorphDialog(QDialog):
         self._live_timer.setSingleShot(True)
         self._live_timer.setInterval(600)
         self._live_timer.timeout.connect(self._live_fire)
-        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
+        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo, self.ck_learn, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
         for w in self.findChildren(QWidget):
             if w in skip or w.parent() is None:
                 continue
@@ -839,6 +901,45 @@ class GeomorphDialog(QDialog):
         self._reroll("Re-roll all unlocked", lambda res: sum(
             pipeline.reroll_level(res, g.index, self.locked, seed=random.random()) for g in res.grids))
 
+    def _best_of(self, n=6):
+        """Make ``n`` candidates from the current settings, rank them, and let the user pick one."""
+        from geomorph import pipeline, render
+        self._apply_learning()
+        opts = self.options()
+        reg, arch, images = self.registry, self.archetypes, self.images
+
+        def work():
+            cands = pipeline.generate_many(reg, opts, n, dict(arch, _problems=[]))
+            for res in cands:
+                res._thumb = render.render_level(res, 0, images, pps=4, gm=True)
+            return cands
+
+        def done(cands, err):
+            if err:
+                self.lbl_status.setText("Best of 6 failed: " + err.splitlines()[0])
+                return
+            self.candidates = cands
+            if self.sync:                                   # tests: take the top-ranked one
+                self._take_candidate(0)
+                return
+            dlg = _BestOfDialog(self, cands)
+            if dlg.exec() and dlg.chosen is not None:
+                self._take_candidate(dlg.chosen)
+        self._run(work, done)
+
+    def _take_candidate(self, index):
+        from geomorph import learning
+        res = self.candidates[index]
+        self._applying = True
+        try:
+            self.ed_seed.setText(str((res.options or {}).get("seed", "")))
+        finally:
+            self._applying = False
+        self._prerender(res)
+        self._generated(res, None)
+        self.lbl_changes.setText(f"Picked candidate {index + 1} of {len(self.candidates)} "
+                                 f"(seed {(res.options or {}).get('seed', '')}).")
+
     def _update_quality(self):
         from geomorph import quality
         res = self.result
@@ -918,6 +1019,7 @@ class GeomorphDialog(QDialog):
         self.ed_seed.setText(seed)
         o = {"kind": kind, "seed": seed, "theme": self.cb_theme.currentData(), "name": self.ed_name.text().strip(),
              "condition": self.cb_cond.currentData() or None, "mixed_conditions": self.ck_mixed.isChecked(),
+             "learn": self.ck_learn.isChecked(),
              "peculiarities": self.sp_pec.value(), "grouping": self.sl_group.value() / 100.0, "intensity": self.sl_int.value() / 100.0,
              "overlays": [k for k, c in self.overlay_checks.items() if c.isChecked()]}
         if self.ck_decor.isChecked() or self.ck_outdoor.isChecked():
@@ -964,8 +1066,47 @@ class GeomorphDialog(QDialog):
         self.job.done.connect(finish)
         self.job.start()
 
+    def _apply_learning(self):
+        """Point the generator at this user's preference file (or switch learning off)."""
+        from geomorph import learning
+        learning.use(self.user_dir / "preferences.json" if self.ck_learn.isChecked() else None)
+        return learning
+
+    def _update_learn_label(self):
+        learning = self._apply_learning()
+        if not self.ck_learn.isChecked():
+            self.lbl_learn.setText("Learning is off.")
+            return
+        sm = learning.summary()
+        self.lbl_learn.setText("Nothing learned yet: rate maps with the thumbs." if not sm["maps"] else
+                               f"Learned from {sm['maps']} vote(s): {sm['up']} liked, {sm['down']} not; "
+                               f"{sm['tiles']} tile(s) now favoured or avoided.")
+
+    def _rate(self, vote):
+        from geomorph import learning
+        if self.result is None:
+            return
+        self._apply_learning()
+        if learning.record(self.result, rating=vote):
+            self.lbl_status.setText("Thanks — the tiles in this map will be used " + ("more" if vote > 0 else "less")
+                                    + " in future maps.")
+        self._update_learn_label()
+
+    def _forget(self):
+        learning = self._apply_learning()
+        learning.reset()
+        self._update_learn_label()
+        self.lbl_status.setText("Forgot everything learned.")
+
+    def _soft_vote(self):
+        """A map you keep (place or export) is a gentle vote by its score."""
+        if self.result is not None and self.ck_learn.isChecked():
+            self._apply_learning().record(self.result, soft=True)
+            self._update_learn_label()
+
     def generate(self):
         from geomorph import pipeline
+        self._apply_learning()
         opts = self.options()
         reg, arch = self.registry, self.archetypes
 
@@ -1014,6 +1155,7 @@ class GeomorphDialog(QDialog):
         self._zone_changed()
         self._fill_text()
         self._update_quality()
+        self._update_learn_label()
         self._enable(True)
         if res.gaps:
             names = ", ".join(list(res.gaps)[:6]) + (" …" if len(res.gaps) > 6 else "")
@@ -1108,6 +1250,7 @@ class GeomorphDialog(QDialog):
             return
         self.main._place_geomorph(res, self.registry, self.images)
         self.lbl_status.setText("Placed on the canvas as new levels.")
+        self._soft_vote()
 
     def export(self):
         from geomorph import exporter
@@ -1119,6 +1262,7 @@ class GeomorphDialog(QDialog):
             return
         files = exporter.export_all(res, d, self.images, pps=16)
         self.lbl_status.setText(f"Exported {len(files)} files to {d}.")
+        self._soft_vote()
 
     def _save_layout(self):
         from geomorph import exporter

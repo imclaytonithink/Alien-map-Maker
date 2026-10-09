@@ -22,6 +22,7 @@ DEFAULTS = {
     "ship_type": "Merchant", "tonnage": 1000, "symmetric": True, "fins": True, "orientation": "N",
     "condition": None, "mixed_conditions": False, "zone_conditions": {}, "peculiarities": 2,
     "overlays": [], "intensity": 0.5, "parts": {}, "craft": None, "decor": None, "grouping": 0.6,
+    "learn": True,                     # let learned taste (see learning.py) nudge tile choice
 }
 
 
@@ -85,6 +86,8 @@ def generate(registry: Registry, options=None, archetypes=None) -> Result:
     o.update(options or {})
     rng = random.Random(coerce_seed(o["seed"]))
     theme = o["theme"]
+    from . import learning
+    registry.taste = learning.net_by_tile() if o.get("learn", True) else {}
     A = archetypes or archmod.load_all()
     arch = None
     if o["kind"] == "ship":
@@ -272,3 +275,16 @@ def refresh_dressing(res: Result, seed=None) -> None:
         if was is not None:
             e["text"], e["player"] = was.get("text", e["text"]), was.get("player", e.get("player", ""))
     res.quality = quality.assess(res)
+
+
+def generate_many(registry: Registry, options=None, n=6, archetypes=None, taste_weight=12.0) -> list:
+    """``n`` candidate maps from seeds derived from the current one, best first.
+
+    Ranked by quality score plus the learned taste for the tiles used, so the first one is the one most
+    likely to be both sound and to your liking. Same seed, same options and same preferences = same list."""
+    from . import learning
+    base = dict(options or {})
+    seed = str(base.get("seed", "1"))
+    out = [generate(registry, dict(base, seed=f"{seed}-{i + 1}"), archetypes) for i in range(max(1, int(n)))]
+    out.sort(key=lambda r: -(r.quality["score"] + taste_weight * (learning.taste(r) if base.get("learn", True) else 0.0)))
+    return out

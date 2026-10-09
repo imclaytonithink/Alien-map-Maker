@@ -62,3 +62,24 @@ tile sits on its level and the matching upper tile sits on the level above, on t
 stairs link; each floor is a room of its own in the key. Which pair is used follows the room's function tags, or name the
 tile number in an archetype's `special_volumes` entry with `"pair_tiles": ["225"]`. A room with no matching pair falls
 back to a single tile with a railed, dimmed overlook above it. Three-storey rooms keep an overlook on the middle level.
+
+
+## Checking, comparing and teaching the generator
+
+* **Map check** (`quality.py`): a 0-100 score from unreachable rooms, dead-end corridors, known issues, zones with no
+  tile, how much furnishable floor got furniture, and tile variety, with the plain sentence "N dead ends, M unreachable
+  rooms, X% furnished". Re-rolls recompute it and show what changed ("Score 88 -> 93, dead ends 2 -> 1"); **Undo** goes back
+  to the exact previous layout, furniture and key (or the previous map and seed after "New seed").
+* **Best of 6**: six candidates from seeds derived from the current one, ranked by score plus your taste; click one to use it.
+* **Taste** (`learning.py`): the thumbs buttons (and, gently, maps you place or export) vote on the tiles in a map. A tile's
+  net taste is (up - down) / (up + down + 3), added as a small bonus or penalty when tiles are picked. It never bends
+  a rule. The votes are in `preferences.json` in the generator's user folder; **Reset** clears them, and the checkbox
+  switches learning off.
+* **Outbreaks** (`decor.spread_plan`): with "Spreading from a starting room" the worst damage (resin, burns, a nest) is at the
+  source, it thins out with every door away up to the chosen reach, barricades stand on doors facing the source and drag
+  marks lead toward it; the GM gets a marker and notes. Choose the starting room (entrance, a medical room, a lab…).
+* **Atmosphere** (`atmosphere.py`): with the power out a room goes dark and round emergency lamps, flat against the walls,
+  light what they can see (walls and furniture cast shadow, nothing leaks outside the building); lockdown shows a red shutter
+  on every door (GM view only); quarantine gets a hazard border. The same overlay is added to the canvas on its own layers.
+* **Exports for Tabletop Simulator**: "Tabletop Sim (sharp 100px/sq, in sections)" writes a big map as grid-aligned PNG
+  sections (A1, A2, B1…) no bigger than the limit you choose (default 4096 px), with a `sections.txt` that says how they fit.
