@@ -62,13 +62,17 @@ def _alpha(im):
     return im.getchannel("A")
 
 
-def analyse_image(path, w, h):
-    """Return per-side edge data for a w x h (squares) tile image."""
-    im = Image.open(path)
+def analyse_image(path, w, h, pps=PX_PER_SQUARE):
+    """Return per-side edge data for a w x h (squares) tile image.
+
+    ``pps`` is pixels per square in the image (300 for the pack; smaller values
+    are used by tests and custom tiles).
+    """
+    im = path if isinstance(path, Image.Image) else Image.open(path)
     alpha = _alpha(im)
-    S, B = PX_PER_SQUARE, BORDER_SQUARES * PX_PER_SQUARE
+    S, B = pps, BORDER_SQUARES * pps
     x0, y0, x1, y1 = B, B, B + w * S, B + h * S
-    half = BAND // 2
+    half = max(1, int(BAND * pps / PX_PER_SQUARE) // 2)
     boxes = {"N": (x0, y0 - half, x1, y0 + half, True),
              "S": (x0, y1 - half, x1, y1 + half, True),
              "W": (x0 - half, y0, x0 + half, y1, False),

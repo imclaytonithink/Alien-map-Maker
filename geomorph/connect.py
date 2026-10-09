@@ -85,9 +85,9 @@ def patch_pieces(level, side, coords, a: Placed):
     for c in coords:
         bx, by = boundary_point(a, side, c)
         if side in ("E", "W"):
-            out.append(F.piece("patch", level, bx - 0.5, by - 0.6, 1, 1.2))
+            out.append(F.piece("patch", level, bx - 0.15, by - 0.5, 0.3, 1))
         else:
-            out.append(F.piece("patch", level, bx - 0.6, by - 0.5, 1.2, 1))
+            out.append(F.piece("patch", level, bx - 0.5, by - 0.15, 1, 0.3))
     return out
 
 

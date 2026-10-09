@@ -96,7 +96,7 @@ def orientations(tile: Tile) -> list:
         for rot in ROTS:
             ee, hh, w, hgt = dict(e), set(h), tile.w, tile.h
             for _ in range(rot // 90):             # one clockwise quarter turn
-                ee = {"N": ee["W"][::-1], "E": ee["N"], "S": ee["E"][::-1], "W": ee["S"][::-1]}
+                ee = {"N": ee["W"][::-1], "E": ee["N"], "S": ee["E"][::-1], "W": ee["S"]}
                 hh = {SIDES[(SIDES.index(s) + 1) % 4] for s in hh}
                 w, hgt = hgt, w
             key = (w, hgt, tuple(sorted(ee.items())), tuple(sorted(hh)))
@@ -123,7 +123,7 @@ def orientation_for(tile: Tile, rot: int, mirror: bool) -> Orientation:
         e = {"N": e["N"][::-1], "S": e["S"][::-1], "E": e["W"], "W": e["E"]}
         h = {"E" if s == "W" else "W" if s == "E" else s for s in h}
     for _ in range((rot % 360) // 90):
-        e = {"N": e["W"][::-1], "E": e["N"], "S": e["E"][::-1], "W": e["S"][::-1]}
+        e = {"N": e["W"][::-1], "E": e["N"], "S": e["E"][::-1], "W": e["S"]}
         h = {SIDES[(SIDES.index(s) + 1) % 4] for s in h}
         w, hgt = hgt, w
     return Orientation(rot % 360, bool(mirror), w, hgt, tuple((s, tuple(e[s])) for s in SIDES), frozenset(h))

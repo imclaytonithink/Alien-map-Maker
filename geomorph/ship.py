@@ -167,7 +167,8 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
             ttype = s["kind"]
         pick = None
         # symmetric partner: reuse the mirrored tile when the port side was already placed
-        if symmetric and (s["kind"] != "end" or s.get("role") == "fin"):
+        # rule: aerofins are ALWAYS a mirrored pair; other port/starboard pieces follow the toggle
+        if s.get("role") == "fin" or (symmetric and s["kind"] != "end"):
             partner = _partner(slots, i, C)
             if partner is not None and partner in placed:
                 p0 = placed[partner]
@@ -218,7 +219,7 @@ def _partner(slots, i, C):
             return j
         # mirror across the ship's centre line
         mid = slots[0]["x"] + C * 20 / 2
-        if abs((q["x"] + q["w"] / 2) - (2 * mid - (s["x"] + s["w"] / 2))) < 1e-6 and q["x"] < s["x"]:
+        if abs((q["x"] + q["w"] / 2) - (2 * mid - (s["x"] + s["w"] / 2))) < 1e-6 and q["x"] != s["x"]:
             return j
     return None
 
@@ -316,7 +317,7 @@ def rotate_grid(grid, k):
             o = p.o
             old_h = o.h
             edges = {s: c for s, c in o.edges}
-            ee = {"N": edges["W"][::-1], "E": edges["N"], "S": edges["E"][::-1], "W": edges["S"][::-1]}
+            ee = {"N": edges["W"][::-1], "E": edges["N"], "S": edges["E"][::-1], "W": edges["S"]}
             hull = frozenset(rot_side(s, 90) for s in o.hull)
             p.o = Orientation((o.rot + 90) % 360, o.mirror, o.h, o.w, tuple((s, tuple(ee[s])) for s in ("N", "E", "S", "W")), hull)
             p.x, p.y = H - (p.y + old_h), p.x      # new box: x' = H - (y + h), y' = x
