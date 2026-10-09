@@ -164,7 +164,7 @@ def scan_tiles(tiles_dir, table=None) -> list:
 WING_RE = re.compile(r"^(?P<num>AF?\d+)\s*\[(?P<w>\d+)[xX](?P<h>\d+)\]\s*(?:\((?P<var>\d+)\)\s*)?(?:(?P<color>Gray|White),\s*)?(?P<side>Port|Starboard)\s*(?P<rest>.*)\.png$")
 TRANS_RE = re.compile(r"Transition Corridor", re.I)
 NOSE_DIRS = (("Bridge", "bridge"), ("Engineering", "engineering"))
-UNSUPPORTED_WINGS = ("AF09",)       # needs a root transition piece whose attach geometry is not modelled yet
+UNSUPPORTED_WINGS = ("AF09",)       # AF09's own art is not in the pack; its A107-A116 root transitions are skipped too
 
 
 def _plan_box(im):
@@ -190,7 +190,8 @@ def scan_wings(tiles_dir, table=None) -> list:
     out = {}
     for f in sorted(d.glob("*.png")) if d.is_dir() else []:
         m = WING_RE.match(f.name)
-        if not m or "overlay" in f.name.lower() or m["num"] in UNSUPPORTED_WINGS:
+        if (not m or "overlay" in f.name.lower() or m["num"] in UNSUPPORTED_WINGS
+                or "transition" in f.name.lower()):          # AF09 root pieces are not wings on their own
             continue
         side = "P" if m["side"] == "Port" else "S"
         color = (m["color"] or "")[:1]

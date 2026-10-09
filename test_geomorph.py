@@ -298,6 +298,11 @@ def check_ship_part_options():
         return pipeline.generate(REG, dict(base, parts=parts, **kw)).grids[0].placed
     assert not [p for p in tiles({"wing": "none"}) if p.tile.type == "wing"]
     assert not [p for p in tiles({"counts": {"weapons": 0}}) if p.tile.tags.get("weapons", 0) >= 0.6]
+    for sd in range(4, 12):            # no guns means no gunnery wings either, whatever the seed
+        got = pipeline.generate(REG, dict(base, seed=sd, parts={"counts": {"weapons": 0}})).grids[0].placed
+        assert not [p for p in got if p.tile.tags.get("weapons", 0) >= 0.6], sd
+    assert not [t for pr in REG.wing_pairs() for t in pr if "transition" in t.title.lower()], \
+        "AF09 root transitions are not stand-alone wings"
     assert len([p for p in tiles({"counts": {"escape": 2}}) if p.tile.tags.get("escape", 0) >= 0.9]) >= 2
     assert not [p for p in tiles({"transition": "none"}) if p.tile.type == "trans"]
     ends = [p.tile.id for p in tiles({"nose": "style:Bridge, Rounded Nose", "transition": "A104-1"}) if p.tile.type == "end"]
