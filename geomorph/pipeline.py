@@ -21,7 +21,7 @@ DEFAULTS = {
     "archetype": "Research facility", "scale": "medium", "environment": None, "mode": "planned",
     "ship_type": "Merchant", "tonnage": 1000, "symmetric": True, "fins": True, "orientation": "N",
     "condition": None, "mixed_conditions": False, "zone_conditions": {}, "peculiarities": 2,
-    "overlays": [], "intensity": 0.5, "parts": {}, "craft": None,
+    "overlays": [], "intensity": 0.5, "parts": {}, "craft": None, "decor": None,
 }
 
 
@@ -129,6 +129,10 @@ def finish(res: Result, rng, o, arch, table, cond_default, theme) -> Result:
     dressing.apply_condition(res, rng, cond_default, o.get("zone_conditions"), o.get("mixed_conditions"))
     dressing.apply_peculiarities(res, rng, o.get("peculiarities", 2))
     dressing.apply_overlays(res, rng, o.get("overlays"), o.get("intensity", 0.5), arch)
+    if o.get("decor") and o["decor"].get("enabled"):
+        from . import decor, symbols
+        res.symbols = symbols.load()
+        decor.apply(res, rng, res.symbols, o["decor"])
     dressing.build_key(res, rng, arch)
     dressing.build_section(res)
     dressing.build_text(res, rng, arch, theme, res.meta["name"])

@@ -130,6 +130,18 @@ assert not [p for p in placed if p.tile.type == "wing"]
 assert not [p for p in placed if p.tile.tags.get("weapons", 0) >= 0.6]
 assert dlg.result.options["craft"] == ["escape"] and dlg.result.options["parts"]["counts"] == {"weapons": 0, "escape": 2}
 
+# ---- symbol decor options ------------------------------------------------------
+dlg.ck_decor.setChecked(True)
+dlg.cb_incident.setCurrentIndex(dlg.cb_incident.findData("overrun"))
+dlg.cb_where.setCurrentIndex(dlg.cb_where.findData("all"))
+dlg.sl_decor.setValue(90)
+opts = dlg.options()
+assert opts["decor"] == {"enabled": True, "density": 0.9, "incident": "overrun", "where": "all"}
+dlg.generate()
+assert dlg.result.decor and dlg.result.meta["decor"]["incident"] == "overrun"
+dlg.ck_decor.setChecked(False)
+assert "decor" not in dlg.options()
+
 # ---- tile folder detection --------------------------------------------------
 fake_pack = tempfile.mkdtemp()
 os.makedirs(os.path.join(fake_pack, "x", "100x100 Core"))

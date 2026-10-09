@@ -35,11 +35,20 @@ class TileImages:
         self.loader = loader          # loader(tile) -> RGBA image at THUMB_PPS (tests)
         self._mem = {}
 
-    def thumb_rel(self, rel: str):
-        """Thumbnail of any pack image by relative path (used for overlays)."""
+    symbols_dir = None                  # folder of the Symbols pack (decor sprites)
+
+    def thumb_rel(self, rel: str, symbol=False):
+        """Thumbnail of any pack image by relative path (overlays; symbols when ``symbol``)."""
         class _T:                       # minimal tile-like holder
-            id = "ov:" + rel
+            id = ("sym:" if symbol else "ov:") + rel
             image = rel
+        if symbol:
+            saved = self.tiles_dir
+            self.tiles_dir = Path(self.symbols_dir) if self.symbols_dir else None
+            try:
+                return self.thumb(_T)
+            finally:
+                self.tiles_dir = saved
         return self.thumb(_T)
 
     def thumb(self, tile) -> Image.Image | None:
@@ -115,7 +124,7 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
 
     def px(v, o):
         return int(round((v - o) * pps))
-    below = [f for f in g.filler if f["kind"] not in TOP_KINDS and f["kind"] != "void"]
+    below = [f for f in g.filler if f["kind"] not in TOP_KINDS and f["kind"] != "void" and not f.get("decor")]
     for f in below:
         draw_box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
         F.draw_filler(d, f["kind"], draw_box, pps, f.get("rot", 0), f.get("label", "") if f["kind"] in ("building", "pad", "pit") else "")
@@ -142,6 +151,12 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
         layer.alpha_composite(t, (bx0 - border, by0 - border)) if bx0 - border >= 0 and by0 - border >= 0 \
             else _paste_clipped(layer, t, bx0 - border, by0 - border)
         _draw_craft(res, p, layer, images, x0, y0, pps)
+    d = ImageDraw.Draw(layer)
+    for f in g.filler:                      # incident marks (debris, burns, resin, drag trails) sit on top of the tiles
+        if f.get("decor"):
+            box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
+            F.draw_filler(d, f["kind"], box, pps, f.get("rot", 0), "")
+    _draw_decor(res, g, layer, images, x0, y0, pps)
     d = ImageDraw.Draw(layer)
     for f in g.filler:
         if f["kind"] in TOP_KINDS or f["kind"] == "void":
@@ -188,6 +203,29 @@ def _draw_craft(res, p, layer, images, x0, y0, pps):
             t = t.transpose({90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[p.o.rot])
         border = int(BORDER_SQUARES * pps)
         _paste_clipped(layer, t, int((p.x - x0) * pps) - border, int((p.y - y0) * pps) - border)
+
+
+def _draw_decor(res, g, layer, images, x0, y0, pps):
+    """Symbols (furniture, machinery, cargo...) at real size, rotated about their own centre."""
+    syms = getattr(res, "symbols", None) or {}
+    for it in getattr(res, "decor", []) or []:
+        if it["level"] != g.index or it["sym"] not in syms:
+            continue
+        s = syms[it["sym"]]
+        th = images.thumb_rel(s.rel, symbol=True)
+        if th is None:
+            continue
+        k = SYM_STEP = 20                       # pack px per square (300) / thumbnail px per square (15)
+        l, t, rr, b = [v // 20 for v in s.bbox[:2]] + [-(-v // 20) for v in s.bbox[2:]]
+        t_ = th.crop((l, t, rr, b))
+        if it.get("flip"):
+            t_ = t_.transpose(Image.FLIP_LEFT_RIGHT)
+        scale = pps / THUMB_PPS
+        if abs(scale - 1) > 1e-6:
+            t_ = t_.resize((max(1, int(t_.width * scale)), max(1, int(t_.height * scale))), Image.LANCZOS)
+        if it["rot"] % 360:
+            t_ = t_.rotate(-it["rot"], expand=True, resample=Image.BICUBIC)
+        _paste_clipped(layer, t_, int((it["cx"] - x0) * pps - t_.width / 2), int((it["cy"] - y0) * pps - t_.height / 2))
 
 
 def _paste_clipped(dst, src, x, y):

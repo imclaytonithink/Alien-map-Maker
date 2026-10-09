@@ -39,6 +39,10 @@ def main(argv=None):
     g.add_argument("--theme", default=names.DEFAULT_THEME)
     g.add_argument("--overlays", default="", help="comma list: lockdown,power_failure,breach,quarantine,salvage,battle,threat,secrets")
     g.add_argument("--intensity", type=float, default=0.5)
+    g.add_argument("--decor", action="store_true", help="furnish open rooms with Symbols-pack items at real size")
+    g.add_argument("--incident", choices=("none", "struggle", "ransacked", "overrun"), default="none")
+    g.add_argument("--incident-where", choices=("all", "overlay", "random"), default="all")
+    g.add_argument("--symbols", help="folder of the extracted Symbols pack (for previews/exports)")
     g.add_argument("--out", default="geomorph_out")
     g.add_argument("--pps", type=int, default=16)
     sub.add_parser("archetypes", help="list the archetypes (and any invalid files)")
@@ -88,7 +92,8 @@ def main(argv=None):
                 "condition": a.condition, "mode": a.mode, "ship_type": a.ship_type, "tonnage": a.tonnage,
                 "symmetric": not a.no_symmetry, "fins": not a.no_fins, "orientation": a.orientation,
                 "seed": a.seed, "theme": a.theme, "overlays": [o for o in a.overlays.split(",") if o],
-                "intensity": a.intensity}
+                "intensity": a.intensity,
+                "decor": {"enabled": True, "incident": a.incident, "where": a.incident_where} if a.decor else None}
         res = pipeline.generate(reg, opts)
         print(f"{res.meta['name']}: {sum(len(g.placed) for g in res.grids)} tiles, {len(res.grids)} level(s)")
         for i in res.issues:
@@ -98,7 +103,9 @@ def main(argv=None):
             exporter.save_layout(res, Path(a.out) / "layout_gm.json")
             print("no tile pack given: wrote the layout JSON only")
             return 0
-        files = exporter.export_all(res, a.out, render.TileImages(reg.tiles_dir), pps=a.pps)
+        images = render.TileImages(reg.tiles_dir)
+        images.symbols_dir = a.symbols or os.environ.get("GEOMORPH_SYMBOLS")
+        files = exporter.export_all(res, a.out, images, pps=a.pps)
         print("\n".join(files))
         return 0
     return 0

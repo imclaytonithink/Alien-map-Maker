@@ -46,6 +46,7 @@ def to_package(res: Result, gm=True) -> dict:
         "key": [{k: v for k, v in e.items()} for e in res.key] if gm else
                [{"n": e["n"], "level": e["level"], "title": e["title"]} for e in res.key],
         "markers": markers, "overlays": res.overlays if gm else {k: v for k, v in res.overlays.items() if k != "lockdown"},
+        "decor": getattr(res, "decor", []),
         "links": res.links, "section": res.section, "issues": res.issues, "gaps": res.gaps,
         "entrance": (lay.entrance if lay is not None else {}),
         "credits": CREDITS, "gm": bool(gm),
@@ -82,12 +83,15 @@ def load_layout(path_or_dict, registry: Registry) -> Result:
         zones[zid] = ZoneInst(id=zid, base=z.get("base", zid.split("#")[0]), name=z["name"], tags=z["tags"],
                               access=z.get("access", "staff"), checkpoint=z.get("checkpoint", False),
                               entrance=z.get("entrance", False))
+    from . import symbols as _symbols
     res = Result(kind=pkg["kind"], meta=pkg["meta"], grids=grids, zones=zones, options=pkg.get("options", {}),
                  registry=registry, markers=pkg.get("markers", []), overlays=pkg.get("overlays", {}),
                  key=pkg.get("key", []), links=pkg.get("links", []), section=pkg.get("section", {}),
                  issues=pkg.get("issues", []), gaps=pkg.get("gaps", {}),
                  text={"title": pkg.get("title", ""), "description": pkg.get("description", ""),
                        "notes": pkg.get("notes", []), "hooks": pkg.get("hooks", [])})
+    res.decor = pkg.get("decor", [])
+    res.symbols = _symbols.load() if res.decor else {}
     return res
 
 

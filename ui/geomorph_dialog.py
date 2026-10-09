@@ -48,6 +48,18 @@ def find_tiles_dir(*roots) -> str:
     return ""
 
 
+def find_symbols_dir(*roots) -> str:
+    """Folder of the Symbols pack (has 'Staterooms', 'Furniture, Consoles, & Equipment'...)."""
+    for root in roots:
+        if root and os.path.isdir(root):
+            for dirpath, dirnames, _f in os.walk(root):
+                if "Furniture, Consoles, & Equipment" in dirnames and "Machinery" in dirnames:
+                    return dirpath
+                if dirpath.count(os.sep) - root.count(os.sep) >= 3:
+                    dirnames[:] = []
+    return ""
+
+
 def pil_to_pixmap(im) -> QPixmap:
     im = im.convert("RGBA")
     qi = QImage(im.tobytes("raw", "RGBA"), im.width, im.height, im.width * 4, QImage.Format.Format_RGBA8888).copy()
@@ -263,6 +275,34 @@ class GeomorphDialog(QDialog):
         f.addRow("Quirks & perks", self.sp_pec)
         left.addWidget(box)
 
+        box = QGroupBox("Symbols (furniture, machinery, cargo…)")
+        v = QVBoxLayout(box)
+        self.ck_decor = QCheckBox("Furnish open rooms with symbols at real size")
+        self.ck_decor.setToolTip("Uses the Symbols pack. Items match the room's function, keep to the walls and never "
+                                 "block corridors. Needs the Symbols ZIP in the library to place on the canvas.")
+        v.addWidget(self.ck_decor)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Amount"))
+        self.sl_decor = QSlider(Qt.Orientation.Horizontal)
+        self.sl_decor.setRange(10, 100)
+        self.sl_decor.setValue(50)
+        row.addWidget(self.sl_decor)
+        v.addLayout(row)
+        self.cb_incident = QComboBox()
+        for key, label in (("none", "Tidy — as if nothing happened"), ("struggle", "Signs of a struggle"),
+                           ("ransacked", "Ransacked — things missing and overturned"),
+                           ("overrun", "Overrun — barricades, burns, resin, drag marks")):
+            self.cb_incident.addItem(label, key)
+        self.cb_where = QComboBox()
+        for key, label in (("all", "In every room"), ("overlay", "Only lockdown / quarantine / threat zones"),
+                           ("random", "In about a third of the rooms")):
+            self.cb_where.addItem(label, key)
+        f2 = QFormLayout()
+        f2.addRow("Something bad happened", self.cb_incident)
+        f2.addRow("Where", self.cb_where)
+        v.addLayout(f2)
+        left.addWidget(box)
+
         box = QGroupBox("State overlays (seeded)")
         v = QVBoxLayout(box)
         self.overlay_checks = {}
@@ -369,6 +409,8 @@ class GeomorphDialog(QDialog):
         self.registry.tiles_dir = Path(d) if ok else None
         cache = self.user_dir / "thumbs"
         self.images = render.TileImages(self.tiles_dir or None, cache_dir=cache)
+        from ui.geomorph_dialog import find_symbols_dir as _fsd
+        self.images.symbols_dir = _fsd(self.tiles_dir, getattr(self.main.library.library, "root", ""))
         self.settings.setValue("geomorph/tiles_dir", self.tiles_dir)
         flagged = sum(1 for t in self.registry.tiles.values() if t.review)
         self.lbl_pack.setText(
@@ -412,6 +454,9 @@ class GeomorphDialog(QDialog):
              "condition": self.cb_cond.currentData() or None, "mixed_conditions": self.ck_mixed.isChecked(),
              "peculiarities": self.sp_pec.value(), "intensity": self.sl_int.value() / 100.0,
              "overlays": [k for k, c in self.overlay_checks.items() if c.isChecked()]}
+        if self.ck_decor.isChecked():
+            o["decor"] = {"enabled": True, "density": self.sl_decor.value() / 100.0,
+                          "incident": self.cb_incident.currentData(), "where": self.cb_where.currentData()}
         if kind == "ship":
             counts = {t: sp.value() for t, sp in self.count_spins.items() if sp.value() >= 0}
             parts = {"wing": self.cb_wing.currentData(), "nose": self.cb_nose.currentData(),

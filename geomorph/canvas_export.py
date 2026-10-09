@@ -17,6 +17,7 @@ from .registry import BORDER_SQUARES, PX_PER_SQUARE
 
 LAYER_TILES, LAYER_FILLER, LAYER_KEY, LAYER_GM = "Geomorph tiles", "Geomorph filler", "Geomorph key", "Geomorph GM only"
 LAYER_CRAFT = "Geomorph craft"
+LAYER_DECOR = "Geomorph decor"
 
 
 def library_resolver(assets):
@@ -126,6 +127,34 @@ def to_canvas(res, cell: float, resolver=None, tile_images=None, filler_dir=None
                 d["embedded"] = _embed(png)
                 d["asset_path"] = ""
                 pieces.insert(0 if f["kind"] in ("ground", "rock", "road", "water") else len(pieces), d)
+        n_decor, no_art = 0, set()
+        for it in getattr(res, "decor", []) or []:
+            sym = (getattr(res, "symbols", None) or {}).get(it["sym"])
+            if it["level"] != g.index or sym is None:
+                continue
+            class _S:
+                image = sym.rel
+            ov = resolver(_S) if resolver else None
+            if ov is None:
+                no_art.add(sym.cat)
+                continue
+            import math
+            sc = cell / 300.0
+            pw, ph = sym.px
+            dx = (pw / 2 - (sym.bbox[0] + sym.bbox[2]) / 2) / 300.0
+            dy = (ph / 2 - (sym.bbox[1] + sym.bbox[3]) / 2) / 300.0
+            if it.get("flip"):
+                dx = -dx
+            a = math.radians(it["rot"])
+            rx, ry = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
+            pieces.append({"asset_path": ov[0], "name": sym.name[:40], "x": (it["cx"] + rx) * cell - pw * sc / 2,
+                           "y": (it["cy"] + ry) * cell - ph * sc / 2, "w": pw, "h": ph, "scale": sc,
+                           "rotation": it["rot"], "flip_h": bool(it.get("flip")), "flip_v": False,
+                           "layer_name": LAYER_DECOR, "snap": False, "opacity": 1.0, "level": g.index})
+            n_decor += 1
+        if no_art:
+            warnings.append("Symbol decor skipped for folders not in the library (import the Symbols ZIP): "
+                            + ", ".join(sorted(no_art)[:6]))
         if add_key:
             for e in res.key:
                 if e.get("level") == g.index and e.get("n") is not None:

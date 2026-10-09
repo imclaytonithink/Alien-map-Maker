@@ -1,0 +1,22 @@
+{
+ "_about": "Which Symbols-pack folders furnish which room functions, and how to place them. Edit freely.",
+ "tags": {
+  "cargo": ["Cargo", "Storage", "Ship's Locker"], "staterooms": ["Furniture, Consoles, & Equipment", "Ship's Locker"],
+  "crew_quarters": ["Furniture, Consoles, & Equipment", "Ship's Locker"], "barracks": ["Ship's Locker", "Furniture, Consoles, & Equipment"],
+  "medical": ["Medical", "Furniture, Consoles, & Equipment"], "lab": ["Lab", "Computer"], "office": ["Offices", "Computer"],
+  "workshop": ["Shop & Repair Area", "Machinery"], "engineering": ["Engineering", "Machinery", "Battery"],
+  "power": ["Battery", "Machinery"], "fuel": ["Fuel", "Machinery"], "galley": ["Galley & Mess", "Furniture, Consoles, & Equipment"],
+  "recreation": ["Lounge", "Furniture, Consoles, & Equipment"], "security": ["Brig & Security", "Ship's Locker"],
+  "brig": ["Brig & Security"], "weapons": ["Weaponry", "Ship's Locker"], "armory": ["Weaponry", "Ship's Locker"],
+  "bridge": ["Bridge", "Computer"], "sensors": ["Sensors", "Computer"], "comms": ["Computer", "Sensors"],
+  "lowberth": ["Low Berth"], "hangar": ["Dock, Small Craft", "Machinery", "Cargo"], "vehicle_bay": ["Dock, Small Craft", "Machinery"],
+  "waste": ["Utility", "Machinery"], "water": ["Utility", "Machinery"], "refinery": ["Machinery", "Fuel"],
+  "escape": ["Drop Capsule"], "multipurpose": ["Offices", "Cargo", "Furniture, Consoles, & Equipment"],
+  "passenger": ["Furniture, Consoles, & Equipment", "Lounge"], "concourse": ["Lounge", "Retail"], "hydroponics": []
+ },
+ "style": {
+  "default": "walls", "Lounge": "mixed", "Galley & Mess": "mixed", "Briefing Room": "center", "Offices": "mixed",
+  "Cargo": "walls", "Medical": "walls", "Lab": "walls", "Weaponry": "walls", "Ship's Locker": "walls"
+ },
+ "barricade": ["Cargo", "Ship's Locker", "Storage", "Furniture, Consoles, & Equipment"]
+}

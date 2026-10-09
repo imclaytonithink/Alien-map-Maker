@@ -29,6 +29,15 @@ Custom Tiles pack: `python -m geomorph --tiles <main pack> manifest --extra <cus
 Aerofins are always a mirrored pair. One bridge on the nose, one engineering on the tail (centre line).
 Hull sides always face outward. Secure zones are only entered through a checkpoint. Stairs/lifts sit at the same X/Y on every level.
 
+## Symbols (furniture, machinery, cargo...)
+`--decor` (or the Symbols box in the dialog) furnishes open rooms from the Symbols pack. The pack draws at 60 px
+per foot (300 px per grid square) with transparent padding, so each symbol's real size is its measured opaque box;
+nothing is ever stretched. Only enclosed room floor from `data/tile_floor.json` is used, so corridors stay clear and
+items go against the walls (tables in the middle). `data/symbol_map.json` says which folders furnish which room
+function. "Something bad happened" (`--incident struggle|ransacked|overrun`, `--incident-where all|overlay|random`)
+displaces and rotates items, adds debris, and for *overrun* barricaded doors, scorch/acid burns, resin and drag marks.
+Rebuild the symbol sizes with `symbols.build(<Symbols folder>)`.
+
 ## Archetypes
 Each `data/archetypes/*.json` is one site type; add a file (or use the editor) and it appears, no code change.
 

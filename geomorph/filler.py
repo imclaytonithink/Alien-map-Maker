@@ -25,7 +25,7 @@ VOID_C = (6, 8, 10, 255)
 WATER = (22, 60, 84, 255)
 ALERT = (240, 170, 60, 255)
 
-KINDS = ("building", "ground", "road", "wall", "fence", "tunnel", "rock", "void", "stairs", "lift",
+KINDS = ("scorch", "resin", "drag", "building", "ground", "road", "wall", "fence", "tunnel", "rock", "void", "stairs", "lift",
          "shaft", "door", "airlock", "dome", "walkway", "pad", "rubble", "pit",
          "water", "patch", "crate")
 
@@ -148,6 +148,22 @@ def draw_filler(d: ImageDraw.ImageDraw, kind: str, box, pps: float, rot: int = 0
         d.rectangle(box, fill=WATER)
     elif kind == "patch":
         d.rectangle(box, fill=LINE)
+    elif kind == "scorch":                # acid burn / scorch mark: dark blotch with a hot rim
+        d.ellipse(box, fill=(12, 10, 8, 235))
+        m = max(2, min(w, h) // 5)
+        d.ellipse((x0 + m, y0 + m, x1 - m, y1 - m), outline=(200, 110, 40, 255), width=max(1, lw))
+    elif kind == "resin":                 # organic residue: dark blobs with a sickly rim
+        d.ellipse(box, fill=(30, 36, 18, 235), outline=(150, 170, 60, 255), width=max(1, lw))
+        d.ellipse((x0 + w // 4, y0 + h // 4, x1 - w // 4, y1 - h // 4), fill=(50, 62, 24, 255))
+    elif kind == "drag":                  # drag marks: a smeared trail
+        horiz = w >= h
+        for k in (-1, 0, 1):
+            if horiz:
+                yy = (y0 + y1) // 2 + k * max(2, h // 4)
+                d.line((x0, yy, x1, yy), fill=(120, 40, 36, 255), width=max(1, lw))
+            else:
+                xx = (x0 + x1) // 2 + k * max(2, w // 4)
+                d.line((xx, y0, xx, y1), fill=(120, 40, 36, 255), width=max(1, lw))
     elif kind == "building":
         d.rectangle(box, fill=FILL_LIGHT, outline=LINE, width=lw * 2)
     elif kind == "crate":

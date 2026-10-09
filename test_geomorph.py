@@ -312,6 +312,95 @@ def check_ship_part_options():
     print("ship part options ok")
 
 
+def check_decor():
+    from geomorph import decor, symbols
+    syms = symbols.load()
+    assert len(syms) > 2000 and {"Medical", "Cargo", "Machinery", "Bridge"} <= {x.cat for x in syms.values()}
+    bed = [x for x in syms.values() if x.name.startswith("Bed 005")][0]
+    assert 5.5 / 5 < bed.w < 7.5 / 5 and 3 / 5 < bed.h < 4 / 5 or 5.5 / 5 < bed.h < 7.5 / 5, (bed.w, bed.h)  # a bed is ~6.4 x 3.4 ft
+    items = [x for x in syms.values() if x.role == "item"]
+    assert items and all(max(x.w, x.h) <= symbols.ITEM_MAX_SQ for x in items), "items stay small"
+    base = {"kind": "ship", "ship_type": "Military", "tonnage": 2500, "seed": 3}
+    plain = pipeline.generate(REG, dict(base, decor={"enabled": True, "density": 0.9}))
+    assert plain.decor, "decor placed"
+    floors = decor.tile_floors()
+    for it in plain.decor:
+        s = syms[it["sym"]]
+        g = plain.grids[it["level"]]
+        w, h = (s.h, s.w) if it["rot"] % 180 else (s.w, s.h)
+        host = [p for p in g.placed if p.x <= it["cx"] <= p.x + p.w and p.y <= it["cy"] <= p.y + p.h]
+        assert host, "item sits on a tile"
+        p = host[0]
+        assert p.x - 1e-6 <= it["cx"] - w / 2 and it["cx"] + w / 2 <= p.x + p.w + 1e-6, "inside the tile (real size)"
+        assert p.y - 1e-6 <= it["cy"] - h / 2 and it["cy"] + h / 2 <= p.y + p.h + 1e-6
+        assert max(s.w, s.h) <= 2.5 and it["kind"] == "item"
+        assert it["zone"] == p.zone and p.tile.id in floors
+    # nothing overlaps in a tidy room, items are never rotated off-grid
+    boxes = []
+    for it in plain.decor:
+        s = syms[it["sym"]]
+        w, h = (s.h, s.w) if it["rot"] % 180 else (s.w, s.h)
+        assert it["rot"] % 90 == 0
+        boxes.append((it["level"], it["cx"] - w / 2, it["cy"] - h / 2, it["cx"] + w / 2, it["cy"] + h / 2))
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            assert not (a[0] == b[0] and a[1] < b[3] - 1e-6 and b[1] < a[3] - 1e-6 and a[2] < b[4] - 1e-6 and b[2] < a[4] - 1e-6), "tidy items do not overlap"
+    again = pipeline.generate(REG, dict(base, decor={"enabled": True, "density": 0.9}))
+    assert again.decor == plain.decor, "deterministic by seed"
+    assert not pipeline.generate(REG, base).decor if hasattr(pipeline.generate(REG, base), "decor") else True
+    # something bad happened: displaced/rotated items, debris, and (overrun) barricades, burns and resin
+    mess = {}
+    for inc in ("struggle", "ransacked", "overrun"):
+        r = pipeline.generate(REG, dict(base, decor={"enabled": True, "density": 0.9, "incident": inc, "where": "all"}))
+        extra = [f for g in r.grids for f in g.filler if f.get("decor")]
+        mess[inc] = (r, extra)
+        assert any(f["kind"] == "rubble" for f in extra), inc
+    assert any(f["kind"] in ("scorch", "resin", "drag") for f in mess["overrun"][1])
+    assert not any(f["kind"] in ("resin", "drag") for f in mess["struggle"][1])
+    assert sum(1 for it in mess["overrun"][0].decor if it.get("disturbed")) > 0
+    assert any(it["rot"] % 90 for it in mess["ransacked"][0].decor) or any(it["rot"] % 90 for it in mess["overrun"][0].decor)
+    assert len(mess["overrun"][0].decor) <= len(plain.decor) + 12, "items go missing rather than multiply"
+    # where: only zones with an active overlay
+    hot = pipeline.generate(REG, dict(base, overlays=["lockdown"], intensity=0.4,
+                                      decor={"enabled": True, "density": 0.9, "incident": "overrun", "where": "overlay"}))
+    zones_hot = set(hot.overlays.get("lockdown", [])) | {m.get("zone") for m in hot.markers if m.get("type") in ("threat", "breach", "damage")} | set(hot.overlays.get("quarantine", [])) | set(hot.overlays.get("power_failure", []))
+    for g in hot.grids:
+        for f in g.filler:
+            if f.get("decor") and f["kind"] in ("scorch", "resin", "drag"):
+                host = [p for p in g.placed if p.x <= f["x"] <= p.x + p.w and p.y <= f["y"] <= p.y + p.h]
+                assert host and host[0].zone in zones_hot, "incident only in overlay zones"
+    # room function picks the folders: a medical tile gets Medical items, cargo gets crates/lockers
+    from geomorph.decor import _categories
+    assert "Medical" in _categories(REG.tiles[REG.with_tag("medical", "standard")[0].id])
+    assert set(_categories(REG.tiles[REG.with_tag("cargo", "standard")[0].id])) & {"Cargo", "Storage", "Ship's Locker"}
+    # save / load keeps the decor
+    pkg = exporter.to_package(mess["overrun"][0])
+    back = exporter.load_layout(pkg, REG)
+    assert back.decor == mess["overrun"][0].decor and back.symbols
+    # canvas export: symbols become pieces at the right scale, rotated about their own centre
+    from geomorph import canvas_export
+    class A:
+        def __init__(self, path, w, h): self.path, self.width, self.height = path, w, h
+    lib = [A("Syms/" + s.rel.rsplit("/", 1)[-1], s.px[0], s.px[1]) for s in syms.values()]
+    out = canvas_export.to_canvas(plain, 70, canvas_export.library_resolver(lib), None, None, add_key=False)
+    dec = [d for lv in out["levels"] for d in lv["pieces"] if d["layer_name"] == canvas_export.LAYER_DECOR]
+    assert len(dec) == len(plain.decor)
+    for d, it in zip(dec, plain.decor):
+        s = syms[it["sym"]]
+        assert abs(d["scale"] * 300 - 70) < 1e-9, "one square is 300 px of symbol art"
+        # the visible content centre lands on (cx, cy)
+        import math
+        a = math.radians(d["rotation"])
+        dx = ((s.bbox[0] + s.bbox[2]) / 2 - s.px[0] / 2) * d["scale"]
+        dy = ((s.bbox[1] + s.bbox[3]) / 2 - s.px[1] / 2) * d["scale"]
+        if d["flip_h"]:
+            dx = -dx
+        ccx = d["x"] + s.px[0] * d["scale"] / 2 + dx * math.cos(a) - dy * math.sin(a)
+        ccy = d["y"] + s.px[1] * d["scale"] / 2 + dx * math.sin(a) + dy * math.cos(a)
+        assert abs(ccx - it["cx"] * 70) < 1e-6 and abs(ccy - it["cy"] * 70) < 1e-6
+    print("decor ok:", len(plain.decor), "items;", {k: len(v[1]) for k, v in mess.items()}, "incident marks")
+
+
 def check_archetype_files():
     assert len(ARCH) >= 25, len(ARCH)
     groups = {a["group"] for a in ARCH.values()}
@@ -640,6 +729,7 @@ def main():
     check_placement()
     check_ships()
     check_ship_part_options()
+    check_decor()
     check_archetype_files()
     check_sites()
     check_vertical_alignment()
