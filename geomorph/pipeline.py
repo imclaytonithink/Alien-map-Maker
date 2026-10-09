@@ -140,6 +140,8 @@ def finish(res: Result, rng, o, arch, table, cond_default, theme) -> Result:
     dressing.build_section(res)
     dressing.build_text(res, rng, arch, theme, res.meta["name"])
     res.issues = validate.validate(res, arch)
+    from . import quality
+    res.quality = quality.assess(res)
     return res
 
 

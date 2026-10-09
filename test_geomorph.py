@@ -1030,6 +1030,31 @@ def check_keyed_notes_and_rerolls():
     print("keyed notes, player leak check and level re-roll ok")
 
 
+def check_quality():
+    from geomorph import quality
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="ship", seed="q1", tonnage=2000, decor={"enabled": True}))
+    q = res.quality
+    assert 0 <= q["score"] <= 100 and q["label"] and q["rooms"] > 5
+    assert not q["unreachable"], "wings are hull pieces, not unreachable rooms"
+    assert q["furnished_pct"] is None or 0 <= q["furnished_pct"] <= 100
+    assert "dead end" in quality.summary(q) and "unreachable" in quality.summary(q)
+    # a room cut off from the rest is reported and costs the most
+    res2 = pipeline.generate(reg, dict(kind="site", seed="q2", archetype="Research facility", scale="medium"))
+    base = quality.assess(res2)
+    victim = next(z for z in res2.zones if z != quality.validate.entrance_zone_id(res2)
+                  and any(p.zone == z and p.tile.type == "standard" for g in res2.grids for p in g.placed))
+    res2.links = [l for l in res2.links if victim not in (l.get("a"), l.get("b"))]
+    cut = quality.assess(res2)
+    assert victim in cut["unreachable_ids"] and cut["score"] < base["score"], (cut["score"], base["score"])
+    # decor off: no furnishing figure; decor on: a percentage and outdoor count for sites
+    assert base["furnished_pct"] is None and not base["decor_on"]
+    res3 = pipeline.generate(reg, dict(kind="site", seed="q3", archetype="Frontier colony outpost", scale="medium",
+                                       environment="breathable", decor={"enabled": True, "exterior": True}))
+    assert res3.quality["decor_on"] and res3.quality["outdoor"] > 0 and res3.quality["furnished_pct"] is not None
+    print("quality panel numbers ok")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1052,6 +1077,7 @@ def main():
     check_condition_and_text()
     check_reroll_and_gaps()
     check_keyed_notes_and_rerolls()
+    check_quality()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")

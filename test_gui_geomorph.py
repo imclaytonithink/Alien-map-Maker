@@ -284,6 +284,14 @@ assert "GM ONLY" not in str(pk) and pk["key"][0]["text"] == "A quiet corridor."
 assert "GM ONLY" in str(_ex.to_package(res, gm=True))
 dlg._preview_clicked(int((cand.x + 1 - bx0) * 8), int(24 + (cand.y + 1 - by0) * 8))
 assert dlg.lst_notes.currentRow() >= 0
+# map check panel: score colour, summary, refreshes after a re-roll; preview can hide the furniture
+assert dlg.lbl_score.text().isdigit() and "dead end" in dlg.lbl_quality.text()
+score_before = dlg.lbl_score.text()
+dlg._reroll_all()
+assert dlg.lbl_score.text().isdigit()
+dlg.ck_show_decor.setChecked(False)
+assert not dlg.preview.pixmap().isNull()
+dlg.ck_show_decor.setChecked(True)
 # gap warning label follows the result
 res.gaps = {"Test zone": "no tile"}
 dlg._generated(res, None)

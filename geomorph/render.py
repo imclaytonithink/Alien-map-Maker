@@ -132,7 +132,7 @@ def shared_bounds(res, margin=3):
 
 
 def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=True,
-                 bounds=None, title=True, shared=True) -> Image.Image:
+                 bounds=None, title=True, shared=True, decor=True) -> Image.Image:
     g = res.grids[level_index]
     x0, y0, x1, y1 = bounds or (shared_bounds(res) if shared else level_bounds(res, level_index))
     W, H = int((x1 - x0) * pps), int((y1 - y0) * pps)
@@ -176,10 +176,11 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
         _draw_craft(res, p, layer, images, x0, y0, pps)
     d = ImageDraw.Draw(layer)
     for f in g.filler:                      # incident marks (debris, burns, resin, drag trails) sit on top of the tiles
-        if f.get("decor"):
+        if f.get("decor") and decor:
             box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
             F.draw_filler(d, f["kind"], box, pps, f.get("rot", 0), "")
-    _draw_decor(res, g, layer, images, x0, y0, pps)
+    if decor:
+        _draw_decor(res, g, layer, images, x0, y0, pps)
     d = ImageDraw.Draw(layer)
     for f in g.filler:
         if f["kind"] in TOP_KINDS or f["kind"] == "void":

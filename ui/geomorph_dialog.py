@@ -399,9 +399,13 @@ class GeomorphDialog(QDialog):
         self.ck_gm = QCheckBox("GM view")
         self.ck_gm.setChecked(True)
         self.ck_gm.toggled.connect(lambda _c: self._show_level())
+        self.ck_show_decor = QCheckBox("Furniture & outdoors")
+        self.ck_show_decor.setChecked(True)
+        self.ck_show_decor.setToolTip("Show the symbols and outdoor features in the preview, or the bare layout.")
+        self.ck_show_decor.toggled.connect(lambda _c: self._show_level())
         self.ck_live = QCheckBox("Live preview")
         self.ck_live.setToolTip("Regenerate automatically a moment after any option changes.")
-        for wdg in (self.btn_gen, self.btn_regen, self.ck_live, QLabel("Level"), self.cb_level, self.ck_gm):
+        for wdg in (self.btn_gen, self.btn_regen, self.ck_live, QLabel("Level"), self.cb_level, self.ck_gm, self.ck_show_decor):
             top.addWidget(wdg)
         top.addStretch(1)
         right.addLayout(top)
@@ -472,6 +476,17 @@ class GeomorphDialog(QDialog):
         for wdg in (self.btn_place, self.btn_export, self.btn_save, self.btn_load, b_edge, b_close):
             row.addWidget(wdg)
         right.addLayout(row)
+        self.box_check = QGroupBox("Map check")
+        hc = QHBoxLayout(self.box_check)
+        self.lbl_score = QLabel("–")
+        self.lbl_score.setMinimumWidth(64)
+        self.lbl_score.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_score.setStyleSheet("font-size: 26px; font-weight: bold;")
+        self.lbl_quality = QLabel("")
+        self.lbl_quality.setWordWrap(True)
+        hc.addWidget(self.lbl_score)
+        hc.addWidget(self.lbl_quality, 1)
+        right.addWidget(self.box_check)
         self.lbl_gaps = QLabel("")
         self.lbl_gaps.setWordWrap(True)
         self.lbl_gaps.setStyleSheet("color: #f0b040;")
@@ -634,7 +649,7 @@ class GeomorphDialog(QDialog):
         self._live_timer.setSingleShot(True)
         self._live_timer.setInterval(600)
         self._live_timer.timeout.connect(self._live_fire)
-        skip = {self.cb_level, self.ck_gm, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
+        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
         for w in self.findChildren(QWidget):
             if w in skip or w.parent() is None:
                 continue
@@ -742,8 +757,30 @@ class GeomorphDialog(QDialog):
                 for g in self.result.grids)
         self._after_reroll(f"{n} tile(s) changed; locked tiles kept.")
 
+    def _update_quality(self):
+        from geomorph import quality
+        res = self.result
+        if res is None:
+            return
+        q = res.quality = quality.assess(res)
+        color = "#5fd38d" if q["score"] >= 85 else "#f0b040" if q["score"] >= 65 else "#ff6b6b"
+        self.lbl_score.setText(str(q["score"]))
+        self.lbl_score.setStyleSheet(f"font-size: 26px; font-weight: bold; color: {color};")
+        lines = [quality.summary(q)]
+        if q["unreachable"]:
+            lines.append("Unreachable: " + ", ".join(q["unreachable"][:5]) + (" …" if len(q["unreachable"]) > 5 else ""))
+        if q["dead_ends"]:
+            lines.append("Dead ends (corridors or hubs that lead nowhere): " + ", ".join(q["dead_ends"][:5])
+                         + (" …" if len(q["dead_ends"]) > 5 else ""))
+        if q["variety_pct"] < 70:
+            lines.append(f"Only {q['variety_pct']}% of the tiles are different from each other.")
+        self.lbl_quality.setText("\n".join(lines))
+        self.lbl_quality.setToolTip("Score starts at 100. Unreachable rooms cost the most, then dead ends, known issues, "
+                                    "zones with no tile, low furnishing and repeated tiles.")
+
     def _after_reroll(self, text):
         self._prerender(self.result)
+        self._update_quality()
         self._show_level()
         self.lbl_status.setText(text)
 
@@ -865,10 +902,9 @@ class GeomorphDialog(QDialog):
         """Render every level (and fill the thumbnail cache) off the UI thread."""
         from geomorph import render
         res._previews = {}
-        gm = True
         for g in res.grids:
-            res._previews[(g.index, True)] = render.render_level(res, g.index, self.images, pps=8, gm=True)
-            res._previews[(g.index, False)] = render.render_level(res, g.index, self.images, pps=8, gm=False)
+            res._previews[(g.index, True, True)] = render.render_level(res, g.index, self.images, pps=8, gm=True)
+            res._previews[(g.index, False, True)] = render.render_level(res, g.index, self.images, pps=8, gm=False)
 
     def _generated(self, res, err):
         if err:
@@ -891,6 +927,7 @@ class GeomorphDialog(QDialog):
             self.cb_zone.addItem(f"{z.name} ({zid})", zid)
         self._zone_changed()
         self._fill_text()
+        self._update_quality()
         self._enable(True)
         if res.gaps:
             names = ", ".join(list(res.gaps)[:6]) + (" …" if len(res.gaps) > 6 else "")
@@ -915,10 +952,15 @@ class GeomorphDialog(QDialog):
         res = self.result
         if res is None:
             return
-        pv = getattr(res, "_previews", {}).get((self.level_index, self.ck_gm.isChecked()))
+        key = (self.level_index, self.ck_gm.isChecked(), self.ck_show_decor.isChecked())
+        previews = getattr(res, "_previews", None)
+        if previews is None:
+            previews = res._previews = {}
+        pv = previews.get(key)
         if pv is None:
             from geomorph import render
-            pv = render.render_level(res, self.level_index, self.images, pps=8, gm=self.ck_gm.isChecked())
+            pv = previews[key] = render.render_level(res, self.level_index, self.images, pps=8,
+                                                     gm=key[1], decor=key[2])
         pv = self._mark_tiles(pv)
         self.preview.setPixmap(pil_to_pixmap(pv))
         self.preview.resize(pv.size[0], pv.size[1])
@@ -974,6 +1016,7 @@ class GeomorphDialog(QDialog):
         import random
         ok = pipeline.reroll_zone(res, zid, seed=random.random())
         self._prerender(res)
+        self._update_quality()
         self._show_level()
         self.lbl_status.setText("Zone re-rolled." if ok else "No other tile fits that zone here.")
 
