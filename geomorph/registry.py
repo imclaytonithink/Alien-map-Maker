@@ -323,6 +323,45 @@ class Registry:
                     out.append((t, s))
         return sorted(out, key=lambda p: p[0].id)
 
+    def tall_pairs(self, w=20, h=20):
+        """[(lower, upper)] tiles that are the two floors of one double-height room.
+
+        The pack names them "... - Lower" / "... - Upper" (or "Lower Deck" / "Upper Deck"); a pair shares
+        its base title, size and type. Several variants of one room pair up in id order."""
+        import re
+        def base(t):
+            return re.sub(r"\b(lower|upper|deck)\b|[-&]", " ", t.title.lower()).split()
+        groups = {}
+        for t in self.tiles.values():
+            if t.type != "standard" or (t.w, t.h) != (w, h) or t.mirror_of:
+                continue
+            name = t.title.lower()
+            kind = "lower" if "lower" in name else "upper" if "upper" in name else ""
+            if kind:
+                groups.setdefault(" ".join(base(t)), {"lower": [], "upper": []})[kind].append(t)
+        out = []
+        for g in groups.values():
+            lo = sorted(g["lower"], key=lambda t: t.id)
+            up = sorted(g["upper"], key=lambda t: t.id)
+            out.extend(zip(lo, up))
+        return out
+
+    def pick_tall_pair(self, tags, rng, wanted=None, w=20, h=20):
+        """A (lower, upper) pair whose function fits ``tags`` (or that ``wanted`` names by tile number), or None."""
+        scored = []
+        for lo, up in self.tall_pairs(w, h):
+            if wanted and (lo.number in wanted or lo.id in wanted):
+                scored.append((10.0, lo, up))
+                continue
+            score = sum(min(lo.tags.get(t, 0), up.tags.get(t, 0)) for t in tags)
+            if score >= 0.9:
+                scored.append((score, lo, up))
+        if not scored:
+            return None
+        weights = [sc for sc, _l, _u in scored]
+        _sc, lo, up = rng.choices(scored, weights=weights, k=1)[0]
+        return lo, up
+
     def by_type(self, ttype):
         return [t for t in self.tiles.values() if t.type == ttype]
 

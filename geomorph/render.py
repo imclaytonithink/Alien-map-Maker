@@ -131,8 +131,73 @@ def shared_bounds(res, margin=3):
     return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
 
 
+def _blit_tile(layer, d, p, images, res, x0, y0, pps, px, craft=True):
+    """Draw one placed tile (image, orientation, border) onto ``layer``."""
+    th = images.thumb(p.tile)
+    bx0, by0 = px(p.x, x0), px(p.y, y0)
+    if th is None:
+        d.rectangle((bx0, by0, px(p.x + p.w, x0), px(p.y + p.h, y0)), fill=F.FILL, outline=F.LINE)
+        d.text((bx0 + 3, by0 + 3), p.tile.id, fill=F.LINE)
+        return d
+    t = th
+    scale = pps / THUMB_PPS
+    if abs(scale - 1) > 1e-6:
+        t = t.resize((max(1, int(t.width * scale)), max(1, int(t.height * scale))), Image.LANCZOS)
+    if p.o.mirror:
+        t = t.transpose(Image.FLIP_LEFT_RIGHT)
+    if p.o.rot:
+        t = t.transpose({90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[p.o.rot])
+    border = int(BORDER_SQUARES * pps)
+    if p.tile.bbox:
+        ox, oy, _w, _h = p.tile.image_geometry(p.o.rot, p.o.mirror)
+        _paste_clipped(layer, t, bx0 - int(ox * pps), by0 - int(oy * pps))
+        return d
+    layer.alpha_composite(t, (bx0 - border, by0 - border)) if bx0 - border >= 0 and by0 - border >= 0 \
+        else _paste_clipped(layer, t, bx0 - border, by0 - border)
+    if craft:
+        _draw_craft(res, p, layer, images, x0, y0, pps)
+    return d
+
+
+def _draw_overlooks(res, g, layer, images, x0, y0, pps, px):
+    """Upper level of a tall room: a dimmed view of the room below behind a railing."""
+    lay = res.layout
+    if lay is None:
+        return
+    for f in g.filler:
+        if f["kind"] != "void":
+            continue
+        vol = next((v for v in lay.volumes if (v["x"], v["y"]) == (f["x"], f["y"]) and v["level"] != g.index), None)
+        if vol is None:
+            continue
+        low = res.grids[vol["level"]]
+        room = next((p for p in low.placed if p.x == f["x"] and p.y == f["y"]), None)
+        box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
+        bw, bh = box[2] - box[0], box[3] - box[1]
+        crop = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        if room is not None:                # draw the room below with its corner at this box's corner
+            _blit_tile(crop, ImageDraw.Draw(crop), room, images, res, f["x"], f["y"], pps, px, craft=False)
+        dark = Image.new("RGBA", crop.size, F.VOID_C)
+        dark.alpha_composite(Image.blend(Image.new("RGBA", crop.size, (0, 0, 0, 0)), crop, 0.55))
+        layer.paste(dark, box[:2])
+        d = ImageDraw.Draw(layer)
+        inset = max(2, int(pps * 0.35))
+        rail = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
+        d.rectangle(rail, outline=F.ALERT, width=max(2, int(pps * 0.12)))
+        step = max(int(pps * 2), 8)
+        r = max(1, int(pps * 0.16))
+        for xx in range(rail[0], rail[2] + 1, step):
+            for yy in (rail[1], rail[3]):
+                d.ellipse((xx - r, yy - r, xx + r, yy + r), fill=F.ALERT)
+        for yy in range(rail[1], rail[3] + 1, step):
+            for xx in (rail[0], rail[2]):
+                d.ellipse((xx - r, yy - r, xx + r, yy + r), fill=F.ALERT)
+        d.text((box[0] + inset * 2, box[1] + inset * 2), f"Open to below: {vol['name']}"[:44], fill=F.ALERT,
+               font=_font(max(8, int(pps * 0.55))))
+
+
 def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=True,
-                 bounds=None, title=True, shared=True) -> Image.Image:
+                 bounds=None, title=True, shared=True, decor=True) -> Image.Image:
     g = res.grids[level_index]
     x0, y0, x1, y1 = bounds or (shared_bounds(res) if shared else level_bounds(res, level_index))
     W, H = int((x1 - x0) * pps), int((y1 - y0) * pps)
@@ -152,36 +217,21 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
     if hasattr(images, "prefetch"):
         images.prefetch([p.tile for p in g.placed])
     for p in g.placed:
-        th = images.thumb(p.tile)
-        bx0, by0 = px(p.x, x0), px(p.y, y0)
-        if th is None:
-            d.rectangle((bx0, by0, px(p.x + p.w, x0), px(p.y + p.h, y0)), fill=F.FILL, outline=F.LINE)
-            d.text((bx0 + 3, by0 + 3), p.tile.id, fill=F.LINE)
-            continue
-        t = th
-        scale = pps / THUMB_PPS
-        if abs(scale - 1) > 1e-6:
-            t = t.resize((max(1, int(t.width * scale)), max(1, int(t.height * scale))), Image.LANCZOS)
-        if p.o.mirror:
-            t = t.transpose(Image.FLIP_LEFT_RIGHT)
-        if p.o.rot:
-            t = t.transpose({90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[p.o.rot])
-        border = int(BORDER_SQUARES * pps)
-        if p.tile.bbox:
-            ox, oy, _w, _h = p.tile.image_geometry(p.o.rot, p.o.mirror)
-            _paste_clipped(layer, t, bx0 - int(ox * pps), by0 - int(oy * pps))
-            continue
-        layer.alpha_composite(t, (bx0 - border, by0 - border)) if bx0 - border >= 0 and by0 - border >= 0 \
-            else _paste_clipped(layer, t, bx0 - border, by0 - border)
-        _draw_craft(res, p, layer, images, x0, y0, pps)
+        d = _blit_tile(layer, d, p, images, res, x0, y0, pps, px)
     d = ImageDraw.Draw(layer)
     for f in g.filler:                      # incident marks (debris, burns, resin, drag trails) sit on top of the tiles
-        if f.get("decor"):
+        if f.get("decor") and decor:
             box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
             F.draw_filler(d, f["kind"], box, pps, f.get("rot", 0), "")
-    _draw_decor(res, g, layer, images, x0, y0, pps)
+    if decor:
+        _draw_decor(res, g, layer, images, x0, y0, pps)
+    _draw_overlooks(res, g, layer, images, x0, y0, pps, px)
     d = ImageDraw.Draw(layer)
+    overlooked = {(v["x"], v["y"]) for v in (res.layout.volumes if res.layout is not None else [])
+                  if v["level"] != g.index}
     for f in g.filler:
+        if f["kind"] == "void" and (f["x"], f["y"]) in overlooked:
+            continue
         if f["kind"] in TOP_KINDS or f["kind"] == "void":
             box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
             F.draw_filler(d, f["kind"], box, pps, f.get("rot", 0), f.get("label", "") if f["kind"] in ("void", "airlock") else "")

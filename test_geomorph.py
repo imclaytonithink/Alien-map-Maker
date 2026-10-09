@@ -505,8 +505,13 @@ def check_decor_stays_indoors():
                     x0, y0 = (it["cx"] - w / 2 - p.x) * 2, (it["cy"] - h / 2 - p.y) * 2
                     xs = range(int(x0 + 1e-3), int(x0 + w * 2 - 1e-3) + 1)
                     ys = range(int(y0 + 1e-3), int(y0 + h * 2 - 1e-3) + 1)
+                    hall_rects = floors.hall_bands(grid) if it.get("hall") else []
                     for y in ys:
                         for x in xs:
+                            if it.get("hall"):          # a big open hall: only the strips along its walls
+                                assert any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in hall_rects), \
+                                    (name, s.name, "hall item outside the wall strips")
+                                continue
                             assert 0 <= y < len(grid) and 0 <= x < len(grid[0]) and grid[y][x] in allowed, \
                                 (name, s.name, grid[y][x] if 0 <= y < len(grid) and 0 <= x < len(grid[0]) else "off tile")
                     total += 1
@@ -790,9 +795,12 @@ def check_vertical_alignment():
         for vol in res.layout.volumes:
             found = True
             for k in range(1, vol["height"]):
+                g = res.grids[vol["level"] - k]
+                if vol.get("paired") and k == vol["height"] - 1:      # a real upper floor instead of a void
+                    assert any(p.tile.id == vol["upper_tile"] and (p.x, p.y) == (vol["x"], vol["y"]) for p in g.placed)
+                    continue
                 assert any(s.level == vol["level"] - k and (s.x, s.y) == (vol["x"], vol["y"]) and s.reserved == "void"
                            for s in res.layout.slots)
-                g = res.grids[vol["level"] - k]
                 assert any(f["kind"] == "void" and (f["x"], f["y"]) == (vol["x"], vol["y"]) for f in g.filler)
     assert found, "prison observation deck volume appears"
     print("vertical alignment ok")
@@ -1030,6 +1038,97 @@ def check_keyed_notes_and_rerolls():
     print("keyed notes, player leak check and level re-roll ok")
 
 
+def check_quality():
+    from geomorph import quality
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="ship", seed="q1", tonnage=2000, decor={"enabled": True}))
+    q = res.quality
+    assert 0 <= q["score"] <= 100 and q["label"] and q["rooms"] > 5
+    assert not q["unreachable"], "wings are hull pieces, not unreachable rooms"
+    assert q["furnished_pct"] is None or 0 <= q["furnished_pct"] <= 100
+    assert "dead end" in quality.summary(q) and "unreachable" in quality.summary(q)
+    # a room cut off from the rest is reported and costs the most
+    res2 = pipeline.generate(reg, dict(kind="site", seed="q2", archetype="Research facility", scale="medium"))
+    base = quality.assess(res2)
+    victim = next(z for z in res2.zones if z != quality.validate.entrance_zone_id(res2)
+                  and any(p.zone == z and p.tile.type == "standard" for g in res2.grids for p in g.placed))
+    res2.links = [l for l in res2.links if victim not in (l.get("a"), l.get("b"))]
+    cut = quality.assess(res2)
+    assert victim in cut["unreachable_ids"] and cut["score"] < base["score"], (cut["score"], base["score"])
+    # decor off: no furnishing figure; decor on: a percentage and outdoor count for sites
+    assert base["furnished_pct"] is None and not base["decor_on"]
+    res3 = pipeline.generate(reg, dict(kind="site", seed="q3", archetype="Frontier colony outpost", scale="medium",
+                                       environment="breathable", decor={"enabled": True, "exterior": True}))
+    assert res3.quality["decor_on"] and res3.quality["outdoor"] > 0 and res3.quality["furnished_pct"] is not None
+    print("quality panel numbers ok")
+
+
+def check_overlooks():
+    """A tall room's upper floor: the matching 'Upper' tile on the level above, same spot and facing, joined by a
+    vertical link; rooms with no matching pair fall back to a railed overlook with a key entry."""
+    from geomorph import render
+    reg = Registry.load()
+    found_pair = found_fallback = None
+    for arch in ("Terraforming / atmosphere processor", "Prison / penal colony", "Research facility"):
+        for sd in range(8):
+            r = pipeline.generate(reg, dict(kind="site", seed=sd, archetype=arch, scale="large"))
+            for v in r.layout.volumes:
+                if v.get("paired") and found_pair is None:
+                    found_pair = (r, v)
+                if not v.get("paired") and found_fallback is None:
+                    found_fallback = (r, v)
+    assert found_pair is not None, "an archetype whose tall room gets a real upper floor"
+    res, v = found_pair
+    lower = [p for p in res.grids[v["level"]].placed if (p.x, p.y) == (v["x"], v["y"])]
+    upper = [p for p in res.grids[v["upper_level"]].placed if (p.x, p.y) == (v["x"], v["y"])]
+    assert len(lower) == 1 and len(upper) == 1, "one tile on each of the two floors"
+    assert lower[0].tile.id == v["lower_tile"] and upper[0].tile.id == v["upper_tile"]
+    assert (lower[0].o.rot, lower[0].o.mirror) == (upper[0].o.rot, upper[0].o.mirror), "same facing on both floors"
+    pairs = {(a.id, b.id) for a, b in reg.tall_pairs()}
+    assert (v["lower_tile"], v["upper_tile"]) in pairs
+    assert any({l["a"], l["b"]} == {lower[0].zone, upper[0].zone} and l["state"] == "vertical" for l in res.links), \
+        "the two floors are joined by stairs"
+    assert any(e["zone"] == upper[0].zone for e in res.key), "the upper floor is keyed as its own room"
+    assert not [i for i in res.issues if "tall room" in i], res.issues
+    assert not any(e["title"].startswith("Overlook") and e["level"] == v["upper_level"] for e in res.key)
+    from geomorph import quality
+    assert upper[0].zone in quality.assess(res)["unreachable_ids"] or True
+    reach_bad = [z for z in quality.assess(res)["unreachable_ids"]]
+    assert upper[0].zone not in reach_bad and lower[0].zone not in reach_bad, "both floors are reachable"
+    if found_fallback is not None:                       # no matching pair: railed void with a key entry
+        r2, v2 = found_fallback
+        for lvl in range(v2["level"] - v2.get("height", 2) + 1, v2["level"]):
+            assert any(e["level"] == lvl and e["title"].startswith("Overlook") for e in r2.key), "overlook key entry"
+    images = render.TileImages(None)
+    for g in res.grids:
+        render.render_level(res, g.index, images, pps=6)
+    print("tall rooms ok: pair", v["lower_tile"], "->", v["upper_tile"])
+
+
+def check_hall_decor():
+    """Big open halls (promenade, command centre...) get furniture along their walls, never in the middle,
+    and never on campuses or streets where an open area may be a yard."""
+    from geomorph import decor, floors
+    F = decor.tile_floors()
+    hall_items = 0
+    for name in ("Space station (ring / spindle / cylinder / modular)", "Research facility", "Prison / penal colony",
+                 "Spaceport / starport", "Military base / garrison"):
+        for seed in range(1, 9):
+            res = pipeline.generate(REG, {"kind": "site", "archetype": name, "scale": "large", "seed": seed,
+                                          "decor": {"enabled": True, "density": 0.9}}, ARCH)
+            halls = [i for i in res.decor if i.get("hall")]
+            if res.layout.topology in ("street", "campus"):
+                assert not halls, "no hall decor outdoors"
+            for it in halls:
+                p = next(q for q in res.grids[it["level"]].placed if (q.x, q.y, q.tile.id) == (it["tx"], it["ty"], it["tile"]))
+                grid = floors.transform(floors.decode(F[p.tile.id]), p.o.rot, p.o.mirror)
+                assert not floors.free_rects(grid, chars=(".", "r")), "only halls with no normal free floor"
+                assert floors.hall_bands(grid), "strips exist"
+                hall_items += 1
+    assert hall_items > 0, "some hall got furnished along its walls"
+    print("hall decor ok:", hall_items, "items")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1039,6 +1138,7 @@ def main():
     check_ship_part_options()
     check_decor()
     check_decor_stays_indoors()
+    check_hall_decor()
     check_walkways_and_exteriors()
     check_exterior_and_cargo()
     check_grouping_and_smart_decor()
@@ -1052,6 +1152,8 @@ def main():
     check_condition_and_text()
     check_reroll_and_gaps()
     check_keyed_notes_and_rerolls()
+    check_quality()
+    check_overlooks()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")

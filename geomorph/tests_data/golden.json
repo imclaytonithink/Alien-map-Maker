@@ -72,9 +72,9 @@
   "tiles": 6
  },
  "site lab": {
-  "decor": 41,
-  "filler": 61,
-  "hash": "8fa1ab0a1fac412f",
+  "decor": 55,
+  "filler": 82,
+  "hash": "2d669f0abbb1c8db",
   "issues": 0,
   "key": 14,
   "levels": 2,
@@ -82,19 +82,19 @@
  },
  "site mine": {
   "decor": 95,
-  "filler": 15,
-  "hash": "db07ce4c1d2ff77d",
+  "filler": 18,
+  "hash": "f4a6e164de51b3d6",
   "issues": 0,
   "key": 10,
   "levels": 4,
   "tiles": 9
  },
  "site prison": {
-  "decor": 61,
-  "filler": 255,
-  "hash": "5ac7f78716b6e341",
+  "decor": 150,
+  "filler": 254,
+  "hash": "5a5fa834e2fa1f01",
   "issues": 0,
-  "key": 37,
+  "key": 38,
   "levels": 4,
   "tiles": 35
  },

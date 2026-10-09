@@ -183,6 +183,11 @@
     "zone": "core",
     "height": 2,
     "open_below": false
+   },
+   {
+    "zone": "cooling",
+    "height": 2,
+    "open_below": true
    }
   ]
  },

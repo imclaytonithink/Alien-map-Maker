@@ -214,6 +214,16 @@ def build_key(res, rng, arch=None):
                         "title": "Stairs, lifts and shafts" if v["kind"] != "shaft" else "Main shaft",
                         "text": "Stairs and lifts line up in the same position on every level: "
                                 + ", ".join(res.grids[i].name for i in v["levels"]) + ".", "zone": "", "tile": ""})
+        for v in lay.volumes:                # the railed drop on the level(s) above a double-height room
+            for lvl in range(v["level"] - int(v.get("height", 2)) + 1, v["level"]):
+                if v.get("paired") and lvl == v.get("upper_level"):
+                    continue                  # that level has the room's real upper floor, keyed as its own room
+                n += 1
+                key.append({"n": n, "level": lvl, "x": v["x"] + 10.0, "y": v["y"] + 10.0,
+                            "title": f"Overlook: {v['name']}",
+                            "text": f"A railed opening above the {v['name']} on {res.grids[v['level']].name}. Anyone here can see, "
+                                    "talk and shoot down into the room. Getting down means the stairs, a rope or a fall.",
+                            "player": f"A railed opening looking down into the {v['name']}.", "zone": "", "tile": ""})
         shafts = [m for m in lay.markers if m["type"] == "shaft" and m.get("name") != "Main shaft"]
         if shafts:
             n += 1

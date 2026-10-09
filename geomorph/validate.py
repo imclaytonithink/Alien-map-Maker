@@ -109,6 +109,11 @@ def validate(res, arch=None) -> list:
         for vol in lay.volumes:
             for k in range(1, vol["height"]):
                 lvl = vol["level"] - k
+                if vol.get("paired") and k == vol["height"] - 1:       # its real second floor must be there
+                    if not any(p.tile.id == vol.get("upper_tile") and (p.x, p.y) == (vol["x"], vol["y"])
+                               for p in res.grids[lvl].placed):
+                        issues.append(f"tall room {vol['name']} is missing its upper floor on level {lvl + 1}")
+                    continue
                 if not any(s.level == lvl and (s.x, s.y) == (vol["x"], vol["y"]) and s.reserved == "void"
                            for s in lay.slots):
                     issues.append(f"tall room {vol['name']} has no void on level {lvl + 1}")

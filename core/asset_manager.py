@@ -41,6 +41,7 @@ MAX_ARCHIVE_MEMBERS = 100_000
 MAX_ARCHIVE_IMAGE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ARCHIVE_IMAGE_BYTES_PER_FILE = 512 * 1024 * 1024
 _IMPORT_MARKER = ".sceneboard-import.json"
+from core.function_tags import display_words, function_tags
 
 
 class AssetImportError(ValueError):
@@ -71,6 +72,7 @@ class Asset:
     width: int = 0            # source image pixels
     height: int = 0
     duplicate_of: Optional[str] = None  # path of the shown copy, for a hidden duplicate
+    functions: tuple = ()     # what the tile is for (medical, cargo, hangar...), from the geomorph data
 
     def __post_init__(self):
         if not self.tags:
@@ -374,9 +376,14 @@ class AssetLibrary:
         folder = "." if rel_folder in (".", "") else rel_folder.replace(os.sep, "/")
         width, height = _cached_dimensions(full)
         is_overlay = "overlay" in rel.lower()
-        return Asset(path=rel, name=name, folder=folder,
-                     size=size, is_overlay=is_overlay,
-                     width=width, height=height)
+        asset = Asset(path=rel, name=name, folder=folder,
+                      size=size, is_overlay=is_overlay,
+                      width=width, height=height)
+        funcs = function_tags(name)
+        if funcs:
+            asset.functions = funcs
+            asset.tags.extend(f for f in funcs if f not in asset.tags)
+        return asset
 
     def _name_key(self, asset: Asset, full: str) -> tuple[str, int]:
         try:
@@ -809,13 +816,34 @@ class AssetLibrary:
     def assets_in_group(self, group: str) -> list[Asset]:
         return [a for a in self.assets if a.folder == group]
 
-    def search(self, query: str) -> list[Asset]:
-        q = query.strip().lower()
-        if not q:
+    @staticmethod
+    def matches(asset: Asset, terms, function: str = "") -> bool:
+        """Every word must match the name, folder, a tag or a function alias ("sick bay" -> medical).
+        ``function`` additionally requires that exact function tag."""
+        if function and function not in asset.functions:
+            return False
+        name, folder = asset.name.casefold(), asset.folder.casefold()
+        for term in terms:
+            if term in name or term in folder or any(term in tag.casefold() for tag in asset.tags):
+                continue
+            if any(term in word for tag in asset.functions for word in display_words(tag)):
+                continue
+            return False
+        return True
+
+    def search(self, query: str, function: str = "") -> list[Asset]:
+        terms = query.casefold().split()
+        if not terms and not function:
             return list(self.assets)
-        return [a for a in self.assets
-                if q in a.name.lower() or q in a.folder.lower()
-                or any(q in tag for tag in a.tags)]
+        return [a for a in self.assets if self.matches(a, terms, function)]
+
+    def function_counts(self) -> list[tuple[str, int]]:
+        """Functions present in the library, most common first."""
+        counts: dict[str, int] = {}
+        for a in self.assets:
+            for f in a.functions:
+                counts[f] = counts.get(f, 0) + 1
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
 
     def ensure_store(self, root: str):
         self.root = root

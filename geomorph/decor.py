@@ -50,7 +50,7 @@ def tile_floors():
     return _FLOORS
 
 
-from .floors import free_rects  # noqa: E402  (shared with the floor-map builder)
+from .floors import free_rects, hall_bands  # noqa: E402  (shared with the floor-map builder)
 
 
 def _categories(tile, only=None):
@@ -518,6 +518,10 @@ def apply(res, rng, symbols: dict, opts: dict):
                 continue
             grid = transform(decode(rows), p.o.rot, p.o.mirror)
             rects = free_rects(grid, chars=chars)
+            hall = False
+            if not rects and not outdoors:
+                rects = hall_bands(grid)             # big open hall: line its walls, keep the middle clear
+                hall = bool(rects)
             if not rects:
                 continue
             kind = dec.incident
@@ -537,6 +541,8 @@ def apply(res, rng, symbols: dict, opts: dict):
                 items, extra = dec.furnish(p.tile, p, rect, g.index, p.zone, kind, prefer, messy)
                 for it in items:                      # trace each item to the tile it stands in
                     it["tile"], it["tx"], it["ty"] = p.tile.id, p.x, p.y
+                    if hall:
+                        it["hall"] = True
                 out.extend(items)
                 for f in extra:
                     g.filler.append(f)
