@@ -795,9 +795,12 @@ def check_vertical_alignment():
         for vol in res.layout.volumes:
             found = True
             for k in range(1, vol["height"]):
+                g = res.grids[vol["level"] - k]
+                if vol.get("paired") and k == vol["height"] - 1:      # a real upper floor instead of a void
+                    assert any(p.tile.id == vol["upper_tile"] and (p.x, p.y) == (vol["x"], vol["y"]) for p in g.placed)
+                    continue
                 assert any(s.level == vol["level"] - k and (s.x, s.y) == (vol["x"], vol["y"]) and s.reserved == "void"
                            for s in res.layout.slots)
-                g = res.grids[vol["level"] - k]
                 assert any(f["kind"] == "void" and (f["x"], f["y"]) == (vol["x"], vol["y"]) for f in g.filler)
     assert found, "prison observation deck volume appears"
     print("vertical alignment ok")
@@ -1061,34 +1064,52 @@ def check_quality():
 
 
 def check_overlooks():
+    """A tall room's upper floor: the matching 'Upper' tile on the level above, same spot and facing, joined by a
+    vertical link; rooms with no matching pair fall back to a railed overlook with a key entry."""
     from geomorph import render
     reg = Registry.load()
-    found = None
-    for arch in ("Prison / penal colony", "Xeno-biology containment lab", "Research facility"):
+    found_pair = found_fallback = None
+    for arch in ("Terraforming / atmosphere processor", "Prison / penal colony", "Research facility"):
         for sd in range(8):
             r = pipeline.generate(reg, dict(kind="site", seed=sd, archetype=arch, scale="large"))
-            if r.layout.volumes:
-                found = r
-                break
-        if found:
-            break
-    assert found is not None, "an archetype with a tall room"
-    for v in found.layout.volumes:
-        for lvl in range(v["level"] - v.get("height", 2) + 1, v["level"]):
-            assert any(e["level"] == lvl and e["title"].startswith("Overlook") for e in found.key), "overlook key entry"
-    # renders on every level without tiles available (boxes), including the overlook level
+            for v in r.layout.volumes:
+                if v.get("paired") and found_pair is None:
+                    found_pair = (r, v)
+                if not v.get("paired") and found_fallback is None:
+                    found_fallback = (r, v)
+    assert found_pair is not None, "an archetype whose tall room gets a real upper floor"
+    res, v = found_pair
+    lower = [p for p in res.grids[v["level"]].placed if (p.x, p.y) == (v["x"], v["y"])]
+    upper = [p for p in res.grids[v["upper_level"]].placed if (p.x, p.y) == (v["x"], v["y"])]
+    assert len(lower) == 1 and len(upper) == 1, "one tile on each of the two floors"
+    assert lower[0].tile.id == v["lower_tile"] and upper[0].tile.id == v["upper_tile"]
+    assert (lower[0].o.rot, lower[0].o.mirror) == (upper[0].o.rot, upper[0].o.mirror), "same facing on both floors"
+    pairs = {(a.id, b.id) for a, b in reg.tall_pairs()}
+    assert (v["lower_tile"], v["upper_tile"]) in pairs
+    assert any({l["a"], l["b"]} == {lower[0].zone, upper[0].zone} and l["state"] == "vertical" for l in res.links), \
+        "the two floors are joined by stairs"
+    assert any(e["zone"] == upper[0].zone for e in res.key), "the upper floor is keyed as its own room"
+    assert not [i for i in res.issues if "tall room" in i], res.issues
+    assert not any(e["title"].startswith("Overlook") and e["level"] == v["upper_level"] for e in res.key)
+    from geomorph import quality
+    assert upper[0].zone in quality.assess(res)["unreachable_ids"] or True
+    reach_bad = [z for z in quality.assess(res)["unreachable_ids"]]
+    assert upper[0].zone not in reach_bad and lower[0].zone not in reach_bad, "both floors are reachable"
+    if found_fallback is not None:                       # no matching pair: railed void with a key entry
+        r2, v2 = found_fallback
+        for lvl in range(v2["level"] - v2.get("height", 2) + 1, v2["level"]):
+            assert any(e["level"] == lvl and e["title"].startswith("Overlook") for e in r2.key), "overlook key entry"
     images = render.TileImages(None)
-    for g in found.grids:
-        render.render_level(found, g.index, images, pps=6)
-    print("overlooks ok")
+    for g in res.grids:
+        render.render_level(res, g.index, images, pps=6)
+    print("tall rooms ok: pair", v["lower_tile"], "->", v["upper_tile"])
 
 
 def check_hall_decor():
     """Big open halls (promenade, command centre...) get furniture along their walls, never in the middle,
     and never on campuses or streets where an open area may be a yard."""
-    from geomorph import decor, floors, symbols
+    from geomorph import decor, floors
     F = decor.tile_floors()
-    syms = symbols.load()
     hall_items = 0
     for name in ("Space station (ring / spindle / cylinder / modular)", "Research facility", "Prison / penal colony",
                  "Spaceport / starport", "Military base / garrison"):

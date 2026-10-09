@@ -216,6 +216,8 @@ def build_key(res, rng, arch=None):
                                 + ", ".join(res.grids[i].name for i in v["levels"]) + ".", "zone": "", "tile": ""})
         for v in lay.volumes:                # the railed drop on the level(s) above a double-height room
             for lvl in range(v["level"] - int(v.get("height", 2)) + 1, v["level"]):
+                if v.get("paired") and lvl == v.get("upper_level"):
+                    continue                  # that level has the room's real upper floor, keyed as its own room
                 n += 1
                 key.append({"n": n, "level": lvl, "x": v["x"] + 10.0, "y": v["y"] + 10.0,
                             "title": f"Overlook: {v['name']}",

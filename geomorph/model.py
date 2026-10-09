@@ -45,7 +45,8 @@ class Slot:
     face: tuple = ()             # directions links leave from (campus/hub), e.g. ("E","S")
     reserved: str = ""           # "void" when open above a tall room below
     placed: object = None        # placement.Placed once a tile is chosen
-    fixed_tile: object = None    # force a tile (vertical cores)
+    fixed_tile: object = None    # force a tile (vertical cores, the two floors of a tall room)
+    pair: int = -1               # other floor of a tall room: slot index (lower <-> upper)
 
     @property
     def cx(self): return self.x + self.w / 2

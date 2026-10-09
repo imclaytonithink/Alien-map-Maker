@@ -228,7 +228,13 @@
    "ventilation",
    "coolant"
   ],
-  "special_volumes": []
+  "special_volumes": [
+   {
+    "zone": "power",
+    "height": 2,
+    "open_below": true
+   }
+  ]
  },
  "text": {
   "description": [

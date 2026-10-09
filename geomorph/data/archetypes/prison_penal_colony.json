@@ -222,6 +222,11 @@
     "zone": "monitor",
     "height": 2,
     "open_below": true
+   },
+   {
+    "zone": "mech",
+    "height": 2,
+    "open_below": true
    }
   ]
  },

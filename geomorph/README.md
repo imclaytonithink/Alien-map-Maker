@@ -52,3 +52,13 @@ Each `data/archetypes/*.json` is one site type; add a file (or use the editor) a
 
 Credits: Tiles by Robert Pearce (Pearce Design Studio, LLC), CC BY-NC 4.0; PNGs by Eric Smith / RPG Mobius.
 Non-commercial, unofficial fan tool. Traveller is a trademark of Far Future Enterprises.
+
+
+## Tall rooms
+
+A double-height room is built from the pack's own **Lower / Upper tile pairs** (Engineering 145/146, Arboretum 111/112,
+Hangar 115/116, Lobby 225/226, Construction Deck 139/140, Xboat deck 220-1/220-2, Fighter Hangar 106-1/106-3). The lower
+tile sits on its level and the matching upper tile sits on the level above, on the same square and facing, joined by a
+stairs link; each floor is a room of its own in the key. Which pair is used follows the room's function tags, or name the
+tile number in an archetype's `special_volumes` entry with `"pair_tiles": ["225"]`. A room with no matching pair falls
+back to a single tile with a railed, dimmed overlook above it. Three-storey rooms keep an overlook on the middle level.

@@ -23,7 +23,7 @@ def _dir_between(a, b):
     return "S" if dy > 0 else "N"
 
 
-def reserve_volumes(arch, lay: Layout, rng):
+def reserve_volumes(arch, lay: Layout, rng, registry=None):
     """Pick slots for double/triple-height rooms and mark the space above as void."""
     out = {}
     sv = (arch.get("vertical") or {}).get("special_volumes", [])
@@ -38,6 +38,10 @@ def reserve_volumes(arch, lay: Layout, rng):
         inst.height = height
         cands = [s for s in lay.slots if s.zone is None and not s.reserved and s.role not in ("vertical", "headframe", "hub")
                  and assign.constraint_ok(inst, s, lo, hi)]
+        if not cands and inst.position != "any":      # small layouts may have no slot of the wanted position
+            loose = ZoneInst(**{**inst.__dict__, "position": "any"})
+            cands = [s for s in lay.slots if s.zone is None and not s.reserved
+                     and s.role not in ("vertical", "headframe", "hub") and assign.constraint_ok(loose, s, lo, hi)]
         # the room rises through the level(s) above it: those slots become void
         good = []
         for s in cands:
@@ -50,10 +54,25 @@ def reserve_volumes(arch, lay: Layout, rng):
             continue
         s, above = rng.choice(good)
         s.zone = inst
+        pair = registry.pick_tall_pair(inst.tags, rng, v.get("pair_tiles")) if registry is not None else None
+        top = min(above, key=lambda q: q.level)
         for q in above:
             q.reserved = "void"
-        lay.volumes.append({"zone": inst.id, "name": spec["name"], "x": s.x, "y": s.y, "level": s.level,
-                            "height": height, "open_below": bool(v.get("open_below", True))})
+        vol = {"zone": inst.id, "name": spec["name"], "x": s.x, "y": s.y, "level": s.level,
+               "height": height, "open_below": bool(v.get("open_below", True))}
+        if pair is not None:
+            # the room's real second floor: the matching "Upper" tile on the level above, same spot and facing
+            lower, upper = pair
+            top.reserved = ""
+            top.role = "upper"
+            top.fixed_tile = upper
+            top.zone = ZoneInst(**{**inst.__dict__, "id": inst.id + "^", "name": spec["name"] + " (upper level)",
+                                   "height": 1, "entrance": False, "checkpoint": False, "required": False})
+            s.fixed_tile = lower
+            s.pair, top.pair = top.idx, s.idx
+            lay.links.append(Link(a=s.idx, b=top.idx, kind="stairs"))
+            vol.update(paired=True, upper_level=top.level, lower_tile=lower.id, upper_tile=upper.id)
+        lay.volumes.append(vol)
         out[zid] = out.get(zid, 0) + 1
     return out
 
@@ -109,7 +128,7 @@ def generate_site(registry, arch: dict, rng: random.Random, scale="medium", env=
     for attempt in range(8):
         lay = layouts.build(topology, rng, preset, env, need, ctx)
         special_zones(arch, lay)
-        taken = reserve_volumes(arch, lay, rng)
+        taken = reserve_volumes(arch, lay, rng, registry)
         free = [s for s in lay.slots if s.zone is None and not s.reserved]
         if len(free) + len(taken) >= need:
             break
@@ -212,6 +231,11 @@ def _place_slots(reg, arch, lay: Layout, grids, picker: TilePicker, rng, env, ga
             gaps.setdefault(z.base, "filler only: no suitable tile (drawn procedurally)")
             s.kind = "filler"
             continue
+        if s.role == "upper":
+            continue                                  # placed together with its lower floor
+        if s.fixed_tile is not None and s.pair >= 0 and s.role != "upper":
+            if _place_tall_pair(lay, grids, s, picker, link_dirs.get(idx, set())):
+                continue
         tags = list(z.tags)
         fixed = None
         allowed = None
@@ -246,6 +270,28 @@ def _place_slots(reg, arch, lay: Layout, grids, picker: TilePicker, rng, env, ga
         s.placed = g.place(tile, s.x, s.y, o, zone=z.id)
         if s.role == "vertical":
             core_choice[(s.x, s.y)] = (tile, o)
+
+
+def _place_tall_pair(lay: Layout, grids, s, picker, prefer) -> bool:
+    """Place the lower floor of a tall room, then its upper floor on the level above with the same facing."""
+    q = lay.slots[s.pair]
+    g, gu = grids[s.level], grids[q.level]
+    pick = picker.choose(g, s.x, s.y, s.w, s.h, list(s.zone.tags), "standard", prefer_open=prefer,
+                         fixed=s.fixed_tile, reuse_penalty=0)
+    if pick is not None:
+        tile, o, _f = pick
+        if gu.fit(q.x, q.y, o, "standard").ok:
+            s.placed = g.place(tile, s.x, s.y, o, zone=s.zone.id)
+            q.placed = gu.place(q.fixed_tile, q.x, q.y, o, zone=q.zone.id)
+            return True
+    # could not stack the pair here: fall back to a single-height room with a railed void above
+    lay.links = [l for l in lay.links if {l.a, l.b} != {s.idx, q.idx}]
+    s.fixed_tile, s.pair = None, -1
+    q.zone, q.role, q.fixed_tile, q.pair, q.reserved = None, "", None, -1, "void"
+    for v in lay.volumes:
+        if v.get("zone") == s.zone.id and v.get("paired"):
+            v["paired"] = False
+    return False
 
 
 def _bfs_order(lay: Layout, start):
