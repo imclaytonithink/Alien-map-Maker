@@ -5,7 +5,9 @@
 - Import ZIP copies supported images only, normalizes Windows-style archive
   separators, preserves the archive's folder layout, and never extracts paths
   outside the store. Original archives are left untouched.
-- Assets are auto-grouped by folder and auto-tagged by type + map size.
+- Assets keep the folder layout they arrived with: a ZIP's own directories are
+  preserved, and the library browses that structure as-is. Assets are never
+  re-sorted, re-filed or renamed by the app.
 """
 from __future__ import annotations
 
@@ -72,7 +74,7 @@ def _image_dimensions(path: str) -> tuple[int, int]:
     """Read common image dimensions from headers without decoding pixels.
 
     Large geomorph PNGs can be 7,199 x 7,199 pixels. Reading just their image
-    headers keeps library scans light and lets the generator avoid loading
+    headers keeps library scans light and lets the map builder avoid loading
     every full-resolution source merely to learn its dimensions.
     """
     try:
@@ -219,40 +221,6 @@ class AssetLibrary:
         self._by_path: dict[str, Asset] = {}
         self._scan_complete = False
         self._scan_revision = 0
-        self.role_overrides: dict[str, str] = {}   # asset path -> role id (yours)
-        self._override_revision = 0
-        self._roles_cache = None
-        self._roles_key = None
-
-    # ---- generator roles (see core/asset_roles.py) ----
-    def roles(self, tags_by_path: dict | None = None) -> dict:
-        """{asset path: RoleInfo}, cached until the library or an override changes."""
-        from core.asset_roles import classify_roles
-        key = (self._scan_revision, self._override_revision, len(self.assets))
-        if self._roles_cache is None or self._roles_key != key:
-            self._roles_cache = classify_roles(
-                self.assets, self.role_overrides, tags_by_path)
-            self._roles_key = key
-        return self._roles_cache
-
-    def set_role(self, paths, role: str | None) -> int:
-        """Give assets a role by hand (``None`` = back to automatic) and save it."""
-        from core.asset_roles import ROLE_IDS, save_overrides
-        changed = 0
-        for path in paths:
-            if path not in self._by_path:
-                continue
-            if role in ROLE_IDS:
-                if self.role_overrides.get(path) != role:
-                    self.role_overrides[path] = role
-                    changed += 1
-            elif path in self.role_overrides:
-                del self.role_overrides[path]
-                changed += 1
-        if changed:
-            self._override_revision += 1
-            save_overrides(self.root, self.role_overrides)
-        return changed
 
     # ---- scanning ----
     def scan(self, root: str) -> None:
@@ -261,9 +229,6 @@ class AssetLibrary:
         self.root = root
         self.assets = []
         self._by_path = {}
-        from core.asset_roles import load_overrides
-        self.role_overrides = load_overrides(root) if root else {}
-        self._override_revision += 1
         if not root or not os.path.isdir(root):
             self._scan_complete = True
             return
@@ -284,9 +249,6 @@ class AssetLibrary:
         self.root = snapshot.root
         self.assets = snapshot.assets
         self._by_path = snapshot._by_path
-        from core.asset_roles import load_overrides
-        self.role_overrides = load_overrides(snapshot.root) if snapshot.root else {}
-        self._override_revision += 1
         self._scan_complete = True
         self._scan_revision += 1
 
@@ -388,7 +350,7 @@ class AssetLibrary:
         ``preserve_root`` keeps the selected directory's own name as a group
         above its contents. The UI uses this for user imports so selecting a
         structural directory such as ``100x100 Core`` or ``Symbols`` does not
-        erase the folder name that the geomorph generator relies on. The
+        erase the folder name the asset arrived in. The
         default remains false for callers importing known fixture folders
         whose contents are intentionally merged into the store.
         """

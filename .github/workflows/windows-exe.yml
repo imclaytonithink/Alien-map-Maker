@@ -17,7 +17,7 @@ on:
       - main.py
       - requirements.txt
       - core/asset_manager.py
-      - core/asset_roles.py
+      - core/mapbuilder.py
       - ui/app_icon.py
       - ui/icons/**
       - ui/branding.py

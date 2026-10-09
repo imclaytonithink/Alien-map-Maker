@@ -324,7 +324,7 @@ class ZoneRegion:
 
 BACKDROP_MODES = ("color", "texture", "none")
 # Library folder (at the top of the asset store) that floor textures picked
-# from a file for a level backdrop are copied into. The map generator leaves
+# from a file for a level backdrop are copied into. The map builder leaves
 # images in it alone.
 BACKDROP_FOLDER = "Backdrops"
 GUIDE_AXES = ("v", "h")

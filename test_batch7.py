@@ -1,150 +1,122 @@
-"""Pure-Python checks for the high-resolution geomorph generator mode."""
+"""Pure-Python checks for the selection-driven map builder (core/mapbuilder)."""
 from __future__ import annotations
 
-from core.asset_manager import Asset
-from core.generator import (classify_assets, classify_geomorph_assets,
-                            generate, generate_geomorphs)
+from core import mapbuilder
+from core.mapbuilder import build_map, make_item, pack_rows, pack_scatter
 
 
-def make_asset(path, name, folder, size, width, height, is_overlay=False):
-    return Asset(path=path, name=name, folder=folder, size=size,
-                 width=width, height=height, is_overlay=is_overlay)
+def asset(path, w, h, name=None, size=None):
+    return {"path": path, "name": name or path.rsplit("/", 1)[-1],
+            "w": w, "h": h, "size": size}
+
+
+def boxes(result):
+    return [piece["_box"] for piece in result["pieces"]]
+
+
+def overlaps(rects) -> bool:
+    for i in range(len(rects)):
+        for j in range(i + 1, len(rects)):
+            a, b = rects[i], rects[j]
+            if not (a[0] + a[2] <= b[0] or b[0] + b[2] <= a[0]
+                    or a[1] + a[3] <= b[1] or b[1] + b[3] <= a[1]):
+                return True
+    return False
 
 
 def main():
-    base = make_asset(
-        "Geomorphs, Symbols, & Small Craft/100x100 Core/E101 [100x100] Tractor Beam Control.png",
-        "E101 [100x100] Tractor Beam Control.png",
-        "Geomorphs, Symbols, & Small Craft/100x100 Core", (100, 100), 7199, 7199)
-    overlay = make_asset(
-        "Geomorphs, Symbols, & Small Craft/100x100 Core/E101 [Overlay] [100x100] Tractor Beam Control.png",
-        "E101 [Overlay] [100x100] Tractor Beam Control.png",
-        "Geomorphs, Symbols, & Small Craft/100x100 Core", (100, 100), 7199, 7199, True)
-    standard_base = make_asset(
-        "Standard Geomorphs/100x100 Core/E101 [100x100] Tractor Beam Control.png",
-        "E101 [100x100] Tractor Beam Control.png",
-        "Standard Geomorphs/100x100 Core", (100, 100), 1439, 1439)
-    standard_overlay = make_asset(
-        "Standard Geomorphs/100x100 Core/E101 [Overlay] [100x100] Tractor Beam Control.png",
-        "E101 [Overlay] [100x100] Tractor Beam Control.png",
-        "Standard Geomorphs/100x100 Core", (100, 100), 1439, 1439, True)
-    symbol = make_asset(
-        "Geomorphs, Symbols, & Small Craft/Symbols/Battery/Battery 001 [20x20].png",
-        "Battery 001 [20x20].png",
-        "Geomorphs, Symbols, & Small Craft/Symbols/Battery",
-        (20, 20), 1800, 1800)
-    standard_symbol = make_asset(
-        "Standard Symbols/Battery/Battery 001 [20x20].png",
-        "Battery 001 [20x20].png", "Standard Symbols/Battery",
-        (20, 20), 360, 360)
-    archive_root_symbol = make_asset(
-        "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal/Root asset [10x10].png",
-        "Root asset [10x10].png",
-        "RPG-Mobius-Geomorphs-Symbols-High-Res-Teal",
-        (10, 10), 900, 900)
-    floor = make_asset(
-        "Sample/floors/room_100x100.png", "room_100x100.png",
-        "Sample/floors", (100, 100), 600, 600)
-    code_base = make_asset(
-        "Custom Tiles/100x100 Core/E111 [100x100] Tractor Beam Control.png",
-        "E111 [100x100] Tractor Beam Control.png",
-        "Custom Tiles/100x100 Core", (100, 100), 7199, 7199)
-    code_overlay = make_asset(
-        "Custom Tiles/100x100 Core/E111 [100x100] [Overlay] Grav Fighter Outline x24.png",
-        "E111 [100x100] [Overlay] Grav Fighter Outline x24.png",
-        "Custom Tiles/100x100 Core", (100, 100), 7199, 7199, True)
+    cs = 70
+    # a 280 px square is 4 squares; a name-coded 100x100 ft deck is 20 squares
+    tiles = [asset(f"pack/floors/deck_{i}.png", 280, 280) for i in range(4)]
+    deck = asset("pack/core/E101 [100x100] Bridge.png", 4800, 4800,
+                 size=(100, 100))
+    strip = asset("pack/floors/corridor.png", 280, 140)
 
-    coded = classify_geomorph_assets([code_base, code_overlay])
-    assert coded["core"][0]["id"] == "e111"
-    assert coded["overlays"]["e111"][0]["id"] == "e111"
+    # -- only the assets handed over are used, and all of them are ----------
+    result = build_map({"selection": tiles, "cell_size": cs, "region": (0, 0, 39, 39),
+                        "layout": "grid", "seed": 1})
+    used = {piece["asset_path"] for piece in result["pieces"]}
+    assert used == {item["path"] for item in tiles}, used
+    assert result["counts"]["assets"] == 4
+    assert result["mode"] == "selection"
 
-    detected = classify_geomorph_assets(
-        [base, overlay, standard_base, standard_overlay, symbol,
-         standard_symbol, archive_root_symbol, floor])
-    assert len(detected["core"]) == 1
-    assert detected["core"][0]["path"] == base.path
-    assert detected["core"][0]["core_w"] == 20
-    assert detected["core"][0]["core_h"] == 20
-    assert detected["core"][0]["border_cells"] == 2
-    assert detected["pixels_per_square"] > 299
-    assert list(detected["overlays"]) == [detected["core"][0]["id"]]
-    assert len(detected["overlays"][detected["core"][0]["id"]]) == 1
-    assert detected["overlays"][detected["core"][0]["id"]][0]["path"] == overlay.path
-    assert len(detected["symbols"]) == 2
-    assert detected["symbols"][0]["w"] == symbol.width
-    assert any(asset["path"] == archive_root_symbol.path
-               for asset in detected["symbols"])
-    assert detected["unpaired_overlay_count"] == 1
+    # -- an empty selection is refused, never guessed at --------------------
+    for missing in ({}, {"selection": []}, {"selection": [asset("x.png", 0, 0)]}):
+        empty = build_map(dict(missing, region=(0, 0, 9, 9)))
+        assert empty["pieces"] == [] and empty["warnings"], missing
 
-    # Whole Core tiles and the Symbols package are not misread as single-cell
-    # floor/wall tiles, while the independent small-tile generator is intact.
-    small_tiles = classify_assets(
-        [base, overlay, standard_base, standard_overlay, symbol,
-         standard_symbol, archive_root_symbol, floor])
-    assert len(small_tiles["floor"]) == 1
-    assert all(not pool for category, pool in small_tiles.items()
-               if category != "floor")
-    tile_result = generate({
-        "seed": 9, "cell_size": 70, "region": (0, 0, 29, 29),
-        "setting": "Starship", "layout": "Grid", "clutter": 0.2,
-        "rooms": 6, "categories": small_tiles,
-    })
-    assert tile_result["counts"]["pieces"] > 0
-    assert tile_result["connected"]
+    # -- placements sit on whole grid squares and never overlap -------------
+    for layout in mapbuilder.LAYOUTS:
+        for gap in (0, 1, 3):
+            run = build_map({"selection": tiles + [strip, deck], "cell_size": cs,
+                             "region": (5, 7, 44, 46), "layout": layout,
+                             "copies": 3, "gap": gap, "rotate": True, "seed": 11})
+            assert run["pieces"], (layout, gap)
+            rects = boxes(run)
+            assert not overlaps(rects), f"{layout} gap={gap} overlapped"
+            for x, y, w, h in rects:
+                assert abs(x / cs - round(x / cs)) < 1e-6, (layout, x)
+                assert abs(y / cs - round(y / cs)) < 1e-6, (layout, y)
+                assert w > 0 and h > 0
+            # nothing lands outside the region that was asked for
+            for x, y, w, h in rects:
+                assert x >= 5 * cs - 1e-6 and y >= 7 * cs - 1e-6
+                assert x + w <= 45 * cs + 1e-6, (layout, x, w)
+                assert y + h <= 47 * cs + 1e-6, (layout, y, h)
+            used_w, used_h = run["used_cells"]
+            assert used_w <= 40 and used_h <= 40, run["used_cells"]
 
-    result = generate_geomorphs({
-        "seed": 23,
-        "cell_size": 70,
-        "region": (0, 0, 59, 59),
-        "mode": "new",
-        "geomorph_grid": 3,
-        "clutter": 1.0,
-        "geomorph_categories": detected,
-    })
-    base_pieces = [piece for piece in result["pieces"]
-                   if piece["layer_name"] == "Geomorphs"]
-    overlay_pieces = [piece for piece in result["pieces"]
-                      if piece["layer_name"] == "Overlays"]
-    symbol_pieces = [piece for piece in result["pieces"]
-                     if piece["layer_name"] == "Symbols"]
-    assert len(base_pieces) == 9
-    assert len(overlay_pieces) == 9
-    assert result["counts"]["geomorphs"] == 9
-    assert result["counts"]["overlays"] == 9
-    assert result["counts"]["symbols"] == len(symbol_pieces) > 0
-    assert result["connected"] is None  # prebuilt-module paths aren't BFS-tested
-    assert not result["warnings"]
+    # -- pieces carry what the project needs to rebuild them ---------------
+    piece = result["pieces"][0]
+    for key in ("asset_path", "name", "x", "y", "w", "h", "scale", "rotation",
+                "layer_name"):
+        assert key in piece, key
+    assert piece["rotation"] in mapbuilder.ROTATIONS
+    assert piece["layer_name"] == "Generated"
+    assert build_map({"selection": tiles, "cell_size": cs, "region": (0, 0, 9, 9),
+                      "layer_name": "Floor"})["pieces"][0]["layer_name"] == "Floor"
 
-    # Core art's transparent 2-square margin starts outside each core, while
-    # neighboring 20-square cores still meet on the exact 20-square pitch.
-    expected_origins = {-2 * 70, (20 - 2) * 70, (40 - 2) * 70}
-    assert {round(piece["x"]) for piece in base_pieces} == expected_origins
-    assert {round(piece["y"]) for piece in base_pieces} == expected_origins
-    for piece in base_pieces + overlay_pieces:
-        assert piece["rotation"] in (0, 90, 180, 270)
-        assert abs(piece["w"] * piece["scale"] - 24 * 70) < 1
-    base_by_pos = {(piece["x"], piece["y"]): piece for piece in base_pieces}
-    for piece in overlay_pieces:
-        base_piece = base_by_pos[(piece["x"], piece["y"])]
-        assert piece["rotation"] == base_piece["rotation"]
-        assert piece["scale"] == base_piece["scale"]
+    # -- the row packer walks left to right, then wraps --------------------
+    order = [make_item(item, cs, 5) for item in tiles]
+    placements, skipped, full = pack_rows(order * 2, 0, 0, 16, 16, 0)
+    assert skipped == 0 and not full
+    assert [placed[1:3] for placed in placements][:4] == \
+        [(0, 0), (4, 0), (8, 0), (12, 0)], placements
+    assert placements[4][1:3] == (0, 4), "the fifth copy wraps to the next row"
+    assert len(placements) == 8
 
-    # Fill-area mode places only whole modules that fit and reports the
-    # reduced grid rather than cropping or distorting the source art.
-    partial = generate_geomorphs({
-        "seed": 5,
-        "cell_size": 70,
-        "region": (0, 0, 19, 39),
-        "mode": "area",
-        "geomorph_grid": 3,
-        "clutter": 0,
-        "geomorph_categories": detected,
-    })
-    assert partial["counts"]["geomorphs"] == 2
-    assert partial["layout"] == "1x2 grid"
-    assert partial["warnings"]
+    # -- an asset too tall for the space left is passed over, not fatal ----
+    tall = make_item(asset("tall.png", 70, 700), cs, 5)
+    small = make_item(asset("small.png", 70, 70), cs, 5)
+    placements, skipped, full = pack_rows([tall, small], 0, 0, 4, 4, 0)
+    assert skipped == 1 and not full
+    assert [item["name"] for item, *_ in placements] == ["small.png"]
 
-    print("Batch 7 geomorph assembly checks passed.")
+    # -- scatter keeps everything apart ------------------------------------
+    many = [make_item(asset(f"p{i}.png", 140, 140), cs, 5) for i in range(20)]
+    import random
+    placements, skipped = pack_scatter(random.Random(3), many * 3, 0, 0, 40, 40, 1)
+    assert skipped == 0
+    rects = [(x * cs, y * cs, item["cells_w"] * cs, item["cells_h"] * cs)
+             for item, x, y, _rot in placements]
+    assert not overlaps(rects), "scatter overlapped two pieces"
+
+    # -- copies and the reported counts -----------------------------------
+    one = build_map({"selection": tiles[:1], "cell_size": cs,
+                     "region": (0, 0, 39, 39), "copies": 5})
+    assert one["counts"]["pieces"] == 5 and one["counts"]["assets"] == 1
+    assert len({piece["x"] for piece in one["pieces"]}) > 1, "copies are placed apart"
+
+    # -- a full area is reported, and a part-filled one says so -----------
+    filled = build_map({"selection": tiles, "cell_size": cs,
+                        "region": (0, 0, 19, 19), "layout": "fill"})
+    assert filled["used_cells"] == (20, 20), filled["used_cells"]
+    assert not any("left empty" in w for w in filled["warnings"])
+    sparse = build_map({"selection": tiles[:1], "cell_size": cs,
+                        "region": (0, 0, 39, 39)})
+    assert any("left empty" in w for w in sparse["warnings"]), sparse["warnings"]
+
+    print("Batch 7 selection-driven map builder checks passed.")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,6 @@ import tempfile
 import zipfile
 
 from core.asset_manager import AssetLibrary
-from core.generator import classify_geomorph_assets
 from ui.branding import (bundled_asset_directory, bundled_asset_pack_paths,
                          default_asset_store_path, seed_bundled_assets)
 
@@ -126,12 +125,11 @@ def main():
         assert imported == 1
 
         # Importing the Core directory itself must retain its name in the
-        # asset path, otherwise geomorph classification cannot find the tile.
+        # asset path: the folder the asset arrived in is its only organisation.
         asset = library.get(f"100x100 Core/{filename}")
         assert asset is not None
-        categories = classify_geomorph_assets(library.assets)
-        assert len(categories["core"]) == 1
-        assert categories["core"][0]["path"] == asset.path
+        assert asset.folder == "100x100 Core"
+        assert "100x100 Core" in library.groups()
 
         # A second folder with the same leaf name is kept in a separate group,
         # rather than overwriting the first import.

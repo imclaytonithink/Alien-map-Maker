@@ -4,10 +4,10 @@
 
 A general-purpose desktop tool for arranging PNG assets into maps and scenes.
 Snap nodes to a grid, rotate/flip, add overlays and text, tint/recolor images,
-manage levels, and export to PNG or PDF. Asset-driven procedural generation
-builds maps from imported small tiles or prebuilt geomorph modules. The app has
-neutral **Dark** and **Light** themes, plus an optional **Alien / MU-TH-UR 6000**
-theme inspired by the original CRT-style ship computer.
+manage levels, and export to PNG or PDF. The map generator builds from exactly
+the assets you select in the library — no guessing about what an asset is. The
+app has neutral **Dark** and **Light** themes, plus an optional **Alien /
+MU-TH-UR 6000** theme inspired by the original CRT-style ship computer.
 
 Built with **Python + PyQt6**. Packaged to a standalone `.exe` via PyInstaller.
 
@@ -77,11 +77,13 @@ smoke tests using the offscreen platform. The GitHub Actions workflow runs this
 same required-GUI test command. A separate `real-pack-integration` job
 retrieves the three published high-resolution geomorph, custom-tile, and
 Symbols ZIPs into the runner's temporary directory (never into Git), imports
-their actual contents, checks Core/Overlay pairing when variants exist,
-exercises Custom Tiles through its applicable generator path, verifies Symbols
-recognition, and assembles a seeded 3x3 map. If Qt runtime libraries are
-unavailable, plain `python run_tests.py` still runs the pure-Python checks and
-clearly reports skipped GUI checks.
+their actual contents, checks that every image lands at the path its archive
+gave it, and then builds maps from a selection of the real assets (a 3x3 of
+Core modules, a rotated scatter, and a Symbols fill). Add
+`[asset-inventory-audit]` to a commit message to publish a folder-by-folder
+inventory of the real packs. If Qt runtime libraries are unavailable, plain
+`python run_tests.py` still runs the pure-Python checks and clearly reports
+skipped GUI checks.
 
 ---
 
@@ -94,24 +96,20 @@ clearly reports skipped GUI checks.
   **?** help button. In the packaged `.exe`, this store is placed in the
   persistent per-user app-data folder, not PyInstaller's temporary unpack
   directory; use **Open** to see its exact location. Folder imports keep the
-  selected folder name as well as
-  its subfolders, so selecting a `100x100 Core` or `Symbols` folder directly
-  does not discard the names the generator needs. ZIP imports preserve folders,
+  selected folder name as well as its subfolders. ZIP imports preserve folders,
   normalize Windows-style archive paths, skip non-images, and keep each archive
   in its own group so similarly named files never overwrite each other. The
-  original ZIP is never changed. The library's expandable folder tree preserves
-  those paths; overlapping smart views add counts for core modules and modular
-  tile pieces, rooms, floors, walls, corridors, doors, controls, engineering,
-  medical/science,
-  furniture, storage, vehicles/aircraft, weapons/security, food/galley,
-  loose props, organic remains, landscaping/vegetation, overlays, lighting,
-  hazards, fire/smoke, and symbols. Unmatched art stays visible under **Other /
-  Unclassified**. These are browse filters only—assets are not moved or copied
-  again—and folder siblings can be reordered with ▲▼. For geomorph assembly, import
-  the matching high-res Geomorphs / Custom Tiles and Symbols archives; folder
-  names are preserved so Core modules, paired overlays, and Symbols can be
-  recognized. After importing, the library clears old filters so the assets are
-  visible immediately; drag or double-click one to put it on the canvas. Large
+  original ZIP is never changed.
+  **The library's only organisation is the folder structure your assets arrived
+  with.** The expandable folder tree is that structure — a ZIP import reproduces
+  the archive's own directories exactly, folders are listed in name order with
+  each folder's own files before its subfolders, and every entry shows a count.
+  There are no smart categories, no automatic sorting and no re-filing: the app
+  never decides what an asset *is*, and picking a folder only filters what is
+  shown. Assets are not moved, copied or renamed. Folder siblings can be
+  reordered with ▲▼ (a display order saved with the map). After importing, the
+  library clears old filters so the assets are visible immediately; drag or
+  double-click one to put it on the canvas. Large
   libraries load thumbnails only as they enter view, rather than decoding every
   full-size PNG at once. The checked-in starter art is a small demo collection.
   The high-resolution Geomorphs / Custom Tiles / Symbols ZIPs are stored as
@@ -290,38 +288,43 @@ clearly reports skipped GUI checks.
 - **Arrow keys** nudge 1px; **Shift+arrows** move exactly one square.
 
 ### 4. Generate a map (Tools → Generate Map…)
-One window, one set of options, top to bottom:
-1. **What to build**
-   - *Assemble a map from rooms and decks* packs full deck plans, 50 ft rooms
-     and empty rooms into a map of the size you choose. *Mixed sizes* fills the
-     area with whatever fits (50x50, 100x100, 200x100, 100x200…); *Uniform* uses
-     one size in a tidy grid. Optional hull parts (nose + matching
-     port/starboard) are added around the edge. Matching `[Overlay]` images
-     inherit their base module's placement, scale and rotation, and Symbols can
-     be scattered on a separate layer.
-   - *Build rooms and corridors from small tiles* is the classic floor / wall /
-     door builder (Starship / Colony base / Research lab, Random / Corridors /
-     Grid / Organic layouts, BFS-verified connectivity).
-   - *Furnish existing rooms* scatters interior parts inside the selected
-     nodes, or in every empty room on the level, with a wall margin and density.
-2. **Which assets to use** — tick the roles that feed it, with usable counts.
-3. **Size and placement** — a new level (size presets up to 160 x 160 squares,
-   or custom) or the area of the selected nodes. The canvas grows if the map
-   needs more room.
-4. **Style** — only the options that apply to the chosen strategy are shown.
-5. **Seed** — 12 random digits by default, or type any numbers/words. **🎲**
-   rolls a new random seed, **Copy** copies it, and **Regenerate** rolls a new
-   seed and replaces the previous result (tick *Keep this seed* to rebuild with
-   the same one). The same seed, settings and assets always give the same map.
+**The map is built from the assets you selected — nothing else.** There is no
+keyword classifier, no automatic sorting and no strategy to choose: select the
+pictures you want in the library (Shift-click, Ctrl-click, or drag a marquee),
+open **Generate**, and it lays exactly those assets out on the grid.
 
-**Asset sorting.** Every asset has exactly one generator *role*: deck plan,
-room, empty room, ship part, corridor, build-it piece, floor tile, wall tile,
-door, interior part, overlay, symbol, terrain or unsorted. Roles come from the
-file name, folder, name-coded size (`[100x100]` is feet) and image size.
-Browse them under **Generator roles** in the library tree, right-click assets
-(select several) → *Set generator role*, or open **Check asset sorting…**
-(also in the library ☰ menu) to filter, review "Needs a look", and reassign in
-bulk. Your choices (★) are saved with the asset store and always win.
+1. **The assets to use** — the selection, listed with the footprint each one
+   will have on the map. **Refresh from the library** re-reads the selection;
+   **Use everything shown** takes the whole folder you are browsing (with any
+   search applied). Right-clicking assets in the library also offers *Generate
+   a map from these N assets…*, which opens the generator with exactly those.
+2. **How to lay them out**
+   - *Tidy rows* — left to right, wrapping like text. Predictable and easy to
+     tidy up afterwards.
+   - *Random scatter* — each copy dropped somewhere random on the grid, never
+     overlapping. Good for props, debris and symbols.
+   - *Fill the area* — the selection repeats until the area is covered. Best
+     for floor, deck and terrain tiles.
+   Plus: **copies of each asset**, **spacing** in whole squares, an **asset
+   size** percentage (100% is the size the asset gets when you drag it onto the
+   canvas yourself), **allow 90° rotations**, and **shuffle the placement
+   order**.
+3. **Size and placement** — a new level (presets up to 160 x 160 squares, or
+   custom) or the area of the nodes you have selected on the canvas. The canvas
+   grows if the map needs more room.
+4. **Seed** — 12 random digits by default, or type any numbers/words. **🎲**
+   rolls a new seed, **Copy** copies it, and **Regenerate** rolls a new seed and
+   replaces the previous result (tick *Keep this seed* to rebuild with the same
+   one). The same seed, settings and selection always give the same map.
+
+**How big an asset is.** Each asset's footprint comes from its own numbers, with
+the same rule the canvas uses when you drag it over by hand: a name that codes a
+size in feet (`[100x100]`) on a high-resolution image is sized by your
+feet-per-square (so a 100x100 ft tile covers 20 x 20 squares); anything else
+keeps its pixel size. Every placement starts exactly on a grid line, so a
+generated map is as aligned as one you built by hand. Assets too big for the
+area are reported by name rather than silently resized, and the status line
+reports anything that did not fit.
 
 ### 5. Floors / Levels
 - Tab bar above the canvas: add / remove / rename / reorder floors.
@@ -332,7 +335,7 @@ bulk. Your choices (★) are saved with the asset store and always win.
   **Upload an image…** to use a picture from your computer (PNG, JPG, WEBP, BMP
   or TIFF): a copy goes into the library's **Backdrops** folder, so the map
   keeps finding it even if the original moves, picking the same file again
-  reuses that copy, and the map generator leaves that folder alone. Or pick a
+  reuses that copy, and the map builder leaves that folder alone. Or pick a
   library image and press *Use the highlighted library image*, or right-click
   a library image → *Use as backdrop*. **None** is shown as a checkerboard on the
   canvas and kept transparent in PNG exports. Packs whose tiles have
@@ -482,7 +485,7 @@ bulk. Your choices (★) are saved with the asset store and always win.
 ```
 core/   project (data model) · history (undo/redo) · asset_manager (internal
         store) · exporter (PNG/PDF) · bundle (portable RPG Map Packs) ·
-        render (shared piece drawing) · generator (tile layouts + geomorph assembly) ·
+        render (shared piece drawing) · mapbuilder (lays your selection out) ·
         guides · transforms (mirror / grid copies) · stamps (hotbar keys) ·
         backups (rolling auto-save backups) · relink (missing images) ·
         userfiles (recent maps, previews, file names) · cutouts (cut-out

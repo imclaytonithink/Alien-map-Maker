@@ -309,6 +309,16 @@ assert not win.stamp_bar.isVisible(), "an empty hotbar stays out of the way"
 win._pin_asset_stamp(0, "props/crate.png")
 assert win.stamp_bar.isVisible() and win.stamp_slots[0]["asset_path"] == "props/crate.png"
 assert win.library.stamp_labels()[0] == "crate"
+# door mode comes from the name alone now: there is no asset classification
+os.makedirs(os.path.join(store, "doors"), exist_ok=True)
+hatch = QImage(64, 64, QImage.Format.Format_ARGB32)
+hatch.fill(QColor("#aa5533"))
+hatch.save(os.path.join(store, "doors", "Iris Hatch.png"))
+win.library.set_project(project, win.library.library, win._add_at_center)
+assert not win._is_door_asset("props/crate.png")
+assert win._is_door_asset("doors/Iris Hatch.png")
+win._pin_asset_stamp(1, "doors/Iris Hatch.png")
+assert win.stamp_slots[1]["edge"], "a door is pinned in door mode"
 stored = mw.slots_from_json(win.settings.value("stamps/slots"))
 assert stored[0]["asset_path"] == "props/crate.png", "pinned keys are remembered"
 key = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_1, NOMOD, "1")

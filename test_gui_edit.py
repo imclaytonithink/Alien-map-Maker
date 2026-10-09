@@ -651,7 +651,7 @@ assert image.pixelColor(5, 5).name() == "#000000" and image.pixelColor(15, 5).na
 assert lib.library.get(uploaded) is not None
 assert f"folder:{BACKDROP_FOLDER}" in lib._tree_items
 assert lib._view == ("folder", "tiles") and lib.group_tree.currentItem() is lib._tree_items["folder:tiles"]
-assert lib.library.roles()[uploaded].role == "other"
+assert lib.library.get(uploaded).folder == BACKDROP_FOLDER
 assert win.settings.value("files/last_import_dir") == outside
 
 win.undo()
