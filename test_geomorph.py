@@ -1259,6 +1259,39 @@ def check_atmosphere():
     print("atmosphere ok")
 
 
+def check_reroll_refresh_and_undo():
+    """After a re-roll nothing stands on an old tile, notes for unchanged rooms survive, and undo restores
+    the exact previous layout, furniture and key."""
+    from geomorph import quality
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="site", seed="rr1", archetype="Research facility", scale="large",
+                                      decor={"enabled": True, "exterior": True}))
+    res.key[0]["text"] = "GM NOTE THAT MUST SURVIVE"
+    keep = (res.key[0]["zone"], res.key[0]["tile"])
+    before = pipeline.snapshot(res)
+    n = pipeline.reroll_level(res, 1, seed=11)
+    assert n > 0
+    stale = lambda: [d for d in res.decor if d.get("kind") == "item"
+                     and not any((p.x, p.y, p.tile.id) == (d["tx"], d["ty"], d["tile"]) for g in res.grids for p in g.placed)]
+    assert stale(), "without a refresh the furniture would stay on the old tiles (this is the bug being fixed)"
+    pipeline.refresh_dressing(res, seed=2)
+    assert not stale(), "furniture follows the new tiles"
+    after = pipeline.snapshot(res)
+    changes = pipeline.tile_changes(before, after, res)
+    assert len(changes) >= 1 and all(old != new for _l, _r, old, new in changes)
+    still = next((e for e in res.key if (e["zone"], e["tile"]) == keep), None)
+    assert still is not None and still["text"] == "GM NOTE THAT MUST SURVIVE", "notes for unchanged rooms are kept"
+    assert res.quality["score"] == quality.assess(res)["score"]
+    assert "\u2192" in quality.compare(before["quality"], dict(res.quality, score=res.quality["score"] + 1))
+    assert quality.compare(res.quality, res.quality).startswith("Score unchanged")
+    pipeline.restore(res, before)
+    again = pipeline.snapshot(res)
+    ids = lambda sn: [[(t.id, x, y, z) for t, x, y, _o, z, _k in g["placed"]] for g in sn["grids"]]
+    assert ids(again) == ids(before) and again["decor"] == before["decor"] and again["key"] == before["key"]
+    assert not [i for i in validate.validate(res, ARCH["Research facility"]) if "overlap" in i]
+    print("re-roll refresh and undo ok")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1285,6 +1318,7 @@ def main():
     check_quality()
     check_overlooks()
     check_atmosphere()
+    check_reroll_refresh_and_undo()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")

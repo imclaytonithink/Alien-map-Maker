@@ -135,6 +135,7 @@ class GeomorphDialog(QDialog):
         self.images = None
         self.job = None
         self.level_index = 0
+        self.undo_stack = []                # [("snap", snapshot, label) | ("result", result, seed, label)]
         self.locked = set()                 # zone ids kept by every re-roll
         self.selected_zone = None
         self._applying = False
@@ -489,8 +490,19 @@ class GeomorphDialog(QDialog):
         self.lbl_score.setStyleSheet("font-size: 26px; font-weight: bold;")
         self.lbl_quality = QLabel("")
         self.lbl_quality.setWordWrap(True)
+        self.lbl_changes = QLabel("")
+        self.lbl_changes.setWordWrap(True)
+        self.lbl_changes.setStyleSheet("color: #8fd3ff;")
+        col = QVBoxLayout()
+        col.addWidget(self.lbl_quality)
+        col.addWidget(self.lbl_changes)
+        self.btn_undo = QPushButton("Undo")
+        self.btn_undo.setToolTip("Go back to how the map was before the last re-roll or new map.")
+        self.btn_undo.setEnabled(False)
+        self.btn_undo.clicked.connect(self._undo)
         hc.addWidget(self.lbl_score)
-        hc.addWidget(self.lbl_quality, 1)
+        hc.addLayout(col, 1)
+        hc.addWidget(self.btn_undo)
         right.addWidget(self.box_check)
         self.lbl_gaps = QLabel("")
         self.lbl_gaps.setWordWrap(True)
@@ -745,22 +757,71 @@ class GeomorphDialog(QDialog):
         (self.locked.add if on else self.locked.discard)(zid)
         self._show_level()
 
+    def _reroll(self, label, work):
+        """Run a re-roll with an undo snapshot, redo the furniture and key for what changed, and say what changed."""
+        from geomorph import pipeline, quality
+        res = self.result
+        if res is None:
+            return
+        before = pipeline.snapshot(res)
+        n = work(res)
+        pipeline.refresh_dressing(res)
+        after = pipeline.snapshot(res)
+        changes = pipeline.tile_changes(before, after, res)
+        self._push_undo(("snap", before, label))
+        self._prerender(res)
+        self._update_quality()
+        self._show_level()
+        self._fill_text()
+        shown = ", ".join(f"{room}" for _lvl, room, _a, _b in changes[:4]) + (f" +{len(changes) - 4} more" if len(changes) > 4 else "")
+        levels = sorted({lvl for lvl, *_ in changes})
+        where = f" on {levels[0]}" if len(levels) == 1 else f" on {len(levels)} levels" if levels else ""
+        head = f"{len(changes)} tile(s) changed{where}" + (f" ({shown})" if shown else "")
+        diff = quality.compare(before["quality"], res.quality)
+        self.lbl_changes.setText(f"{label}: {head}. {diff}.")
+        self.lbl_status.setText(f"{label}. {len(changes)} tile(s) changed; locked tiles kept." if n or changes else
+                                f"{label}: nothing else fits here.")
+
+    def _push_undo(self, entry):
+        self.undo_stack.append(entry)
+        del self.undo_stack[:-20]
+        self.btn_undo.setEnabled(True)
+
+    def _undo(self):
+        from geomorph import pipeline
+        if not self.undo_stack:
+            return
+        entry = self.undo_stack.pop()
+        self.btn_undo.setEnabled(bool(self.undo_stack))
+        if entry[0] == "snap":
+            _kind, snap, label = entry
+            pipeline.restore(self.result, snap)
+            self._prerender(self.result)
+            self._update_quality()
+            self._show_level()
+            self._fill_text()
+            self.lbl_changes.setText(f"Undid: {label}.")
+        else:
+            _kind, old, seed, label = entry
+            self._applying = True
+            try:
+                self.ed_seed.setText(seed)
+            finally:
+                self._applying = False
+            self._generated(old, None, push=False)
+            self.lbl_changes.setText(f"Undid: {label}.")
+
     def _reroll_level(self):
         from geomorph import pipeline
         import random
-        if self.result is None:
-            return
-        n = pipeline.reroll_level(self.result, self.level_index, self.locked, seed=random.random())
-        self._after_reroll(f"{n} tile(s) changed on this level.")
+        lvl = self.level_index
+        self._reroll("Re-roll level", lambda res: pipeline.reroll_level(res, lvl, self.locked, seed=random.random()))
 
     def _reroll_all(self):
         from geomorph import pipeline
         import random
-        if self.result is None:
-            return
-        n = sum(pipeline.reroll_level(self.result, g.index, self.locked, seed=random.random())
-                for g in self.result.grids)
-        self._after_reroll(f"{n} tile(s) changed; locked tiles kept.")
+        self._reroll("Re-roll all unlocked", lambda res: sum(
+            pipeline.reroll_level(res, g.index, self.locked, seed=random.random()) for g in res.grids))
 
     def _update_quality(self):
         from geomorph import quality
@@ -782,12 +843,6 @@ class GeomorphDialog(QDialog):
         self.lbl_quality.setText("\n".join(lines))
         self.lbl_quality.setToolTip("Score starts at 100. Unreachable rooms cost the most, then dead ends, known issues, "
                                     "zones with no tile, low furnishing and repeated tiles.")
-
-    def _after_reroll(self, text):
-        self._prerender(self.result)
-        self._update_quality()
-        self._show_level()
-        self.lbl_status.setText(text)
 
     # ------------------------------------------------------------------
     def _browse_tiles(self):
@@ -911,7 +966,7 @@ class GeomorphDialog(QDialog):
             res._previews[(g.index, True, True, True)] = render.render_level(res, g.index, self.images, pps=8, gm=True)
             res._previews[(g.index, False, True, True)] = render.render_level(res, g.index, self.images, pps=8, gm=False)
 
-    def _generated(self, res, err):
+    def _generated(self, res, err, push=True):
         if err:
             self.lbl_status.setText("Generation failed: " + err.splitlines()[0])
             QMessageBox.warning(self, "Geomorph generator", err)
@@ -920,6 +975,15 @@ class GeomorphDialog(QDialog):
             hooks = res.text.setdefault("hooks", [])
             hooks.extend({"type": "scenario", "text": h} for h in self._scenario_hooks)
         self.locked = {z for z in self.locked if z in res.zones}      # layouts differ: keep only ids that still exist
+        prev = self.result
+        if push and prev is not None and prev is not res:
+            self._push_undo(("result", prev, getattr(self, "_last_seed", ""), "New map"))
+            from geomorph import quality
+            self.lbl_changes.setText("New map: " + quality.compare(getattr(prev, "quality", None), res.quality) + "."
+                                     if getattr(res, "quality", None) else "")
+        elif push:
+            self.lbl_changes.setText("")
+        self._last_seed = (res.options or {}).get("seed", "")
         self.result = res
         self.cb_level.blockSignals(True)
         self.cb_level.clear()
@@ -1014,16 +1078,12 @@ class GeomorphDialog(QDialog):
     # ------------------------------------------------------------------
     def _reroll_zone(self):
         from geomorph import pipeline
-        res = self.result
-        zid = self.cb_zone.currentData()
-        if res is None or not zid:
-            return
         import random
-        ok = pipeline.reroll_zone(res, zid, seed=random.random())
-        self._prerender(res)
-        self._update_quality()
-        self._show_level()
-        self.lbl_status.setText("Zone re-rolled." if ok else "No other tile fits that zone here.")
+        zid = self.cb_zone.currentData()
+        if self.result is None or not zid:
+            return
+        name = self.result.zones[zid].name if zid in self.result.zones else zid
+        self._reroll(f"Re-roll {name}", lambda res: 1 if pipeline.reroll_zone(res, zid, seed=random.random()) else 0)
 
     def place_on_canvas(self):
         res = self.result

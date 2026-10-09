@@ -295,6 +295,25 @@ dlg.ck_show_decor.setChecked(True)
 dlg.ck_atmo.setChecked(False)                       # the atmosphere effect can be switched off in the preview
 assert not dlg.preview.pixmap().isNull()
 dlg.ck_atmo.setChecked(True)
+# what changed + undo: a re-roll says what moved and can be undone exactly; a new map can be undone too
+ids_now = lambda r: [[(p.tile.id, p.x, p.y) for p in g.placed] for g in r.grids]
+dlg.locked.clear()
+ids_before = ids_now(dlg.result)
+dlg.undo_stack.clear()
+dlg._reroll_level()
+assert "Re-roll level" in dlg.lbl_changes.text() and "tile(s) changed" in dlg.lbl_changes.text(), dlg.lbl_changes.text()
+assert dlg.btn_undo.isEnabled() and len(dlg.undo_stack) == 1
+if ids_now(dlg.result) != ids_before:
+    dlg._undo()
+    assert ids_now(dlg.result) == ids_before, "undo restores the layout"
+    assert dlg.lbl_changes.text().startswith("Undid: Re-roll level")
+    assert not dlg.btn_undo.isEnabled()
+before_result, before_seed = dlg.result, dlg.ed_seed.text()
+dlg._regenerate()
+assert dlg.result is not before_result and dlg.lbl_changes.text().startswith("New map:") and dlg.btn_undo.isEnabled()
+dlg._undo()
+assert dlg.result is before_result and dlg.ed_seed.text() == before_seed, "undo brings back the previous map and seed"
+assert dlg.cb_zone.count() == len(before_result.zones)
 # gap warning label follows the result
 res.gaps = {"Test zone": "no tile"}
 dlg._generated(res, None)
