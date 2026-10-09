@@ -1,0 +1,110 @@
+{
+ "ship liner random": {
+  "decor": 0,
+  "filler": 146,
+  "hash": "a0323b5fdd41d1dc",
+  "issues": 0,
+  "key": 28,
+  "levels": 1,
+  "tiles": 28
+ },
+ "ship merchant 1000": {
+  "decor": 2,
+  "filler": 19,
+  "hash": "16de56a16a6492d7",
+  "issues": 0,
+  "key": 9,
+  "levels": 1,
+  "tiles": 9
+ },
+ "ship military parts": {
+  "decor": 66,
+  "filler": 31,
+  "hash": "e56b7d2557852825",
+  "issues": 0,
+  "key": 21,
+  "levels": 1,
+  "tiles": 21
+ },
+ "ship movie": {
+  "decor": 0,
+  "filler": 0,
+  "hash": "7009e61c2df36049",
+  "issues": 0,
+  "key": 10,
+  "levels": 1,
+  "tiles": 10
+ },
+ "ship research selective": {
+  "decor": 0,
+  "filler": 15,
+  "hash": "b6e9df7cdef6ff06",
+  "issues": 0,
+  "key": 13,
+  "levels": 1,
+  "tiles": 13
+ },
+ "ship scout planned": {
+  "decor": 0,
+  "filler": 5,
+  "hash": "3b807a26b3ac11cb",
+  "issues": 0,
+  "key": 7,
+  "levels": 1,
+  "tiles": 7
+ },
+ "site colony": {
+  "decor": 118,
+  "filler": 34,
+  "hash": "6c85f2e217273934",
+  "issues": 0,
+  "key": 9,
+  "levels": 1,
+  "tiles": 8
+ },
+ "site farm": {
+  "decor": 92,
+  "filler": 25,
+  "hash": "e71c93ee4107720c",
+  "issues": 0,
+  "key": 6,
+  "levels": 1,
+  "tiles": 6
+ },
+ "site lab": {
+  "decor": 41,
+  "filler": 61,
+  "hash": "8fa1ab0a1fac412f",
+  "issues": 0,
+  "key": 14,
+  "levels": 2,
+  "tiles": 12
+ },
+ "site mine": {
+  "decor": 95,
+  "filler": 15,
+  "hash": "db07ce4c1d2ff77d",
+  "issues": 0,
+  "key": 10,
+  "levels": 4,
+  "tiles": 9
+ },
+ "site prison": {
+  "decor": 61,
+  "filler": 255,
+  "hash": "5ac7f78716b6e341",
+  "issues": 0,
+  "key": 37,
+  "levels": 4,
+  "tiles": 35
+ },
+ "site station": {
+  "decor": 0,
+  "filler": 25,
+  "hash": "76d1ad2acb3194e2",
+  "issues": 0,
+  "key": 10,
+  "levels": 1,
+  "tiles": 10
+ }
+}

@@ -5,6 +5,7 @@ Use ``python run_tests.py --require-gui`` in CI after installing requirements.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import os
 from pathlib import Path
 import subprocess
@@ -12,7 +13,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent
-PURE_TESTS = [f"test_batch{number}.py" for number in range(1, 18)] + ["test_geomorph.py"]
+PURE_TESTS = [f"test_batch{number}.py" for number in range(1, 18)] + ["test_geomorph.py", "test_geomorph_golden.py"]
 GUI_TESTS = [
     "test_generator.py",
     "test_gui2.py",
@@ -37,6 +38,33 @@ def _run(command, env):
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
+def _run_many(scripts, env, jobs, label):
+    """Run test scripts side by side (each in its own process and settings folder).
+
+    Output of each script is printed as one block when it finishes, so parallel
+    runs stay readable. Returns the scripts that failed."""
+    if jobs <= 1:
+        for script in scripts:
+            _run([sys.executable, script], env)
+        return []
+
+    def one(script):
+        with tempfile.TemporaryDirectory(prefix="sceneboard-cfg-") as cfg:
+            e = dict(env, XDG_CONFIG_HOME=cfg)        # QSettings must not be shared between scripts
+            proc = subprocess.run([sys.executable, script], cwd=ROOT, env=e, text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return script, proc.returncode, proc.stdout
+
+    failed = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        for script, code, out in pool.map(one, scripts):
+            print(f"+ {script}  [{label}] {'ok' if code == 0 else 'FAILED'}", flush=True)
+            if code != 0:
+                print(out, flush=True)
+                failed.append(script)
+    return failed
+
+
 def _qt_is_usable(env) -> tuple[bool, str]:
     probe = subprocess.run(
         [sys.executable, "-c",
@@ -51,13 +79,18 @@ def main() -> int:
     parser.add_argument(
         "--require-gui", action="store_true",
         help="fail rather than skip GUI smoke tests if Qt is unavailable")
+    parser.add_argument(
+        "--jobs", "-j", type=int, default=min(4, os.cpu_count() or 1),
+        help="test scripts to run at once (1 = one after another)")
     args = parser.parse_args()
 
     env = os.environ.copy()
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-    for script in PURE_TESTS:
-        _run([sys.executable, script], env)
+    failed = _run_many(PURE_TESTS, env, args.jobs, "pure")
+    if failed:
+        print("FAILED:", ", ".join(failed), file=sys.stderr)
+        return 1
 
     usable, reason = _qt_is_usable(env)
     if not usable:
@@ -75,8 +108,10 @@ def main() -> int:
         _run([sys.executable, "demo_render.py", "--output", demo], env)
         if not os.path.isfile(demo) or os.path.getsize(demo) == 0:
             raise RuntimeError("demo renderer did not produce a non-empty PNG")
-        for script in GUI_TESTS:
-            _run([sys.executable, script], env)
+        failed = _run_many(GUI_TESTS, env, args.jobs, "gui")
+        if failed:
+            print("FAILED:", ", ".join(failed), file=sys.stderr)
+            return 1
 
     print("All pure-Python and offscreen GUI checks passed.")
     return 0
