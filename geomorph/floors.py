@@ -15,10 +15,11 @@ from .registry import BORDER_SQUARES, PX_PER_SQUARE
 
 Image.MAX_IMAGE_PIXELS = None
 SUB = 2                    # cells per grid square (half-square resolution)
+WING_SOLID_AT = 0.3         # wings: their corridors are narrow, so only well-filled cells are solid
 SOLID_AT = 0.002           # fraction of opaque pixels that makes a cell solid (catches thin dashed outlines too)
 
 
-def analyse_floor(path, w, h, edges=None, pps=PX_PER_SQUARE, border=BORDER_SQUARES):
+def analyse_floor(path, w, h, edges=None, pps=PX_PER_SQUARE, border=BORDER_SQUARES, joins="", solid_at=SOLID_AT):
     """Rows of the floor map (strings of '#', 'c', '.'), ``h*SUB`` rows of ``w*SUB`` chars.
 
     ``edges`` (the tile's side data) tells where the doors are: open floor connected to a door or to the tile
@@ -30,7 +31,7 @@ def analyse_floor(path, w, h, edges=None, pps=PX_PER_SQUARE, border=BORDER_SQUAR
     a = a.crop(box).resize((w * SUB, h * SUB), Image.BOX)
     px = a.load()
     cols, rows = w * SUB, h * SUB
-    grid = [["#" if px[x, y] / 255.0 >= SOLID_AT else "." for x in range(cols)] for y in range(rows)]
+    grid = [["#" if px[x, y] / 255.0 >= solid_at else "." for x in range(cols)] for y in range(rows)]
     dq = deque()
 
     def flood(mark):
@@ -47,11 +48,25 @@ def analyse_floor(path, w, h, edges=None, pps=PX_PER_SQUARE, border=BORDER_SQUAR
             grid[y][x] = mark
             dq.append((x, y))
     # 'o' = outside: open floor touching the tile boundary (never furnished)
+    # ``joins``: sides where the tile meets the rest of the ship (a wing's hull side); floor there is not outside
     for x in range(cols):
-        seed(x, 0, "o"); seed(x, rows - 1, "o")
+        if "N" not in joins:
+            seed(x, 0, "o")
+        if "S" not in joins:
+            seed(x, rows - 1, "o")
     for y in range(rows):
-        seed(0, y, "o"); seed(cols - 1, y, "o")
+        if "W" not in joins:
+            seed(0, y, "o")
+        if "E" not in joins:
+            seed(cols - 1, y, "o")
     flood("o")
+    for side in joins:                          # what comes in through the hull side is the wing's corridor
+        for j in range(cols if side in "NS" else rows):
+            if side == "N": seed(j, 0, "c")
+            elif side == "S": seed(j, rows - 1, "c")
+            elif side == "W": seed(0, j, "c")
+            else: seed(cols - 1, j, "c")
+    flood("c")
     # 'c' = circulation: floor reached from a door
     for side, e in (edges or {}).items():
         for i, c in enumerate(e["cls"]):
@@ -202,3 +217,74 @@ def hall_bands(rows, depth=4, door_clear=6, min_open=200):
                 if all(max(abs(x - dx), abs(y - dy)) > door_clear for dx, dy in doors):
                     mask[y][x] = "."
     return free_rects(["".join(r) for r in mask], min_side=4, limit=8, chars=(".",))
+
+
+def build_missing(registry, dirs, floors_path=None) -> dict:
+    """Floor maps for tiles that have none yet (wings and nose transitions), read from the pack images in ``dirs``.
+
+    Wing images carry their plan box (``tile.bbox``, squares) instead of the usual 2-square border, so the image is
+    cropped to it first. Returns {tile id: encoded map} for the tiles it could read; ``floors_path`` gets them added."""
+    import json
+    from pathlib import Path
+    from .registry import PX_PER_SQUARE as S
+    out = {}
+    for t in registry.tiles.values():
+        if t.id in _existing(floors_path):
+            continue
+        src = next((Path(d) / t.image for d in dirs if (Path(d) / t.image).exists()), None)
+        if src is None:
+            continue
+        im = Image.open(src)
+        if t.bbox:
+            l, top, r, b = t.bbox
+            im = im.crop((int(l * S), int(top * S), int(r * S), int(b * S)))
+            # wing corridors are one square wide: a half-square cell is wall only when an outline fills much of it
+            rows = _wing_floor(im, t)
+        else:
+            rows = analyse_floor(im, t.w, t.h, t.edges)
+        out[t.id] = encode(rows)
+    if floors_path is not None and out:
+        p = Path(floors_path)
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        data.update(out)
+        p.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+    return out
+
+
+def _wing_floor(im, t) -> list:
+    """Floor map of a wing: its corridors are clear art like any tile, but they run out through the hull side into
+    the image's empty margin, so the edge flood can't tell them from outside. A wing is a simple shape, so per row
+    everything between the first and the last bit of wall is inside it (corridor), and the rest is outside."""
+    a = im.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 16 else 0)
+    cols, rows = t.w * SUB, t.h * SUB
+    px = a.resize((cols, rows), Image.BOX).load()
+    solid = [[px[x, y] / 255.0 >= WING_SOLID_AT for x in range(cols)] for y in range(rows)]
+
+    def span(cells):
+        hits = [i for i, v in enumerate(cells) if v]
+        return (hits[0], hits[-1]) if hits else (0, -1)
+    across = [span(solid[y]) for y in range(rows)]
+    down = [span([solid[y][x] for y in range(rows)]) for x in range(cols)]
+    out = []
+    for y in range(rows):
+        line = []
+        for x in range(cols):
+            if solid[y][x]:
+                line.append("#")
+            elif across[y][0] < x < across[y][1] or down[x][0] < y < down[x][1]:
+                line.append("c")
+            else:
+                line.append("o")
+        out.append("".join(line))
+    return out
+
+
+def _existing(path):
+    import json
+    from pathlib import Path
+    if path is None or not Path(path).exists():
+        return {}
+    cache = getattr(_existing, "_c", None)
+    if cache is None or cache[0] != str(path):
+        _existing._c = cache = (str(path), json.loads(Path(path).read_text(encoding="utf-8")))
+    return cache[1]

@@ -48,6 +48,32 @@ def find_tiles_dir(*roots) -> str:
     return ""
 
 
+def find_tiles_dirs(*roots) -> list:
+    """Every pack folder under the given roots that holds tile folders ('100x100 Core'...), e.g. both the
+    Geomorphs and the Custom Tiles packs."""
+    out = []
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, _files in os.walk(root):
+            if PACK_FOLDERS[0] in dirnames:
+                if os.path.normcase(dirpath) not in {os.path.normcase(d) for d in out}:
+                    out.append(dirpath)
+                dirnames[:] = []
+            elif dirpath.count(os.sep) - root.count(os.sep) >= 3:
+                dirnames[:] = []
+    return out
+
+
+def best_tiles_dir(dirs, registry) -> str:
+    """The pack folder holding the most of the manifest's tiles."""
+    tiles = list(registry.tiles.values())
+
+    def found(d):
+        return sum(1 for t in tiles if os.path.exists(os.path.join(d, t.image)))
+    return max(dirs, key=found) if dirs else ""
+
+
 def find_symbols_dir(*roots) -> str:
     """Folder of the Symbols pack (has 'Staterooms', 'Furniture, Consoles, & Equipment'...)."""
     for root in roots:
@@ -198,7 +224,12 @@ class GeomorphDialog(QDialog):
     # ------------------------------------------------------------------
     def _autodetect(self):
         lib = getattr(getattr(self.main.library, "library", None), "root", "") or ""
-        return find_tiles_dir(lib, getattr(self.main.project, "asset_store", ""))
+        return best_tiles_dir(self._pack_dirs(), self.registry) or find_tiles_dir(
+            lib, getattr(self.main.project, "asset_store", ""))
+
+    def _pack_dirs(self) -> list:
+        lib = getattr(getattr(self.main.library, "library", None), "root", "") or ""
+        return find_tiles_dirs(lib, getattr(self.main.project, "asset_store", ""))
 
     def _build(self):
         # Both columns scroll, so the window fits any screen (the options are taller than most).
@@ -1198,15 +1229,18 @@ class GeomorphDialog(QDialog):
         ok = bool(d) and os.path.isdir(os.path.join(d, PACK_FOLDERS[0]))
         self.tiles_dir = d if ok else ""
         self.registry.tiles_dir = Path(d) if ok else None
+        extra = [x for x in self._pack_dirs() if os.path.normcase(x) != os.path.normcase(d)]
+        self.registry.extra_dirs = extra
         cache = self.user_dir / "thumbs"
-        self.images = render.TileImages(self.tiles_dir or None, cache_dir=cache)
+        self.images = render.TileImages(self.tiles_dir or None, cache_dir=cache, extra_dirs=extra)
         from ui.geomorph_dialog import find_symbols_dir as _fsd
         self.images.symbols_dir = _fsd(self.tiles_dir, getattr(self.main.library.library, "root", ""))
         self.settings.setValue("geomorph/tiles_dir", self.tiles_dir)
         flagged = sum(1 for t in self.registry.tiles.values() if t.review)
         self.lbl_pack.setText(
             f"{len(self.registry.tiles)} tiles in the manifest ({flagged} with edge data worth a look). " +
-            ("Preview uses the images in that folder." if ok else
+            (f"Preview uses the images in that folder{' and ' + str(len(extra)) + ' other pack(s) in your library' if extra else ''}."
+             if ok else
              "No tile folder: the preview shows boxes. Placing on the canvas still uses the tiles in your library."))
 
     def _reload_archetypes(self):

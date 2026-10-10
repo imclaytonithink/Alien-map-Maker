@@ -95,9 +95,9 @@ def apply_overlays(res, rng, enabled=None, intensity=0.5, arch=None):
                 cy = p.y + (p.h if side == "S" else -1 if side == "N" else p.h // 2)
                 g = res.grids[p.level]
                 if (cx, cy) not in g.occ:
-                    bx = p.x + (p.w if side == "E" else 0 if side == "W" else p.w / 2)
-                    by = p.y + (p.h if side == "S" else 0 if side == "N" else p.h / 2)
-                    ext.append((p.level, bx, by, p.zone))
+                    spot = _hull_point(p, side)
+                    if spot is not None:
+                        ext.append((p.level, spot[0], spot[1], p.zone))
         for lvl, bx, by, z in (rng.sample(ext, min(k, len(ext))) if ext else []):
             markers.append({"type": "breach", "level": lvl, "x": bx, "y": by, "label": "Breach / decompression", "zone": z})
     if "salvage" in enabled and tiles:
@@ -176,6 +176,51 @@ def _room_detail(res, zone_id):
     return {"states": states, "contents": contents, "threats": threats, "secrets": secrets, "gm": " ".join(parts)}
 
 
+def _key_point(p):
+    """Where a tile's key number goes: the middle of its floor (a nose or wing does not fill its square), else
+    the middle of the square. The point is snapped to the floor cell nearest that middle so it never floats outside."""
+    from . import atmosphere, floors
+    rows = atmosphere._floor(p)
+    centre = (p.x + p.w / 2.0, p.y + p.h / 2.0)
+    if rows is None:
+        return centre
+    cells = [(x, y) for y, r in enumerate(rows) for x, ch in enumerate(r) if ch != "o"]
+    if not cells or len(cells) > 0.9 * len(rows) * len(rows[0]):
+        return centre                                # (nearly) full tile: the middle is fine
+    sub = floors.SUB
+    mx = sum(c[0] for c in cells) / len(cells)
+    my = sum(c[1] for c in cells) / len(cells)
+    x, y = min(cells, key=lambda c: (c[0] - mx) ** 2 + (c[1] - my) ** 2)
+    return (p.x + (x + 0.5) / sub, p.y + (y + 0.5) / sub)
+
+
+def _hull_point(p, side):
+    """Where a breach on ``side`` of placed tile ``p`` goes: on the hull itself, not in the empty corner of a nose or
+    wing. Scans in from the middle of that side to the first cell that is not outside (floor maps, half squares).
+    Without a floor map the middle of the side is used; a side with no hull near its middle gives None."""
+    from . import atmosphere, floors
+    mid = {"N": (p.x + p.w / 2, p.y), "S": (p.x + p.w / 2, p.y + p.h), "W": (p.x, p.y + p.h / 2), "E": (p.x + p.w, p.y + p.h / 2)}[side]
+    rows = atmosphere._floor(p)
+    if rows is None:
+        return mid
+    H, W = len(rows), len(rows[0])
+    sub = floors.SUB
+    for off in (0, 1, -1, 2, -2, 3, -3):            # a little either side of the middle if the middle is open
+        if side in "NS":
+            x = min(max(W // 2 + off, 0), W - 1)
+            ys = range(H) if side == "N" else range(H - 1, -1, -1)
+            for y in ys:
+                if rows[y][x] != "o":
+                    return (p.x + (x + 0.5) / sub, p.y + (y if side == "N" else y + 1) / sub)
+        else:
+            y = min(max(H // 2 + off, 0), H - 1)
+            xs = range(W) if side == "W" else range(W - 1, -1, -1)
+            for x in xs:
+                if rows[y][x] != "o":
+                    return (p.x + (x if side == "W" else x + 1) / sub, p.y + (y + 0.5) / sub)
+    return None
+
+
 def build_key(res, rng, arch=None):
     """Numbered key: one entry per room tile/zone, then vertical and utility entries."""
     key = []
@@ -200,7 +245,8 @@ def build_key(res, rng, arch=None):
             detail = _room_detail(res, p.zone)
             if detail["gm"]:
                 text = f"{text} {detail['gm']}"
-            key.append({"n": n, "level": g.index, "x": p.x + p.w / 2.0, "y": p.y + p.h / 2.0, "title": title,
+            kx, ky = _key_point(p)
+            key.append({"n": n, "level": g.index, "x": kx, "y": ky, "title": title,
                         "text": text, "zone": p.zone, "tile": p.tile.id,
                         "player": (f"{sentence} Marked on the map: {rooms}." if rooms else sentence),
                         "states": detail["states"], "contents": detail["contents"],

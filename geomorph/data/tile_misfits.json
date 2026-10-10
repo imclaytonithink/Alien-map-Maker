@@ -1,0 +1,19 @@
+{
+ "_about": "Tiles whose image does not match their recorded size. The generator leaves them out: placed in their slot, their art would hang over the neighbours and leave gaps. Rebuild this list with geomorph.registry.find_misfits(registry, pack_dirs).",
+ "tiles": {
+  "106-2": "image is 24 x 24 squares; the plan (20 x 10) plus the 2-square border is 24 x 14",
+  "325": "image is 24 x 16 squares; the plan (20 x 10) plus the 2-square border is 24 x 14",
+  "452": "image is 8 x 8 squares; the plan (8 x 8) plus the 2-square border is 12 x 12",
+  "452x": "image is 8 x 8 squares; the plan (8 x 8) plus the 2-square border is 12 x 12",
+  "bE756:Bridge, Ends": "image is 34 x 24 squares; the plan (10 x 10) plus the 2-square border is 14 x 14",
+  "bE758:Bridge, Ends": "image is 34 x 24 squares; the plan (10 x 10) plus the 2-square border is 14 x 14",
+  "eE762:Engineering, Ends": "image is 34 x 14 squares; the plan (10 x 10) plus the 2-square border is 14 x 14",
+  "eE763:Engineering, Ends": "image is 14 x 17 squares; the plan (10 x 10) plus the 2-square border is 14 x 14",
+  "eE763:Engineering, Ends, Gunnery x2": "image is 14 x 17 squares; the plan (10 x 10) plus the 2-square border is 14 x 14",
+  "A122": "image is 24 x 8 squares; the plan (20 x 10) plus the 2-square border is 24 x 14",
+  "A122m": "image is 24 x 8 squares; the plan (20 x 10) plus the 2-square border is 24 x 14",
+  "A123": "image is 24 x 8 squares; the plan (20 x 10) plus the 2-square border is 24 x 14",
+  "A130": "image is 24 x 8 squares; the plan (20 x 10) plus the 2-square border is 24 x 14",
+  "A130m": "image is 24 x 8 squares; the plan (20 x 10) plus the 2-square border is 24 x 14"
+ }
+}

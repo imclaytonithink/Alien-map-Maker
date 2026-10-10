@@ -29,8 +29,11 @@ def default_cache_dir():
 class TileImages:
     """Loads tile images (cached thumbnails); injectable for tests."""
 
-    def __init__(self, tiles_dir, cache_dir=None, loader=None):
+    def __init__(self, tiles_dir, cache_dir=None, loader=None, extra_dirs=()):
         self.tiles_dir = Path(tiles_dir) if tiles_dir else None
+        # Other pack folders searched too: the Geomorphs and Custom Tiles packs share folder names
+        # ("100x100 Core"...) but hold different tiles, so one folder alone misses about half of them.
+        self.extra_dirs = [Path(d) for d in extra_dirs if d]
         self.cache = Path(cache_dir) if cache_dir else default_cache_dir()
         self.loader = loader          # loader(tile) -> RGBA image at THUMB_PPS (tests)
         self._mem = {}
@@ -50,6 +53,14 @@ class TileImages:
             finally:
                 self.tiles_dir = saved
         return self.thumb(_T)
+
+    def find(self, rel):
+        """The pack file for ``rel``: the tile folder first, then the other packs."""
+        for d in ([self.tiles_dir] if self.tiles_dir is not None else []) + self.extra_dirs:
+            path = d / rel
+            if path.exists():
+                return path
+        return None
 
     def cache_path(self, tile) -> Path:
         return self.cache / (tile.id.replace("/", "_").replace(":", "_") + ".png")
@@ -80,8 +91,9 @@ class TileImages:
                     im = Image.open(cp).convert("RGBA")
                 except (OSError, SyntaxError):
                     im = None             # half-written by another thread: rebuild
-            if im is None and self.tiles_dir is not None and (self.tiles_dir / tile.image).exists():
-                src = Image.open(self.tiles_dir / tile.image)
+            src_path = self.find(tile.image)
+            if im is None and src_path is not None:
+                src = Image.open(src_path)
                 src.load()
                 k = PX_PER_SQUARE // THUMB_PPS
                 rgba = src.convert("RGBA")

@@ -1,8 +1,27 @@
 """Tile choice: map zones onto tiles with rotation, mirroring and edge fit."""
 from __future__ import annotations
 
+import re
+
 from .learning import STRENGTH
 from .placement import LevelGrid, Orientation, orientations
+
+
+_UPPER = re.compile(r"\bupper\b|\(level\s*[2-9]", re.I)
+
+
+def upper_floor(tile) -> bool:
+    """The upper floor of a double- or triple-height room ("... - Upper", "Upper Deck", "(Level 2 ...").
+    Its art is mostly the open space above the room below, so on its own it reads as an empty hole: it is only
+    placed on top of its own lower floor (tall rooms), never as an ordinary room."""
+    cached = getattr(tile, "_upper", None)
+    if cached is None:
+        cached = bool(_UPPER.search(tile.image.rsplit("/", 1)[-1]))
+        try:
+            tile._upper = cached
+        except AttributeError:
+            pass
+    return cached
 
 
 class TilePicker:
@@ -26,7 +45,7 @@ class TilePicker:
     def pool(self, tile_type, w, h, tags, minimum=0.5, exclude=()):
         out = []
         for t in self.reg.tiles.values():
-            if t.type != tile_type or {t.w, t.h} != {w, h} or t.id in exclude:
+            if t.type != tile_type or {t.w, t.h} != {w, h} or t.id in exclude or upper_floor(t):
                 continue
             s = self.tag_score(t, tags)
             if s >= minimum:
@@ -53,12 +72,14 @@ class TilePicker:
                 cands = self.pool(tile_type, w, h, list(fallback_tags), minimum=0.3)
             if not cands:
                 cands = [(0.1, t) for t in self.reg.tiles.values()
-                         if t.type == tile_type and {t.w, t.h} == {w, h}]
+                         if t.type == tile_type and {t.w, t.h} == {w, h} and not upper_floor(t)]
+            if not cands:                # nothing else of this size: an upper floor beats a hole in the map
+                cands = [(0.05, t) for t in self.reg.tiles.values() if t.type == tile_type and {t.w, t.h} == {w, h}]
         if reject is not None:
             kept = [(s_, t_) for s_, t_ in cands if not reject(t_)]
             if not kept:                 # rule is strict: widen to any tile of this size that obeys it
                 kept = [(0.1, t_) for t_ in self.reg.tiles.values()
-                        if t_.type == tile_type and {t_.w, t_.h} == {w, h} and not reject(t_)]
+                        if t_.type == tile_type and {t_.w, t_.h} == {w, h} and not reject(t_) and not upper_floor(t_)]
             cands = kept or cands
         scored = []
         for ts, tile in cands:
@@ -84,9 +105,15 @@ class TilePicker:
             taste = getattr(self.reg, "taste", None)
             if taste:                                   # learned preference: a small bonus or penalty, never a rule
                 total += STRENGTH * taste.get(tile.id, 0.0)
-            scored.append((total, tile, best[1], best[2]))
+            scored.append((total, tile, best[1], best[2], ts))
         if not scored:
             return None
+        # a tile made for the room beats one that merely mentions it ("Escape Pods" over a multipurpose deck with
+        # one pod): when strong matches fit, the weak ones are not in the draw
+        strong = max(r[4] for r in scored)
+        if strong >= 0.9:
+            scored = [r for r in scored if r[4] >= strong - 0.3]
+        scored = [r[:4] for r in scored]
         scored.sort(key=lambda r: -r[0])
         top = scored[:topn]
         # weighted pick among the best few: variety without leaving the good fits

@@ -126,6 +126,25 @@ def parse_name(filename: str):
             "title": title or rest, "rooms": rooms, "variant": variant, **flags}
 
 
+def find_misfits(registry, dirs) -> dict:
+    """{tile id: reason} for standard-geometry tiles whose image is not (plan + 2-square border) in size."""
+    from PIL import Image
+    out = {}
+    for t in registry.tiles.values():
+        if t.bbox:
+            continue
+        src = next((Path(d) / t.image for d in dirs if (Path(d) / t.image).exists()), None)
+        if src is None:
+            continue
+        with Image.open(src) as im:
+            W, H = im.size
+        exp = ((t.w + 2 * BORDER_SQUARES) * PX_PER_SQUARE, (t.h + 2 * BORDER_SQUARES) * PX_PER_SQUARE)
+        if abs(W - exp[0]) >= PX_PER_SQUARE / 2 or abs(H - exp[1]) >= PX_PER_SQUARE / 2:
+            out[t.id] = (f"image is {W / PX_PER_SQUARE:.0f} x {H / PX_PER_SQUARE:.0f} squares; the plan ({t.w} x {t.h}) "
+                         f"plus the 2-square border is {exp[0] // PX_PER_SQUARE} x {exp[1] // PX_PER_SQUARE}")
+    return out
+
+
 def scan_tiles(tiles_dir, table=None) -> list:
     """Parse filenames only (fast, no images). Edge data is added separately."""
     tiles_dir = Path(tiles_dir)
@@ -265,6 +284,7 @@ class Registry:
 
     def __init__(self, tiles, tiles_dir=None, table=None):
         self.tiles = {t.id: t for t in tiles}
+        self.retired = {}                       # left out of generation (see tile_misfits.json)
         self.tiles_dir = Path(tiles_dir) if tiles_dir else None
         self.table = table or tag_table()
 
@@ -286,7 +306,17 @@ class Registry:
         if extra.exists():
             for d in load_json(extra).get("tiles", []):
                 reg.add(Tile.from_json(d))
+        misfits = DATA_DIR / "tile_misfits.json"    # image does not match the recorded size: never generated with
+        if misfits.exists():
+            for tid in load_json(misfits).get("tiles", {}):
+                t = reg.tiles.pop(tid, None)
+                if t is not None:
+                    reg.retired[tid] = t
         return reg
+
+    def lookup(self, tid):
+        """A tile by id, including the retired misfits (so layouts saved before they were retired still open)."""
+        return self.tiles.get(tid) or self.retired[tid]
 
     def add(self, tile: Tile):
         self.tiles[tile.id] = tile
@@ -374,5 +404,10 @@ class Registry:
         """Tags with no suitable tile at all (reported per archetype)."""
         return [g for g in tags if not self.with_tag(g)]
 
+    extra_dirs = ()                       # other pack folders holding tiles (see render.TileImages)
+
     def path(self, tile):
+        for d in ([self.tiles_dir] if self.tiles_dir else []) + [Path(x) for x in self.extra_dirs]:
+            if (d / tile.image).exists():
+                return str(d / tile.image)
         return str(self.tiles_dir / tile.image) if self.tiles_dir else tile.image
