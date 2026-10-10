@@ -418,18 +418,35 @@ for _ in range(6):
         break
 dlg.btn_place_light.setChecked(False)
 # dragging a placed light moves it (and snaps it to a wall), and Undo puts it back
+bx0, by0, _a, _b = _render.shared_bounds(dlg.result)       # re-rolls can change the map's outline
 dlg.result.lights = [dict(dlg.result.lights[0])] if dlg.result.lights else []
 if not dlg.result.lights:
+    # the re-rolls replaced the tile under click_px: find any spot on this level where this kind of light can go
+    from geomorph import atmosphere as _A
+    g_ = dlg.result.grids[dlg.level_index]
+    spot = next(((p.x + fx / 4.0, p.y + fy / 4.0) for p in g_.placed if p.tile.type != "wing"
+                 for fx in range(1, p.w * 4, 3) for fy in range(1, p.h * 4, 3)
+                 if _A.snap_light(dlg.result, g_, p.x + fx / 4.0, p.y + fy / 4.0, dlg.images,
+                                  dlg.cb_light_kind.currentData())), None)
+    assert spot is not None, "somewhere on the level takes a light"
     dlg.btn_place_light.setChecked(True)
-    dlg._preview_clicked(*click_px, 1)
+    dlg._preview_clicked(int((spot[0] - bx0) * 8), int(24 + (spot[1] - by0) * 8), 1)
     dlg.btn_place_light.setChecked(False)
 L0 = dlg.result.lights[0]
 old = (L0["x"], L0["y"])
 start = (int((L0["x"] - bx0) * 8), int(24 + (L0["y"] - by0) * 8))
 dlg._preview_clicked(*start, 1)
 assert dlg._drag_light is not None, "pressing on a light picks it up"
-dlg._preview_dragged(start[0] + 60, start[1])
-dlg._preview_dragged(start[0] - 60, start[1] + 40)
+from geomorph import atmosphere as _A
+g_ = dlg.result.grids[dlg.level_index]
+kind_ = L0.get("kind", "wall")
+target = next(((p.x + fx / 4.0, p.y + fy / 4.0) for p in g_.placed if p.tile.type != "wing"
+               for fx in range(1, p.w * 4, 3) for fy in range(1, p.h * 4, 3)
+               if abs(p.x + fx / 4.0 - L0["x"]) + abs(p.y + fy / 4.0 - L0["y"]) > 3
+               and _A.snap_light(dlg.result, g_, p.x + fx / 4.0, p.y + fy / 4.0, dlg.images, kind_)), None)
+assert target is not None
+dlg._preview_dragged(start[0] + 20, start[1])
+dlg._preview_dragged(int((target[0] - bx0) * 8), int(24 + (target[1] - by0) * 8))
 dlg._preview_released(0, 0)
 moved = (dlg.result.lights[0]["x"], dlg.result.lights[0]["y"])
 assert dlg._drag_light is None and "Moved a light" in dlg.lbl_changes.text()
