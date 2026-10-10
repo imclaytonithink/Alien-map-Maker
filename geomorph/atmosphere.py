@@ -130,10 +130,52 @@ def _wall_face(rows, x, y, d, walk, run=None) -> bool:
             return False
         if rows[wy][wx] != "#" or rows[fy][fx] not in walk:
             return False
-    return True
+    for step in range(2, 5):                                   # a wall is thin; a deep solid block is a machine or console
+        wx, wy = x + dx * step, y + dy * step
+        if not (0 <= wx < W and 0 <= wy < H) or rows[wy][wx] != "#":
+            return True
+    return False
 
 
-def _lamps(p, rows):
+DOOR_CLEAR = 1.2            # squares a fixture keeps from a doorway
+WALL_SPAN_PX = 10           # solid wall needed this far either side of a fixture (a door is a gap in the wall)
+
+
+def _wall_clear(art, face, wall) -> bool:
+    """True when the wall around ``face`` (squares in the tile) is solid for a stretch either side, i.e. no door or
+    opening is there. Without art there is nothing to read, so it passes."""
+    if art is None or face is None:
+        return True
+    ax, ay = (1, 0) if wall in "NS" else (0, 1)
+    ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
+    wp = _wall_mask(art).load()
+    W, H = art.size
+    cx, cy = (face[0] + ART_BORDER) * ART_PPS, (face[1] + ART_BORDER) * ART_PPS
+    total = good = 0
+    for k in range(-WALL_SPAN_PX, WALL_SPAN_PX + 1):
+        for depth in (1.5, 3.0):                              # a little way into the wall, away from the room
+            x, y = int(cx + ux * depth + ax * k), int(cy + uy * depth + ay * k)
+            if 0 <= x < W and 0 <= y < H:
+                total += 1
+                good += 1 if wp[x, y] else 0
+    return total > 0 and good / total >= 0.95
+
+
+def _face_agrees(c, face, tol=0.3) -> bool:
+    """The wall found in the art must sit where the floor map says it does, else the fixture would float."""
+    if face is None:
+        return True
+    cx, cy, d = c
+    want = {"N": ("y", cy / 2.0), "S": ("y", (cy + 1) / 2.0), "W": ("x", cx / 2.0), "E": ("x", (cx + 1) / 2.0)}[d]
+    return abs(face[0 if want[0] == "x" else 1] - want[1]) <= tol
+
+
+def near_door(p, x, y) -> bool:
+    """Is (x, y) (squares in the tile) within DOOR_CLEAR of one of its edge doors?"""
+    return any((x - dx) ** 2 + (y - dy) ** 2 < DOOR_CLEAR ** 2 for dx, dy, _s in door_points(p))
+
+
+def _lamps(p, rows, art=None):
     """Emergency lamp spots as (cell_x, cell_y, wall_dir): floor cells next to a wall, near each doorway
     (or near the corners when the room has none). The lamp sits flush against that wall."""
     SUB = 2
@@ -158,6 +200,16 @@ def _lamps(p, rows):
     lamps = []
     floor = {(x, y) for y, r in enumerate(rows) for x, ch in enumerate(r) if ch in walk} if rows is not None else set()
     lit = set()
+    _ok = {}
+
+    def ok(c):
+        if c not in _ok:
+            face = _wall_face_point(art, c[0], c[1], c[2], p)
+            x0, y0 = c[0] / 2.0 + 0.25, c[1] / 2.0 + 0.25
+            _ok[c] = (not near_door(p, *(face or (x0, y0))) and _wall_clear(art, face, c[2])
+                      and _face_agrees(c, face))
+        return _ok[c]
+    cand = [c for c in cand if ok(c)]
 
     def covered():
         return bool(floor) and len(lit & floor) / len(floor) >= TARGET_LIT
@@ -212,8 +264,9 @@ ART_BORDER = 2
 INK = 16                    # alpha at which a thumbnail pixel counts as drawn art
 WALL_ALPHA, WALL_LUM = 200, 100        # walls are solid and dark in the art; floors are pale and see-through
 RAY_STEP_DEG = 0.5
+SOFTEN_PX = 4.0             # extra blur (art pixels) so no pool has a hard edge
 DEFAULT_LIGHT = "#ff241c"
-DEFAULT_FIXTURE = "#ff9682"
+DEFAULT_FIXTURE = "#e8261c"
 WASH_PEAK = 95             # how strongly a lamp tints the floor next to it (0-255)
 _CACHE = {}
 
@@ -343,7 +396,7 @@ def _lamp_light(spec, p, rows, art, W, H, pps):
         if inward:
             x, y = x + inward[0] * 2.0, y + inward[1] * 2.0
         lit = _cast(wall, x, y, inward, radius_px, full=spec["wall"] is None)
-        lit = lit.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.GaussianBlur(1.2))
+        lit = lit.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(SOFTEN_PX))
         fall = Image.new("L", wall.size, 0)
         _paste_l(fall, _light_sprite(2 * radius_px), int(x) - radius_px, int(y) - radius_px)
         lit = ImageChops.multiply(lit, fall)
@@ -374,7 +427,7 @@ def lamp_specs(room, rows, art, pps) -> list:
     dark = "power_failure" in states
     specs = []
     if dark or "lockdown" in states:
-        for cx, cy, wall in _lamps(p, rows):
+        for cx, cy, wall in _lamps(p, rows, art):
             face = _wall_face_point(art, cx, cy, wall, p)
             if face is None:
                 x0, y0 = cx / 2.0, cy / 2.0
@@ -526,6 +579,10 @@ def snap_light(res, g, x, y, images=None, kind="wall", radius=4.0, strength=1.0,
                 continue
             for d in "NSWE":
                 if _wall_face(rows, xx, yy, d, "c.r", 1):
+                    fp = _wall_face_point(art, xx, yy, d, tile)
+                    if (near_door(tile, *(fp or (xx / 2.0 + 0.25, yy / 2.0 + 0.25))) or not _wall_clear(art, fp, d)
+                            or not _face_agrees((xx, yy, d), fp)):
+                        continue
                     dist = (xx + 0.5 - rx * 2) ** 2 + (yy + 0.5 - ry * 2) ** 2
                     if best is None or dist < best[0]:
                         best = (dist, xx, yy, d)
