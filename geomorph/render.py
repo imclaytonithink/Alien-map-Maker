@@ -131,6 +131,19 @@ def shared_bounds(res, margin=3):
     return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
 
 
+def oriented_thumb(images, p):
+    """The tile's thumbnail turned the way it is placed (15 px per square, with the 2 square border), or None."""
+    th = images.thumb(p.tile)
+    if th is None or p.tile.bbox:
+        return None
+    t = th
+    if p.o.mirror:
+        t = t.transpose(Image.FLIP_LEFT_RIGHT)
+    if p.o.rot:
+        t = t.transpose({90: Image.ROTATE_270, 180: Image.ROTATE_180, 270: Image.ROTATE_90}[p.o.rot])
+    return t
+
+
 def _blit_tile(layer, d, p, images, res, x0, y0, pps, px, craft=True):
     """Draw one placed tile (image, orientation, border) onto ``layer``."""
     th = images.thumb(p.tile)
@@ -235,7 +248,7 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
         if f["kind"] in TOP_KINDS or f["kind"] == "void":
             box = (px(f["x"], x0), px(f["y"], y0), px(f["x"] + f["w"], x0), px(f["y"] + f["h"], y0))
             F.draw_filler(d, f["kind"], box, pps, f.get("rot", 0), f.get("label", "") if f["kind"] in ("void", "airlock") else "")
-    _overlays(res, g, layer, x0, y0, pps, gm, atmosphere)
+    _overlays(res, g, layer, x0, y0, pps, gm, atmosphere, images)
     _markers(res, g, layer, x0, y0, pps, gm, numbers)
     tilt = res.meta.get("tilt")
     if tilt:                               # a crashed wreck sits at an angle
@@ -310,11 +323,11 @@ def _paste_clipped(dst, src, x, y):
     dst.alpha_composite(src.crop((l - x, t - y, rr - x, bb - y)), (l, t))
 
 
-def _overlays(res, g, layer, x0, y0, pps, gm, atmosphere=True):
+def _overlays(res, g, layer, x0, y0, pps, gm, atmosphere=True, images=None):
     ov = res.overlays or {}
     if atmosphere:                          # dim rooms, red emergency lamps, shutters (GM), hazard borders
         from . import atmosphere as A
-        A.paint(res, g, layer, x0, y0, pps, gm)
+        A.paint(res, g, layer, x0, y0, pps, gm, images)
         return
     over = Image.new("RGBA", layer.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(over)

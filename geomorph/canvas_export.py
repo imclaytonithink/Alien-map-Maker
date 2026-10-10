@@ -135,7 +135,9 @@ def to_canvas(res, cell: float, resolver=None, tile_images=None, filler_dir=None
                 for part, layer_name in (("public", LAYER_ATMO), ("gm", LAYER_GM)):
                     if part == "gm" and not gm:
                         continue
-                    im = A.room_overlay(room, 30, part)
+                    from . import render as _render
+                    art = _render.oriented_thumb(tile_images, p) if tile_images is not None else None
+                    im = A.room_overlay(room, 30, part, art)
                     if im is None or im.getbbox() is None:
                         continue
                     png = Path(filler_dir) / f"atmosphere_{g.index}_{p.x}_{p.y}_{part}.png"

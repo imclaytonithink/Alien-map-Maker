@@ -1245,6 +1245,31 @@ def check_atmosphere():
                         assert al[cx * 5 + 2, cy * 5 + 2] == 0, "the effect stays inside the building"
             checked += 1
     assert checked >= 3 and lamps_seen >= 3, (checked, lamps_seen)
+    # lamps sit on the wall as drawn: with art whose walls are thinner than a floor-map cell, the lamp still touches the ink
+    from PIL import Image as _Image, ImageFilter as _Filter
+    checked_art = 0
+    for g2 in res.grids:
+        for rm in atmosphere.affected(res, g2):
+            tp = rm["tile"]
+            rows = atmosphere._floor(tp)
+            if rows is None or "power_failure" not in rm["states"] or checked_art >= 3:
+                continue
+            m = _Image.new("L", (len(rows[0]), len(rows)))
+            m.putdata([255 if ch == "#" else 0 for r_ in rows for ch in r_])
+            ink = m.resize((len(rows[0]) * 15 // 2 + 1, len(rows) * 15 // 2 + 1), _Image.NEAREST).crop((0, 0, tp.w * 15, tp.h * 15))
+            ink = ink.filter(_Filter.MinFilter(5))                     # walls two pixels thinner on each side
+            art = _Image.new("RGBA", ((tp.w + 4) * 15, (tp.h + 4) * 15), (0, 0, 0, 0))
+            art.paste(_Image.new("RGBA", ink.size, (120, 220, 230, 255)), (30, 30), ink)
+            _lm, spots = atmosphere._light_map(tp, rows, int(tp.w * 30), int(tp.h * 30), 30, atmosphere.LIGHT_RADIUS, art)
+            a = art.getchannel("A").load()
+            for gx, gy, wall, _rr in spots:
+                ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
+                fx, fy = gx / 30 * 15 + 30, gy / 30 * 15 + 30             # the lamp's wall point in art pixels
+                beyond = a[int(fx + ux * 1.5), int(fy + uy * 1.5)]
+                before = a[int(fx - ux * 1.5), int(fy - uy * 1.5)]
+                assert beyond >= atmosphere.INK and before < atmosphere.INK, ("the lamp touches the drawn wall", wall, beyond, before)
+            checked_art += 1
+    assert checked_art >= 1
     # light does not pass through a wall: a lamp's visible cells never include a cell behind a wall in a straight line
     for g2 in res.grids:
         for rm in atmosphere.affected(res, g2):

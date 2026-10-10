@@ -201,7 +201,42 @@ def _light_mask(rows, cx, cy, radius_cells, W, H, walk=None) -> Image.Image:
     return m.resize((W, H), Image.BILINEAR)
 
 
-def _light_map(p, rows, W, H, pps, radius_sq):
+ART_PPS = 15                # the tile thumbnails are 15 px per square, with a 2 square border all round
+ART_BORDER = 2
+INK = 16                    # alpha at which a thumbnail pixel counts as drawn wall
+
+
+def _wall_face_point(art, cx, cy, wall, p):
+    """Where the wall really is for the lamp on floor cell (cx, cy): the tile art is scanned from the cell centre toward
+    the wall, and the first inked pixel (median over a few parallel lines) is the wall face. Returns (x, y) in squares
+    relative to the tile, or None when there is no art to read."""
+    if art is None:
+        return None
+    ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
+    ax, ay = (1, 0) if wall in "NS" else (0, 1)
+    sx = ((cx + 0.5) / 2.0 + ART_BORDER) * ART_PPS
+    sy = ((cy + 0.5) / 2.0 + ART_BORDER) * ART_PPS
+    alpha = art.getchannel("A") if art.mode == "RGBA" else art.convert("RGBA").getchannel("A")
+    px = alpha.load()
+    W, H = alpha.size
+    hits = []
+    for off in (-3.0, -1.5, 0.0, 1.5, 3.0):
+        for i in range(0, int(ART_PPS * 1.2 / 0.5)):
+            t = i * 0.5
+            x, y = int(sx + ux * t + ax * off), int(sy + uy * t + ay * off)
+            if not (0 <= x < W and 0 <= y < H):
+                break
+            if px[x, y] >= INK:
+                if t >= 1.0:                      # ink on the floor cell itself contradicts the floor map: no reading
+                    hits.append(t)
+                break
+    if len(hits) < 3:
+        return None
+    t = sorted(hits)[len(hits) // 2]
+    return ((sx + ux * t) / ART_PPS - ART_BORDER, (sy + uy * t) / ART_PPS - ART_BORDER)
+
+
+def _light_map(p, rows, W, H, pps, radius_sq, art=None):
     """Where the room's lamps reach, 0-255: bright at a lamp, fading out, blocked by walls and furniture.
     Everything a lamp cannot see stays dark, which leaves real shadows."""
     lamps = _lamps(p, rows)
@@ -214,7 +249,13 @@ def _light_map(p, rows, W, H, pps, radius_sq):
         x0, y0 = cx * pps / 2.0, cy * pps / 2.0                     # the cell's top-left, in pixels
         half = pps / 4.0
         gx, gy = {"N": (x0 + half, y0), "S": (x0 + half, y0 + pps / 2.0),
-                  "W": (x0, y0 + half), "E": (x0 + pps / 2.0, y0 + half)}[wall]   # the point on the wall face
+                  "W": (x0, y0 + half), "E": (x0 + pps / 2.0, y0 + half)}[wall]   # the cell edge beside the wall
+        face = _wall_face_point(art, cx, cy, wall, p)                 # ... or the wall itself, read from the art
+        if face is not None:
+            if wall in "NS":
+                gy = face[1] * pps
+            else:
+                gx = face[0] * pps
         local = Image.new("L", (W, H), 0)
         sx, sy = int(gx) - r, int(gy) - r
         sx0, sy0 = max(0, -sx), max(0, -sy)
@@ -229,7 +270,7 @@ def _light_map(p, rows, W, H, pps, radius_sq):
     return light, spots
 
 
-def room_overlay(room: dict, pps: int, part: str = "all") -> Image.Image | None:
+def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Image | None:
     """The overlay for one room. ``part``: "public" (what anyone sees), "gm" (shutters only) or "all".
 
     Everything public is confined to the building inside the tile (the floor map says where the walls and
@@ -243,7 +284,7 @@ def room_overlay(room: dict, pps: int, part: str = "all") -> Image.Image | None:
         mask = _room_mask(rows, W, H)
         dark = "power_failure" in states
         lit = dark or "lockdown" in states
-        light, spots = _light_map(p, rows, W, H, pps, LIGHT_RADIUS if dark else 2.0) if lit else (None, [])
+        light, spots = _light_map(p, rows, W, H, pps, LIGHT_RADIUS if dark else 2.0, art) if lit else (None, [])
         body = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         if dark:
             shade = Image.new("L", (W, H), 168)                       # full darkness ...
@@ -273,18 +314,7 @@ def room_overlay(room: dict, pps: int, part: str = "all") -> Image.Image | None:
         body.putalpha(ImageChops.multiply(body.getchannel("A"), mask))
         img.alpha_composite(body)
         d = ImageDraw.Draw(img)
-        plate = max(3, int(pps * 0.5))                                 # wall cell depth: the plate runs right into the wall
-        for gx, gy, wall, rr in spots:                                 # round lamps: half-discs on a plate fixed to the wall
-            pw = max(2, int(rr * 0.8))
-            if wall == "N":
-                back = (gx - pw, gy - plate, gx + pw, gy)
-            elif wall == "S":
-                back = (gx - pw, gy, gx + pw, gy + plate)
-            elif wall == "W":
-                back = (gx - plate, gy - pw, gx, gy + pw)
-            else:
-                back = (gx, gy - pw, gx + plate, gy + pw)
-            d.rectangle(back, fill=(120, 24, 20, 255))
+        for gx, gy, wall, rr in spots:                                 # round lamps: half-discs, flat side on the wall
             box = (gx - rr, gy - rr, gx + rr, gy + rr)
             start, end = {"N": (0, 180), "S": (180, 360), "W": (-90, 90), "E": (90, 270)}[wall]
             d.pieslice(box, start, end, fill=(255, 150, 130, 255), outline=(120, 20, 16, 255))
@@ -323,10 +353,12 @@ def shadow_fraction(room: dict, pps: int = 10) -> float | None:
     return unlit / inside if inside else None
 
 
-def paint(res, g, layer: Image.Image, x0, y0, pps, gm=True):
+def paint(res, g, layer: Image.Image, x0, y0, pps, gm=True, images=None):
     """Draw every affected room's overlay onto ``layer`` (the level render)."""
+    from . import render
     for room in affected(res, g):
         p = room["tile"]
-        im = room_overlay(room, pps, "all" if gm else "public")
+        art = render.oriented_thumb(images, p) if images is not None else None
+        im = room_overlay(room, pps, "all" if gm else "public", art)
         if im is not None:
             _put(layer, im, int(round((p.x - x0) * pps)), int(round((p.y - y0) * pps)))
