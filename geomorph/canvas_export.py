@@ -104,7 +104,7 @@ def state_pieces(res, g, cell: float) -> list:
         out.append(d)
     spot = S.legend_spot(res, g)
     if spot is not None:
-        panel = S.legend(S.level_states(res, g), art_px)
+        panel = S.legend(S.level_states(res, g), art_px, S.marks_in(res, g))
         d = _image_piece(panel, spot[0] * cell, spot[1] * cell, art_px, LAYER_LEGEND, "Map legend", g.index)
         d["scale"] = scale
         out.append(d)

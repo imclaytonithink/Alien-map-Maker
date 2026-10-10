@@ -1136,7 +1136,7 @@ def check_atmosphere():
     import tempfile
     from geomorph import atmosphere, canvas_export, render
     reg = Registry.load()
-    res = pipeline.generate(reg, dict(kind="site", seed="atmo", archetype="Research facility", scale="medium",
+    res = pipeline.generate(reg, dict(kind="site", seed="atmo", archetype="Research facility", scale="medium", direction="down",
                                       overlays=["lockdown", "power_failure", "quarantine"], intensity=1.0))
     ov = res.overlays
     assert ov["power_failure"] and ov["lockdown"] and ov["quarantine"]

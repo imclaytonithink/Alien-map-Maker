@@ -164,24 +164,96 @@ def _sample(state, w, h):
     return im
 
 
-def legend(states, square_px: int) -> Image.Image | None:
-    """A compact legend panel for ``states`` (None when there is nothing to explain)."""
-    if not states:
+MARKS = ("entrance", "airlock", "rubble", "scorch", "resin", "drag", "barricade")
+MARK_LABEL = {"entrance": "Entrance", "airlock": "Airlock (A/L)", "rubble": "Debris", "scorch": "Burn / acid mark",
+              "resin": "Resin", "drag": "Drag marks", "barricade": "Barricade"}
+MARK_ABOUT = {"entrance": "The main way in.",
+              "airlock": "Sealed door between outside and inside: cycle it to pass.",
+              "rubble": "Wreckage and fallen debris: difficult ground.",
+              "scorch": "Fire, weapon or acid damage on the floor.",
+              "resin": "Organic residue on the walls and floor. Something has been nesting here.",
+              "drag": "Smeared trail: something was dragged this way.",
+              "barricade": "Lockers and crates piled across a door: clear it, or climb over it."}
+
+
+def marks_in(res, g, decor=True) -> list:
+    """The map marks on level ``g`` that the legend explains, in legend order (incident marks only when the
+    furniture and its marks are shown)."""
+    have = set()
+    for f in g.filler:
+        k = f.get("kind")
+        if k == "airlock":
+            have.add("airlock")
+        elif f.get("decor") and decor and k in ("rubble", "scorch", "resin", "drag"):
+            have.add(k)
+    if any(m.get("type") == "entrance" and m.get("level", g.index) == g.index for m in res.markers):
+        have.add("entrance")
+    if decor and any(it.get("level") == g.index and it.get("kind") == "barricade" for it in getattr(res, "decor", None) or []):
+        have.add("barricade")
+    return [k for k in MARKS if k in have]
+
+
+def _mark_sample(kind, w, h):
+    """A little picture of the mark, drawn the way the map draws it."""
+    from . import filler as F
+    im = Image.new("RGBA", (w, h), (24, 40, 46, 255))
+    d = ImageDraw.Draw(im)
+    pps = max(8, h)
+    if kind == "entrance":
+        cx, cy, r = w / 2, h * 0.78, h * 0.42
+        d.polygon([(cx, cy), (cx - r, cy - r * 1.4), (cx + r, cy - r * 1.4)], fill=F.ALERT)
+    elif kind == "airlock":
+        F.draw_filler(d, "airlock", (int(w * 0.3), 2, int(w * 0.7), h - 3), pps, 0, "")
+    elif kind == "drag":
+        F.draw_filler(d, "drag", (3, int(h * 0.3), w - 3, int(h * 0.7)), pps, 0, "")
+    elif kind == "barricade":
+        d.line((0, h // 2, w, h // 2), fill=(120, 200, 210, 255), width=2)          # the wall with its door
+        d.rectangle((int(w * 0.32), h // 2 - 2, int(w * 0.68), h // 2 + 2), fill=(24, 40, 46, 255))
+        for k in range(3):
+            x0 = int(w * 0.3) + k * int(w * 0.14)
+            d.rectangle((x0, int(h * 0.2) + (k % 2) * 2, x0 + int(w * 0.12), int(h * 0.8)),
+                        fill=(150, 150, 140, 255), outline=(60, 60, 56, 255))
+    else:
+        s = min(w, h) - 4
+        for i, (fx, fy, fs) in enumerate(((0.3, 0.5, 1.0), (0.66, 0.45, 0.7))):
+            bs = int(s * fs)
+            x0, y0 = int(w * fx - bs / 2), int(h * fy - bs / 2)
+            F.draw_filler(d, kind, (x0, y0, x0 + bs, y0 + bs), pps, 0, "")
+    d.rectangle((0, 0, w - 1, h - 1), outline=(120, 200, 210, 255))
+    return im
+
+
+def legend(states, square_px: int, marks=()) -> Image.Image | None:
+    """A compact legend panel: the room ``states`` (symbol, how the room looks, what it means), then the map
+    ``marks`` (entrance, airlocks, debris, burns, resin, drag marks, barricades). None when there is nothing."""
+    states, marks = list(states or ()), list(marks or ())
+    if not states and not marks:
         return None
     s = max(10, int(square_px))
     pad, icon, sw = s // 2, int(s * 1.4), int(s * 2.4)
     title_f, name_f, text_f = _font(max(10, int(s * 0.75))), _font(max(9, int(s * 0.6))), _font(max(8, int(s * 0.45)))
+    head_f = _font(max(8, int(s * 0.55)))
     row_h = int(s * 1.9)
     tx = pad + icon + s // 3 + sw + s // 3                       # where the words start
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    text_w = max(max(probe.textlength(LABEL[st], font=name_f), probe.textlength(ABOUT[st], font=text_f)) for st in states)
+    words = [(LABEL[st], ABOUT[st]) for st in states] + [(MARK_LABEL[m], MARK_ABOUT[m]) for m in marks]
+    text_w = max(max(probe.textlength(a, font=name_f), probe.textlength(b, font=text_f)) for a, b in words)
     width = int(max(tx + text_w + pad, probe.textlength("Legend", font=title_f) + 2 * pad))
-    height = pad * 2 + int(s * 1.2) + row_h * len(states)
+    sub_h = int(s * 1.0)
+    height = (pad * 2 + int(s * 1.2) + row_h * (len(states) + len(marks))
+              + (sub_h if states and marks else 0) + (sub_h if marks else 0))
     im = Image.new("RGBA", (width, height), (8, 14, 18, 235))
     d = ImageDraw.Draw(im)
     d.rectangle((0, 0, width - 1, height - 1), outline=(120, 200, 210, 255), width=max(1, s // 12))
     d.text((pad, pad - 2), "Legend", fill=(230, 250, 250, 255), font=title_f)
     y = pad + int(s * 1.2)
+
+    def heading(text):
+        nonlocal y
+        d.text((pad, y + int(s * 0.2)), text, fill=(140, 200, 210, 255), font=head_f)
+        y += sub_h
+    if states and marks:
+        heading("Rooms")
     for st in states:
         im.alpha_composite(symbol(st, icon), (pad, y + (row_h - icon) // 2))
         x = pad + icon + s // 3
@@ -189,12 +261,20 @@ def legend(states, square_px: int) -> Image.Image | None:
         d.text((tx, y + int(s * 0.1)), LABEL[st], fill=(235, 250, 250, 255), font=name_f)
         d.text((tx, y + int(s * 0.85)), ABOUT[st], fill=(170, 200, 205, 255), font=text_f)
         y += row_h
+    if marks:
+        heading("On the map")
+    for m in marks:
+        mw, mh = icon + s // 3 + sw, int(icon * 0.8)
+        im.alpha_composite(_mark_sample(m, mw, mh), (pad, y + (row_h - mh) // 2))
+        d.text((tx, y + int(s * 0.1)), MARK_LABEL[m], fill=(235, 250, 250, 255), font=name_f)
+        d.text((tx, y + int(s * 0.85)), MARK_ABOUT[m], fill=(170, 200, 205, 255), font=text_f)
+        y += row_h
     return im
 
 
-def legend_size_sq(states) -> tuple:
+def legend_size_sq(states, marks=()) -> tuple:
     """The legend's footprint in grid squares (for finding a free corner)."""
-    im = legend(states, 20)
+    im = legend(states, 20, marks)
     return (math.ceil(im.width / 20), math.ceil(im.height / 20)) if im else (0, 0)
 
 
@@ -258,14 +338,14 @@ def level_states(res, g) -> list:
     return [k for k in ORDER if k in have]
 
 
-def legend_spot(res, g, bounds=None, ratio=1.0):
+def legend_spot(res, g, bounds=None, ratio=1.0, decor=True):
     """Top-left (x, y) in squares for level ``g``'s legend, in an empty part of the map: a free corner inside the
     map's bounds if there is one, else just right of the map. ``ratio``: the legend's pixels per square over the
     map's (a small render draws the legend a little larger so its text stays readable)."""
-    sts = level_states(res, g)
-    if not sts:
+    sts, mks = level_states(res, g), marks_in(res, g, decor)
+    if not sts and not mks:
         return None
-    w, h = legend_size_sq(sts)
+    w, h = legend_size_sq(sts, mks)
     w, h = math.ceil(w * ratio), math.ceil(h * ratio)
     boxes = [(p.x, p.y, p.x + p.w, p.y + p.h) for p in g.placed]
     boxes += [(f["x"], f["y"], f["x"] + f["w"], f["y"] + f["h"]) for f in g.filler if f["kind"] not in _OPEN_KINDS]

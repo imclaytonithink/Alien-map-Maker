@@ -459,9 +459,31 @@ class GeomorphDialog(QDialog):
             self.cb_scale.addItem(label, s_)
         self.cb_scale.setCurrentIndex(1)
         self.cb_env = QComboBox()
+        self.sp_levels = QSpinBox()
+        self.sp_levels.setRange(0, 8)
+        self.sp_levels.setSpecialValueText("Auto")
+        self.sp_levels.setToolTip("How many levels (floors or sublevels). Auto: what suits the kind of site and its "
+                                  "size. Every level is joined to the next by stairs and lifts at the same spot.")
+        self.cb_direction = QComboBox()
+        for key, label in ((None, "Auto"), ("up", "Up — a tower"), ("down", "Down — underground"),
+                           ("both", "Both — floors and basements")):
+            self.cb_direction.addItem(label, key)
+        self.cb_direction.setToolTip("Up: the entrance on the ground floor, floors above it. Down: a small entrance "
+                                     "on the surface, the levels below. Both: floors above the ground floor and "
+                                     "basements below. Auto: down when the environment is underground, else up.")
+        self.cb_cargo = QComboBox()
+        for key, label in ((None, "Auto"), (True, "Yes"), (False, "No")):
+            self.cb_cargo.addItem(label, key)
+        self.cb_cargo.setToolTip("A cargo lift core as well as the stairs and lifts. Auto: on large sites and "
+                                 "industrial ones (mines, factories, refineries, depots, spaceports).")
         f.addRow("Kind of site", self.cb_arch)
         f.addRow("Size", self.cb_scale)
         f.addRow("Environment", self.cb_env)
+        f.addRow("Levels", self.sp_levels)
+        f.addRow("Builds", self.cb_direction)
+        f.addRow("Cargo lift", self.cb_cargo)
+        self._site_form = f
+        self.cb_scale.currentIndexChanged.connect(lambda _i: self._levels_for_kind())
         self.lbl_arch = _help("", self.colors)
         f.addRow(self.lbl_arch)
         self.tabs.addTab("Site")
@@ -898,8 +920,16 @@ class GeomorphDialog(QDialog):
         self.btn_reroll_all = QPushButton("Re-roll the rest")
         self.btn_reroll_all.setToolTip("New tiles for every room that is not kept.")
         self.btn_reroll_all.clicked.connect(self._reroll_all)
+        self.cb_room_state = QComboBox()
+        for key, label in (("normal", "Normal"), ("power_failure", "Power out"), ("lockdown", "Locked down"),
+                           ("quarantine", "Quarantined"), ("breach", "Hull breached"), ("damage", "Battle-damaged")):
+            self.cb_room_state.addItem(label, key)
+        self.cb_room_state.setToolTip("This room's state (one at a time). Click a room on the map, or pick it in the "
+                                      "Room box, then choose. A hull breach needs a room on the hull.")
+        self.cb_room_state.activated.connect(self._room_state_chosen)
         rooms.addWidget(QLabel("Room"))
-        for wdg in (self.cb_zone, self.ck_lock, self.btn_reroll, self.btn_reroll_level, self.btn_reroll_all):
+        for wdg in (self.cb_zone, QLabel("State"), self.cb_room_state, self.ck_lock, self.btn_reroll,
+                    self.btn_reroll_level, self.btn_reroll_all):
             rooms.addWidget(wdg)
         rooms.addStretch(1)
 
@@ -1058,6 +1088,7 @@ class GeomorphDialog(QDialog):
             QTimer.singleShot(0, self._size_rows)
 
     def _enable(self, has):
+        self.cb_room_state.setEnabled(has)
         for b in (self.btn_place, self.btn_export, self.btn_save, self.btn_reroll, self.ck_lock,
                   self.btn_reroll_level, self.btn_reroll_all, self.btn_like, self.btn_dislike,
                   self.btn_place_light, self.btn_clear_lights):
@@ -1204,6 +1235,10 @@ class GeomorphDialog(QDialog):
                 self._arch_changed()
                 _set_combo(self.cb_env, o.get("environment"))
                 _set_combo(self.cb_site_mode, o.get("mode", "planned"))
+                self.sp_levels.setValue(int(o.get("levels") or 0))
+                self.cb_direction.setCurrentIndex(max(0, self.cb_direction.findData(o.get("direction"))))
+                i = {None: 0, True: 1, False: 2}.get(o.get("cargo_lift"), 0)
+                self.cb_cargo.setCurrentIndex(i)
         finally:
             self._applying = False
 
@@ -1419,7 +1454,36 @@ class GeomorphDialog(QDialog):
         self.ck_lock.blockSignals(True)
         self.ck_lock.setChecked(self.selected_zone in self.locked)
         self.ck_lock.blockSignals(False)
+        self._sync_room_state()
         self._show_level()
+
+    def _sync_room_state(self):
+        from geomorph import dressing
+        zid = self.cb_zone.currentData()
+        self.cb_room_state.setEnabled(bool(zid) and self.result is not None)
+        if zid and self.result is not None:
+            st = dressing.room_state(self.result, zid)
+            self.cb_room_state.setCurrentIndex(max(0, self.cb_room_state.findData(st)))
+
+    def _room_state_chosen(self, _i=None):
+        """Put the selected room in the chosen state (undo puts it back)."""
+        from geomorph import dressing, pipeline
+        res, zid = self.result, self.cb_zone.currentData()
+        state = self.cb_room_state.currentData()
+        if res is None or not zid or dressing.room_state(res, zid) == state:
+            return
+        before = pipeline.snapshot(res)
+        name = res.zones[zid].name if zid in res.zones else zid
+        if not dressing.set_room_state(res, zid, state):
+            self._sync_room_state()
+            self.lbl_status.setText(f"{name} is not on the hull, so it cannot have a hull breach.")
+            return
+        self._push_undo(("snap", before, f"{name}: {self.cb_room_state.currentText()}"))
+        res._previews = {}
+        self._show_level()
+        self._fill_text()
+        _set_combo(self.cb_zone, zid)
+        self.lbl_changes.setText(f"{name} is now {self.cb_room_state.currentText().lower()} (Undo puts it back).")
 
     def _lock_toggled(self, on):
         zid = self.cb_zone.currentData()
@@ -1473,6 +1537,7 @@ class GeomorphDialog(QDialog):
             self._update_quality()
             self._show_level()
             self._fill_text()
+            self._sync_room_state()
             self.lbl_changes.setText(f"Undid: {label}.")
         else:
             _kind, old, seed, label = entry
@@ -1609,6 +1674,31 @@ class GeomorphDialog(QDialog):
             self.cb_env.addItem(e, e)
         self.lbl_arch.setText(f"Topology: {a['topology']}. Zones: " + ", ".join(z["name"] for z in a["zones"][:8]) +
                               (" …" if len(a["zones"]) > 8 else ""))
+        self._levels_for_kind()
+
+    def _levels_for_kind(self):
+        """Levels, Builds and Cargo lift only where they mean something: stacked buildings get all three, a mine
+        its number of levels (it always goes down), a campus 1 or 2 (a level of tunnels); flat kinds none."""
+        if not hasattr(self, "sp_levels"):
+            return
+        a = self.archetypes.get(self.cb_arch.currentData() or "") or {}
+        topo = a.get("topology", "")
+        preset = (a.get("scales") or {}).get(self.cb_scale.currentData() or "medium", {})
+        auto = preset.get("levels")
+        self.sp_levels.setSpecialValueText(f"Auto ({auto})" if auto else "Auto")
+        self.sp_levels.setMaximum(2 if topo == "campus" else 8)
+        levels_ok = topo in ("stacked", "branching", "campus")
+        self.sp_levels.setEnabled(levels_ok)
+        self.cb_direction.setEnabled(topo == "stacked")
+        self.cb_cargo.setEnabled(topo == "stacked")
+        why = {"branching": "A mine always goes down from its head-frame.",
+               "campus": "Buildings on the surface; 2 levels adds a level of tunnels under them."}.get(
+            topo, "" if levels_ok else "This kind of site is a single level.")
+        tips = getattr(self, "_level_tips", None)
+        if tips is None:
+            tips = self._level_tips = {w_: w_.toolTip() for w_ in (self.sp_levels, self.cb_direction, self.cb_cargo)}
+        for w_, tip in tips.items():
+            w_.setToolTip(tip if w_.isEnabled() else why)
 
     # ------------------------------------------------------------------
     def options(self) -> dict:
@@ -1638,6 +1728,12 @@ class GeomorphDialog(QDialog):
         else:
             o.update(archetype=self.cb_arch.currentData(), scale=self.cb_scale.currentData(),
                      environment=self.cb_env.currentData(), mode=self.cb_site_mode.currentData())
+            if self.sp_levels.isEnabled() and self.sp_levels.value():
+                o["levels"] = self.sp_levels.value()
+            if self.cb_direction.isEnabled() and self.cb_direction.currentData():
+                o["direction"] = self.cb_direction.currentData()
+            if self.cb_cargo.isEnabled() and self.cb_cargo.currentData() is not None:
+                o["cargo_lift"] = self.cb_cargo.currentData()
         return o
 
     def _run(self, fn, done):

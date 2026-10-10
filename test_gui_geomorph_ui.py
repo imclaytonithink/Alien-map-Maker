@@ -123,4 +123,60 @@ without = view.pixmap().toImage()
 assert with_legend != without, "the symbols and legend go away"
 dlg.ck_legend.setChecked(True)
 assert win.settings.value("geomorph/legend", type=bool) is True
+# ---- levels, which way they go, a cargo lift ---------------------------------------------------------------
+dlg.tabs.setCurrentIndex(1)
+dlg.cb_arch.setCurrentIndex(dlg.cb_arch.findData("Research facility"))
+app.processEvents()
+assert dlg.sp_levels.isEnabled() and dlg.cb_direction.isEnabled() and dlg.cb_cargo.isEnabled()
+assert dlg.sp_levels.specialValueText().startswith("Auto (")
+dlg.sp_levels.setValue(5)
+dlg.cb_direction.setCurrentIndex(dlg.cb_direction.findData("both"))
+dlg.cb_cargo.setCurrentIndex(1)
+o = dlg.options()
+assert o["levels"] == 5 and o["direction"] == "both" and o["cargo_lift"] is True, o
+dlg.ed_seed.setText("ui-levels")
+dlg.generate()
+assert [g.name for g in dlg.result.grids][0] == "Floor 3" and dlg.result.grids[-1].name == "Basement 2"
+assert any(v["kind"] == "cargo_lift" for v in dlg.result.layout.vertical)
+dlg.apply_options(dict(o, levels=2, direction="down", cargo_lift=False))
+assert dlg.sp_levels.value() == 2 and dlg.cb_direction.currentData() == "down" and dlg.cb_cargo.currentData() is False
+dlg.cb_arch.setCurrentIndex(dlg.cb_arch.findData("Space station (ring / spindle / cylinder)")
+                            if dlg.cb_arch.findData("Space station (ring / spindle / cylinder)") >= 0
+                            else next(i for i in range(dlg.cb_arch.count())
+                                      if dlg.archetypes[dlg.cb_arch.itemData(i)]["topology"] == "ring"))
+app.processEvents()
+assert not dlg.sp_levels.isEnabled() and not dlg.cb_direction.isEnabled(), "a ring station is one level"
+assert "single level" in dlg.sp_levels.toolTip()
+assert "levels" not in dlg.options()
+dlg.cb_arch.setCurrentIndex(dlg.cb_arch.findData("Deep mine"))
+app.processEvents()
+assert dlg.sp_levels.isEnabled() and not dlg.cb_direction.isEnabled(), "a mine only goes down"
+dlg.cb_arch.setCurrentIndex(dlg.cb_arch.findData("Research facility"))
+dlg.sp_levels.setValue(0)
+dlg.cb_direction.setCurrentIndex(0)
+dlg.cb_cargo.setCurrentIndex(0)
+dlg.tabs.setCurrentIndex(0)
+
+# ---- a room's state, chosen by hand -------------------------------------------------------------------------
+from geomorph import dressing
+dlg.overlay_checks["power_failure"].setChecked(True)
+dlg.ed_seed.setText("ui-states")
+dlg.generate()
+res = dlg.result
+dark = res.overlays["power_failure"][0]
+dlg.cb_zone.setCurrentIndex(dlg.cb_zone.findData(dark))
+assert dlg.cb_room_state.currentData() == "power_failure"
+dlg.cb_room_state.setCurrentIndex(dlg.cb_room_state.findData("lockdown"))
+dlg._room_state_chosen()
+assert dressing.room_state(res, dark) == "lockdown" and dark not in res.overlays["power_failure"]
+assert "LOCKDOWN" in dlg.txt_key.toPlainText()
+dlg._undo()
+assert dressing.room_state(dlg.result, dark) == "power_failure" and dlg.cb_room_state.currentData() == "power_failure"
+inner = next((z for z in res.zones if not any(
+    dressing._hull_point(p, side) for g in res.grids for p in g.placed if p.zone == z for side in "NESW")), None)
+if inner:
+    dlg.cb_zone.setCurrentIndex(dlg.cb_zone.findData(inner))
+    dlg.cb_room_state.setCurrentIndex(dlg.cb_room_state.findData("breach"))
+    dlg._room_state_chosen()
+    assert dressing.room_state(dlg.result, inner) != "breach" and "hull" in dlg.lbl_status.text()
 print("generator layout ok")

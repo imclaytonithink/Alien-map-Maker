@@ -136,7 +136,8 @@ def apply_overlays(res, rng, enabled=None, intensity=0.5, arch=None):
             ox, oy = rng.randint(-5, 5), rng.randint(-5, 5)
             markers.append({"type": "damage", "level": p.level, "x": cx + ox, "y": cy + oy,
                             "label": "Battle damage", "zone": p.zone})
-            res.grids[p.level].filler.append(F.piece("rubble", p.level, cx + ox - 1, cy + oy - 1, 3, 3))
+            res.grids[p.level].filler.append(dict(F.piece("rubble", p.level, cx + ox - 1, cy + oy - 1, 3, 3),
+                                                  state_zone=p.zone))
     th = common()["threat"]
     if "threat" in enabled and tiles:
         low = [p for p in tiles if any(t in ("cargo", "waste", "workshop", "interstitial", "water", "engineering")
@@ -170,14 +171,83 @@ def apply_overlays(res, rng, enabled=None, intensity=0.5, arch=None):
 
 
 # ---------------------------------------------------------------------------
-STATE_TEXT = {"lockdown": "LOCKDOWN: doors sealed, access only by override.",
+ROOM_STATES = ("normal", "power_failure", "lockdown", "quarantine", "breach", "damage")
+
+
+def room_state(res, zone_id) -> str:
+    """The one state room ``zone_id`` is in ("normal" when none)."""
+    for k in ("power_failure", "lockdown", "quarantine"):
+        if zone_id in (res.overlays or {}).get(k, []):
+            return k
+    for m in res.markers:
+        if m.get("zone") == zone_id and m.get("type") in ("breach", "damage"):
+            return m["type"]
+    return "normal"
+
+
+def set_room_state(res, zone_id, state, rng=None) -> bool:
+    """Put room ``zone_id`` in ``state`` (one of ROOM_STATES), replacing whatever state it was in. A hull breach
+    needs a tile of the room on the hull; returns False (and changes nothing) when it is not possible."""
+    import random as _random
+    rng = rng or _random.Random(f"{zone_id}:{state}")
+    tiles = [p for g in res.grids for p in g.placed if p.zone == zone_id]
+    if not tiles or state not in ROOM_STATES:
+        return False
+    breach_at = None
+    if state == "breach":
+        spots = []
+        for p in tiles:
+            g = res.grids[p.level]
+            for side in ("N", "E", "S", "W"):
+                cx = p.x + (p.w if side == "E" else -1 if side == "W" else p.w // 2)
+                cy = p.y + (p.h if side == "S" else -1 if side == "N" else p.h // 2)
+                if (cx, cy) not in g.occ:
+                    spot = _hull_point(p, side)
+                    if spot is not None:
+                        spots.append((p.level, spot[0], spot[1]))
+        if not spots:
+            return False
+        breach_at = rng.choice(spots)
+    ov = res.overlays = res.overlays or {}
+    for k in ("power_failure", "lockdown", "quarantine"):
+        ov[k] = [z for z in ov.get(k, []) if z != zone_id]
+    res.markers[:] = [m for m in res.markers if not (m.get("zone") == zone_id and m.get("type") in ("breach", "damage"))]
+    for g in res.grids:
+        g.filler[:] = [f for f in g.filler if f.get("state_zone") != zone_id]
+    if state in ("power_failure", "lockdown", "quarantine"):
+        ov.setdefault(state, []).append(zone_id)
+    elif state == "breach":
+        lvl, bx, by = breach_at
+        res.markers.append({"type": "breach", "level": lvl, "x": bx, "y": by, "label": "Breach / decompression",
+                            "zone": zone_id})
+    elif state == "damage":
+        p = max(tiles, key=lambda t: t.w * t.h)
+        cx, cy = _tile_center(p)
+        res.markers.append({"type": "damage", "level": p.level, "x": cx, "y": cy, "label": "Battle damage",
+                            "zone": zone_id})
+        res.grids[p.level].filler.append(dict(F.piece("rubble", p.level, cx - 1, cy - 1, 3, 3), state_zone=zone_id))
+    for e in res.key:                     # the key says what the room is now
+        if e.get("zone") != zone_id:
+            continue
+        text = e.get("text", "")
+        for t in STATE_TEXT.values():
+            text = text.replace(" " + t, "").replace(t, "")
+        e["text"] = (text.strip() + (" " + STATE_TEXT[state] if state in STATE_TEXT else "")).strip()
+        e["states"] = [] if state == "normal" else [state]
+    return True
+
+
+STATE_TEXT = {"lockdown": "LOCKDOWN: power on, doors sealed for good: cut through to get in. Alarm lamps flashing.",
               "power_failure": "POWER OUT: dark, no lifts or electronic doors.",
-              "quarantine": "QUARANTINE: sealed, contamination protocols active."}
+              "quarantine": "QUARANTINE: sealed, contamination protocols active.",
+              "breach": "HULL BREACH: a hole to the outside, decompression; vacuum beyond.",
+              "damage": "BATTLE DAMAGE: scorched and torn up, rubble on the floor; walls and doors may give."}
 
 
 def _room_detail(res, zone_id):
     """What the GM should know about one room: state overlays, contents, threats and secrets."""
-    states = [k for k in ("lockdown", "power_failure", "quarantine") if zone_id in (res.overlays or {}).get(k, [])]
+    st = room_state(res, zone_id)
+    states = [] if st == "normal" else [st]
     cats = {}
     for it in (getattr(res, "decor", None) or []):
         if it.get("zone") == zone_id and it.get("kind") == "item":
