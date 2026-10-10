@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QDialog, QTabWidget, QVBoxLayout
 
 from ui.branding import ALIEN_NAME, APP_NAME
@@ -39,8 +40,19 @@ class GenerateWindow(QDialog):
             self.tabs.setTabToolTip(index, tip)
             page.finished.connect(self.done)                # their Close buttons close the whole window
         self.tabs.setCurrentIndex(tab)
-        hint = self.geomorph.sizeHint().expandedTo(self.own.sizeHint())
-        self.resize(max(1100, hint.width()), max(780, hint.height()))
+        self.fit_to_screen()
+
+    def fit_to_screen(self):
+        """Open as large as the screen allows, never larger: the pages scroll inside."""
+        screen = (self.main.screen() if hasattr(self.main, "screen") else None) or QGuiApplication.primaryScreen()
+        area = screen.availableGeometry() if screen is not None else None
+        self.setMinimumSize(640, 480)
+        if area is None:
+            self.resize(1200, 800)
+            return
+        w, h = int(area.width() * 0.96), int(area.height() * 0.92)
+        self.resize(max(640, w), max(480, h))
+        self.move(area.x() + (area.width() - self.width()) // 2, area.y() + (area.height() - self.height()) // 2)
 
     def done(self, result):
         for page in (self.geomorph, self.own):

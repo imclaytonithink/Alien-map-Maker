@@ -201,11 +201,28 @@ class GeomorphDialog(QDialog):
         return find_tiles_dir(lib, getattr(self.main.project, "asset_store", ""))
 
     def _build(self):
+        # Both columns scroll, so the window fits any screen (the options are taller than most).
         outer = QHBoxLayout(self)
-        left = QVBoxLayout()
-        right = QVBoxLayout()
-        outer.addLayout(left, 0)
-        outer.addLayout(right, 1)
+        left_w, right_w = QWidget(), QWidget()
+        left = QVBoxLayout(left_w)
+        right = QVBoxLayout(right_w)
+        for lay in (left, right):
+            lay.setContentsMargins(0, 0, 6, 0)
+        self.left_scroll, self.right_scroll = QScrollArea(), QScrollArea()
+        for sc, w in ((self.left_scroll, left_w), (self.right_scroll, right_w)):
+            sc.setWidgetResizable(True)
+            sc.setFrameShape(QFrame.Shape.NoFrame)
+            sc.setWidget(w)
+        from PyQt6.QtWidgets import QSplitter
+        self.columns = QSplitter(Qt.Orientation.Horizontal)      # drag the divider to give either side more room
+        self.columns.setChildrenCollapsible(False)
+        self.columns.addWidget(self.left_scroll)
+        self.columns.addWidget(self.right_scroll)
+        self.columns.setStretchFactor(0, 2)
+        self.columns.setStretchFactor(1, 3)
+        self.left_scroll.setMinimumWidth(320)
+        self.right_scroll.setMinimumWidth(320)
+        outer.addWidget(self.columns)
 
         left.addWidget(_help("Builds a connected deck plan from the Geomorphs tiles: a starship, or a site "
                              "(colony, mine, lab, prison, station, wreck…). Same seed + options = same map.",
@@ -226,7 +243,7 @@ class GeomorphDialog(QDialog):
         f.addRow(self.lbl_pack)
         left.addWidget(box)
 
-        box = QGroupBox("Scenarios & presets")
+        box = QGroupBox("Scenarios && presets")
         v = QVBoxLayout(box)
         self.cb_preset = QComboBox()
         v.addWidget(self.cb_preset)
@@ -514,7 +531,7 @@ class GeomorphDialog(QDialog):
         self.ck_gm = QCheckBox("GM view")
         self.ck_gm.setChecked(True)
         self.ck_gm.toggled.connect(lambda _c: self._show_level())
-        self.ck_show_decor = QCheckBox("Furniture & outdoors")
+        self.ck_show_decor = QCheckBox("Furniture && outdoors")
         self.ck_show_decor.setChecked(True)
         self.ck_show_decor.setToolTip("Show the symbols and outdoor features in the preview, or the bare layout.")
         self.ck_show_decor.toggled.connect(lambda _c: self._show_level())
@@ -547,7 +564,7 @@ class GeomorphDialog(QDialog):
         self.txt_main = QPlainTextEdit()
         self.txt_key = QPlainTextEdit()
         self.txt_report = QPlainTextEdit()
-        for t, name in ((self.txt_main, "Description & hooks"), (self.txt_key, "Key"), (self.txt_report, "Checks & gaps")):
+        for t, name in ((self.txt_main, "Description && hooks"), (self.txt_key, "Key"), (self.txt_report, "Checks && gaps")):
             t.setReadOnly(True)
             self.info_tabs.addTab(t, name)
         # editable per-room notes (what the GM sees / what players get)
@@ -659,6 +676,15 @@ class GeomorphDialog(QDialog):
                        "Far Future Enterprises.", self.colors)
         right.addWidget(credit)
         self._enable(False)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, "_columns_sized", False) and self.columns.width() > 0:
+            self._columns_sized = True             # first show: room for the options, the rest for the preview
+            total = self.columns.width()
+            want = self.left_scroll.widget().minimumSizeHint().width() + 24
+            left = max(320, min(want, int(total * 0.45)))
+            self.columns.setSizes([left, total - left])
 
     def _enable(self, has):
         for b in (self.btn_place, self.btn_export, self.btn_save, self.btn_reroll, self.ck_lock,
