@@ -1249,7 +1249,8 @@ class GeomorphDialog(QDialog):
         self._live_timer.setInterval(600)
         self._live_timer.timeout.connect(self._live_fire)
         skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo, self.ck_legend, self.ck_learn, self.btn_place_light, self.cb_light_kind, self.sp_light_radius, self.sp_light_strength, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
-        for w in self.findChildren(QWidget):
+        # only the options on the left remake the map: room states, re-rolls, lamps and views on the right never do
+        for w in self.left_scroll.widget().findChildren(QWidget):
             if w in skip or w.parent() is None:
                 continue
             if isinstance(w, QComboBox):
