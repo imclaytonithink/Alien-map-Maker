@@ -54,6 +54,11 @@ w = opened[0]
 assert w.tabs.count() == 2 and w.tabs.tabText(0).startswith("Ships") and w.tabs.tabText(1) == "Your own tiles"
 assert w.geomorph.cb_preset.count() > 5, "presets are on the default tab"
 assert not w.geomorph.isWindow() and not w.own.isWindow(), "pages live inside the window"
+# it fits small screens: the pages scroll instead of pushing the window off the screen
+assert w.minimumSizeHint().height() <= 720 and w.geomorph.minimumSizeHint().height() <= 720,     (w.minimumSizeHint(), w.geomorph.minimumSizeHint())
+screen = w.screen().availableGeometry()
+assert w.height() <= screen.height() and w.width() <= screen.width()
+assert w.geomorph.left_scroll.widget() is not None and w.geomorph.right_scroll.widget() is not None
 w.show()
 app.processEvents()
 assert w.isVisible()
