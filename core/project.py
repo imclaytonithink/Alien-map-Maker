@@ -505,7 +505,7 @@ class Level:
             l = self.layer_by_id(p.layer)
             if l and l.locked:
                 continue
-            if p.locked:
+            if p.locked or p.lighting:          # a tile's lighting is see-through: the click reaches the tile
                 continue
             if p.hit_test(wx, wy):
                 return p
