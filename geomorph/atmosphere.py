@@ -137,6 +137,7 @@ def _wall_face(rows, x, y, d, walk, run=None) -> bool:
     return False
 
 
+LINE_LUM = 90               # wall outlines in the art are brighter than this
 DOOR_CLEAR = 1.2            # squares a fixture keeps from a doorway
 WALL_SPAN_PX = 10           # solid wall needed this far either side of a fixture (a door is a gap in the wall)
 
@@ -161,7 +162,7 @@ def _wall_clear(art, face, wall) -> bool:
     return total > 0 and good / total >= 0.95
 
 
-def _face_agrees(c, face, tol=0.3) -> bool:
+def _face_agrees(c, face, tol=0.6) -> bool:
     """The wall found in the art must sit where the floor map says it does, else the fixture would float."""
     if face is None:
         return True
@@ -204,9 +205,9 @@ def _lamps(p, rows, art=None):
 
     def ok(c):
         if c not in _ok:
-            face = _wall_face_point(art, c[0], c[1], c[2], p)
+            face = wall_anchor(art, c[0], c[1], c[2], p)
             x0, y0 = c[0] / 2.0 + 0.25, c[1] / 2.0 + 0.25
-            _ok[c] = (not near_door(p, *(face or (x0, y0))) and _wall_clear(art, face, c[2])
+            _ok[c] = ((face is not None or art is None) and not near_door(p, *(face or (x0, y0)))
                       and _face_agrees(c, face))
         return _ok[c]
     cand = [c for c in cand if ok(c)]
@@ -264,7 +265,7 @@ ART_BORDER = 2
 INK = 16                    # alpha at which a thumbnail pixel counts as drawn art
 WALL_ALPHA, WALL_LUM = 200, 100        # walls are solid and dark in the art; floors are pale and see-through
 RAY_STEP_DEG = 0.5
-SOFTEN_PX = 4.0             # extra blur (art pixels) so no pool has a hard edge
+SOFTEN_PX = 7.0             # extra blur (art pixels) so no pool has a hard edge
 DEFAULT_LIGHT = "#ff241c"
 DEFAULT_FIXTURE = "#e8261c"
 WASH_PEAK = 95             # how strongly a lamp tints the floor next to it (0-255)
@@ -289,12 +290,9 @@ def _darker(rgb, f=0.45) -> tuple:
     return tuple(int(v * f) for v in rgb)
 
 
-def _wall_face_point(art, cx, cy, wall, p):
-    """Where the wall really is for the lamp on floor cell (cx, cy): the tile art is scanned from the cell centre toward
-    the wall, and the first solid wall pixel (median over a few parallel lines) is the wall face. Returns (x, y) in
-    squares relative to the tile, or None when there is no art to read."""
-    if art is None:
-        return None
+def _wall_hits(art, cx, cy, wall, offs):
+    """Distance (art px) from the centre of floor cell (cx, cy) to the first solid wall pixel on parallel lines toward
+    ``wall``: one entry per offset, None where the line finds nothing. Also returns the wall's thickness on the middle line."""
     ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
     ax, ay = (1, 0) if wall in "NS" else (0, 1)
     sx = ((cx + 0.5) / 2.0 + ART_BORDER) * ART_PPS
@@ -302,7 +300,8 @@ def _wall_face_point(art, cx, cy, wall, p):
     wp = _wall_mask(art).load()
     W, H = art.size
     hits = []
-    for off in (-3.0, -1.5, 0.0, 1.5, 3.0):
+    for off in offs:
+        hit = None
         for i in range(0, int(ART_PPS * 1.2 / 0.5)):
             t = i * 0.5
             x, y = int(sx + ux * t + ax * off), int(sy + uy * t + ay * off)
@@ -310,12 +309,108 @@ def _wall_face_point(art, cx, cy, wall, p):
                 break
             if wp[x, y]:
                 if t >= 1.0:                      # a wall pixel on the floor cell itself contradicts the floor map
-                    hits.append(t)
+                    hit = t
                 break
+        hits.append(hit)
+    return hits
+
+
+def _wall_flat(art, cx, cy, wall) -> bool:
+    """A straight wall (not a slanted one or a corner): the wall face is at the same depth along a stretch of it."""
+    if art is None:
+        return True
+    hits = _wall_hits(art, cx, cy, wall, (-9.0, -4.5, 0.0, 4.5, 9.0))
+    if any(h is None for h in hits):
+        return False
+    return max(hits) - min(hits) <= 1.6
+
+
+def _wall_face_point(art, cx, cy, wall, p):
+    """Where the wall really is for the lamp on floor cell (cx, cy): the tile art is scanned from the cell centre toward
+    the wall, and the first solid wall pixel (median over a few parallel lines) is the wall face. The fixture sits a
+    little way into the wall band (the lit pool darkens the band, so its outer line reads as the wall).
+    Returns (x, y) in squares relative to the tile, or None when there is no art to read."""
+    if art is None:
+        return None
+    ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
+    hits = [h for h in _wall_hits(art, cx, cy, wall, (-3.0, -1.5, 0.0, 1.5, 3.0)) if h is not None]
     if len(hits) < 3:
         return None
     t = sorted(hits)[len(hits) // 2]
+    ax, ay = (1, 0) if wall in "NS" else (0, 1)
+    sx = ((cx + 0.5) / 2.0 + ART_BORDER) * ART_PPS
+    sy = ((cy + 0.5) / 2.0 + ART_BORDER) * ART_PPS
+    wp = _wall_mask(art).load()
+    W, H = art.size
+    thick = 0.0
+    while thick < ART_PPS * 0.5:                          # how deep the solid band goes
+        x, y = int(sx + ux * (t + thick)), int(sy + uy * (t + thick))
+        if not (0 <= x < W and 0 <= y < H) or not wp[x, y]:
+            break
+        thick += 0.5
+    t += min(thick * 0.5, ART_PPS * 0.3)
     return ((sx + ux * t) / ART_PPS - ART_BORDER, (sy + uy * t) / ART_PPS - ART_BORDER)
+
+
+def _line_mask(art) -> Image.Image:
+    """255 on bright, opaque ink: the thin light outlines that draw walls in most tile art. Cached on the image."""
+    cached = getattr(art, "_line_mask", None)
+    if cached is None:
+        rgba = art if art.mode == "RGBA" else art.convert("RGBA")
+        solid = rgba.getchannel("A").point(lambda v: 255 if v >= 120 else 0)
+        bright = rgba.convert("L").point(lambda v: 255 if v >= LINE_LUM else 0)
+        cached = ImageChops.multiply(solid, bright)
+        try:
+            art._line_mask = cached
+        except AttributeError:
+            pass
+    return cached
+
+
+def _wall_line(art, cx, cy, wall):
+    """The drawn wall line next to floor cell (cx, cy): scan outward from the cell centre and take the depth where the
+    most of a 21 px stretch along the wall is line ink. Returns (t px, share) or None. A doorway or a machine breaks
+    the stretch, so it scores low."""
+    ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
+    ax, ay = (1, 0) if wall in "NS" else (0, 1)
+    sx = ((cx + 0.5) / 2.0 + ART_BORDER) * ART_PPS
+    sy = ((cy + 0.5) / 2.0 + ART_BORDER) * ART_PPS
+    lp = _line_mask(art).load()
+    W, H = art.size
+    best = None
+    for i in range(2, 25):                                     # 1.0 .. 12 px from the cell centre
+        t = i * 0.5
+        hit = tot = 0
+        for k in range(-10, 11):
+            tot += 1
+            for dt in (-0.6, 0.0, 0.6):
+                x, y = int(sx + ux * (t + dt) + ax * k), int(sy + uy * (t + dt) + ay * k)
+                if 0 <= x < W and 0 <= y < H and lp[x, y]:
+                    hit += 1
+                    break
+        share = hit / tot
+        if best is None or share > best[1] + 0.02:
+            best = (t, share)
+    return best
+
+
+def wall_anchor(art, cx, cy, wall, p=None):
+    """Where a fixture goes on the wall beside floor cell (cx, cy): (x, y) in squares inside the tile, or None when the
+    art shows no unbroken wall there (a doorway, furniture, a slanted wall). Reads the thin wall line first, then the
+    dark wall band that some tile styles use."""
+    if art is None:
+        return None
+    found = _wall_line(art, cx, cy, wall)
+    if found is not None and found[1] >= 0.9:
+        t = found[0]
+        ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
+        sx = ((cx + 0.5) / 2.0 + ART_BORDER) * ART_PPS
+        sy = ((cy + 0.5) / 2.0 + ART_BORDER) * ART_PPS
+        return ((sx + ux * t) / ART_PPS - ART_BORDER, (sy + uy * t) / ART_PPS - ART_BORDER)
+    face = _wall_face_point(art, cx, cy, wall, p)
+    if face is not None and _wall_flat(art, cx, cy, wall) and _wall_clear(art, face, wall):
+        return face
+    return None
 
 
 def _wall_mask(art) -> Image.Image:
@@ -394,9 +489,14 @@ def _lamp_light(spec, p, rows, art, W, H, pps):
         x, y = (spec["fx"] + ART_BORDER) * ART_PPS, (spec["fy"] + ART_BORDER) * ART_PPS
         inward = {"N": (0, 1), "S": (0, -1), "W": (1, 0), "E": (-1, 0)}.get(spec["wall"])
         if inward:
-            x, y = x + inward[0] * 2.0, y + inward[1] * 2.0
+            wpx = wall.load()
+            for _ in range(10):                  # the fixture sits in the wall band: start the rays just inside the room
+                if not (0 <= int(x) < wall.width and 0 <= int(y) < wall.height) or not wpx[int(x), int(y)]:
+                    break
+                x, y = x + inward[0], y + inward[1]
+            x, y = x + inward[0] * 1.5, y + inward[1] * 1.5
         lit = _cast(wall, x, y, inward, radius_px, full=spec["wall"] is None)
-        lit = lit.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(SOFTEN_PX))
+        lit = lit.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(SOFTEN_PX))
         fall = Image.new("L", wall.size, 0)
         _paste_l(fall, _light_sprite(2 * radius_px), int(x) - radius_px, int(y) - radius_px)
         lit = ImageChops.multiply(lit, fall)
@@ -428,7 +528,7 @@ def lamp_specs(room, rows, art, pps) -> list:
     specs = []
     if dark or "lockdown" in states:
         for cx, cy, wall in _lamps(p, rows, art):
-            face = _wall_face_point(art, cx, cy, wall, p)
+            face = wall_anchor(art, cx, cy, wall, p)
             if face is None:
                 x0, y0 = cx / 2.0, cy / 2.0
                 face = {"N": (x0 + 0.25, y0), "S": (x0 + 0.25, y0 + 0.5), "W": (x0, y0 + 0.25), "E": (x0 + 0.5, y0 + 0.25)}[wall]
@@ -506,12 +606,19 @@ def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Ima
         for sp in specs:                                               # the fixtures: half-discs on the wall, discs overhead
             gx, gy = sp["fx"] * pps, sp["fy"] * pps
             fill, edge = _rgb(sp["fixture"], DEFAULT_FIXTURE) + (255,), _darker(_rgb(sp["fixture"], DEFAULT_FIXTURE)) + (255,)
-            box = (gx - rr, gy - rr, gx + rr, gy + rr)
+            K = 4                                                      # drawn 4x then shrunk: smooth, soft edges
+            ox, oy = int(gx) - rr - 2, int(gy) - rr - 2
+            sprite = Image.new("RGBA", ((2 * rr + 4) * K, (2 * rr + 4) * K), (0, 0, 0, 0))
+            sd2 = ImageDraw.Draw(sprite)
+            cx2, cy2 = (gx - ox) * K, (gy - oy) * K
+            box = (cx2 - rr * K, cy2 - rr * K, cx2 + rr * K, cy2 + rr * K)
             if sp["wall"] is None:
-                d.ellipse(box, fill=fill, outline=edge)
+                sd2.ellipse(box, fill=fill, outline=edge, width=K)
             else:
                 start, end = {"N": (0, 180), "S": (180, 360), "W": (-90, 90), "E": (90, 270)}[sp["wall"]]
-                d.pieslice(box, start, end, fill=fill, outline=edge)
+                sd2.pieslice(box, start, end, fill=fill, outline=edge, width=K)
+            sprite = sprite.resize((2 * rr + 4, 2 * rr + 4), Image.LANCZOS).filter(ImageFilter.GaussianBlur(0.5))
+            _put(img, sprite, ox, oy)
     if part in ("all", "gm") and "lockdown" in states:
         d = ImageDraw.Draw(img)
         t = max(3, int(pps * 0.3))
@@ -579,8 +686,8 @@ def snap_light(res, g, x, y, images=None, kind="wall", radius=4.0, strength=1.0,
                 continue
             for d in "NSWE":
                 if _wall_face(rows, xx, yy, d, "c.r", 1):
-                    fp = _wall_face_point(art, xx, yy, d, tile)
-                    if (near_door(tile, *(fp or (xx / 2.0 + 0.25, yy / 2.0 + 0.25))) or not _wall_clear(art, fp, d)
+                    fp = wall_anchor(art, xx, yy, d, tile)
+                    if ((art is not None and fp is None) or near_door(tile, *(fp or (xx / 2.0 + 0.25, yy / 2.0 + 0.25)))
                             or not _face_agrees((xx, yy, d), fp)):
                         continue
                     dist = (xx + 0.5 - rx * 2) ** 2 + (yy + 0.5 - ry * 2) ** 2
@@ -589,7 +696,7 @@ def snap_light(res, g, x, y, images=None, kind="wall", radius=4.0, strength=1.0,
     if best is None:
         return None
     _dist, xx, yy, d = best
-    face = _wall_face_point(art, xx, yy, d, tile)
+    face = wall_anchor(art, xx, yy, d, tile)
     if face is None:
         x0, y0 = xx / 2.0, yy / 2.0
         face = {"N": (x0 + 0.25, y0), "S": (x0 + 0.25, y0 + 0.5), "W": (x0, y0 + 0.25), "E": (x0 + 0.5, y0 + 0.25)}[d]

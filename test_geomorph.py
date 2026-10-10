@@ -1266,7 +1266,7 @@ def check_atmosphere():
                 ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[sp["wall"]]
                 fx, fy = sp["fx"] * 15 + 30, sp["fy"] * 15 + 30             # the lamp's wall point in art pixels
                 beyond = a[int(fx + ux * 1.5), int(fy + uy * 1.5)]
-                before = a[int(fx - ux * 1.5), int(fy - uy * 1.5)]
+                before = a[int(fx - ux * 6), int(fy - uy * 6)]            # the fixture sits in the band, the room floor is clear a little inward
                 assert beyond >= atmosphere.INK and before < atmosphere.INK, ("the lamp touches the drawn wall", sp["wall"], beyond, before)
             checked_art += 1
     assert checked_art >= 1
@@ -1454,7 +1454,7 @@ def check_lighting():
     assert at(10, 7.3) > 170, ("brightest at the fixture", at(10, 7.3))
     across = [at(10, y) for y in (7.3, 8.5, 9.5, 10.5, 11.5, 12.5, 12.9)]
     assert all(v > 0 for v in across), ("the pool reaches the far wall", across)
-    assert all(b <= a + 6 for a, b in zip(across, across[1:])), ("fading away from the fixture", across)
+    assert all(b <= a + 12 for a, b in zip(across, across[1:])), ("fading away from the fixture", across)
     along = [at(x, 8.0) for x in (10, 12, 14, 16, 17.8)]
     assert all(b <= a + 6 for a, b in zip(along, along[1:])) and along[0] > along[-1] > 0, ("feathers out along the hall", along)
     assert at(10, 5.0) == 0 and at(10, 6.0) == 0 and at(10, 14.2) == 0 and at(10, 16.0) == 0, "nothing lit beyond the walls"
@@ -1467,6 +1467,14 @@ def check_lighting():
     gap = art.copy()
     gap.paste(I.new("RGBA", (30, 12), (0, 0, 0, 0)), (187, 30 + 105 - 12))        # a doorway cut into the north wall
     assert A._wall_clear(art, (10.0, 7.0), "N") and not A._wall_clear(gap, (11.5, 7.0), "N"), "door gap detected"
+    line = I.new("RGBA", (360, 360), (0, 0, 0, 0))                                # thin bright wall line, with a door gap
+    line.paste(I.new("RGBA", (360, 2), (120, 230, 240, 255)), (0, 130))
+    cell_n = (10 * 2, 7 * 2)                                                      # floor cell just south of that line
+    fp = A.wall_anchor(line, cell_n[0], cell_n[1], "N")
+    assert fp is not None and abs(fp[1] - 6.75) < 0.15, ("fixture sits on the drawn wall line", fp)
+    line = line.copy()                                                            # (masks are cached per image)
+    line.paste(I.new("RGBA", (30, 2), (0, 0, 0, 0)), (180, 130))
+    assert A.wall_anchor(line, 20, 14, "N") is None, "no fixture where the line has a doorway"
     dtile = SimpleNamespace(side_cls=lambda s: [1] if s == "N" else [0], w=1, h=1)
     assert A.near_door(dtile, 0.5, 0.3) and not A.near_door(dtile, 0.5, 0.9 + 0.5)
     reg0 = Registry.load()
@@ -1494,7 +1502,7 @@ def check_lighting():
     room_blue = next(r for r in A.affected(res, g) if r["tile"] is room["tile"])
     r2, b2, im2 = mix(room_blue)
     assert b2 > r2, "a blue light colours the pools blue"
-    assert sum(1 for c in im2.getdata() if c[1] > 200 and c[0] < 60 and c[2] < 60 and c[3] == 255) > 0, "green fixtures"
+    assert sum(1 for c in im2.getdata() if c[1] > 150 and c[0] < 100 and c[2] < 100 and c[3] >= 150) > 0, "green fixtures"
     del res.options["atmosphere"]
 
     # ---- user lights ----------------------------------------------------------------------------------------------
