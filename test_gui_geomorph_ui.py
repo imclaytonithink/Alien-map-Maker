@@ -179,4 +179,40 @@ if inner:
     dlg.cb_room_state.setCurrentIndex(dlg.cb_room_state.findData("breach"))
     dlg._room_state_chosen()
     assert dressing.room_state(dlg.result, inner) != "breach" and "hull" in dlg.lbl_status.text()
+# ---- the description and key can be edited, and survive making the map again ------------------------------
+dlg.tabs.setCurrentIndex(0)
+dlg.ck_live.setChecked(False)
+dlg.ed_seed.setText("ui-edits")
+dlg.generate()
+res = dlg.result
+assert not dlg.txt_main.isReadOnly() and not dlg.txt_key.isReadOnly()
+text = dlg.txt_main.toPlainText().split("\n")
+text[0] = "The Night Ferry"
+hooks_at = text.index("ADVENTURE HOOKS")
+text.insert(hooks_at + 1, "  [rumour] The captain never left her cabin.")
+dlg.txt_main.setPlainText("\n".join(text))
+assert res.text["title"] == "The Night Ferry"
+assert {"type": "rumour", "text": "The captain never left her cabin."} in res.text["hooks"]
+key_lines = dlg.txt_key.toPlainText().split("\n")
+first = res.key[0]
+key_lines[0] = f"{first['n']}. Captain's cabin (level {first['level'] + 1}) — Locked from the inside."
+dlg.txt_key.setPlainText("\n".join(key_lines))
+assert first["title"] == "Captain's cabin" and first["text"] == "Locked from the inside." and first.get("edited")
+dlg.lst_notes.setCurrentRow(0)
+assert dlg.ed_note_gm.toPlainText() == "Locked from the inside.", "Room notes show the same words"
+dlg.ed_note_player.setPlainText("A heavy door, scorched round the lock.")
+# another option, same ship: the edits stay
+dlg.cb_cond.setCurrentIndex(dlg.cb_cond.findData("Derelict"))
+dlg.generate()
+new = dlg.result
+assert new is not res
+assert new.text["title"] == "The Night Ferry" and "The Night Ferry" in dlg.txt_main.toPlainText()
+same = next((e for e in new.key if (e.get("zone"), e.get("tile")) == (first.get("zone"), first.get("tile"))), None)
+if same is not None:
+    assert same["text"] == "Locked from the inside." and same["player"] == "A heavy door, scorched round the lock."
+assert "edits were kept" in dlg.lbl_status.text()
+# a different kind of place starts fresh
+dlg.tabs.setCurrentIndex(1)
+dlg.generate()
+assert dlg.result.text["title"] != "The Night Ferry"
 print("generator layout ok")
