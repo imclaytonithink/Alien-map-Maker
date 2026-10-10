@@ -2293,9 +2293,12 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
         if p.locked:
             return
         painter.save()
-        painter.setPen(QPen(QColor(self.theme_accent), 1.5))
-        painter.setBrush(QBrush(QColor("#ffffff")))
         for pt in self._resize_handle_points(p).values():
+            painter.setPen(QPen(QColor(0, 0, 0, 200), 3.0))           # dark rim: visible on light and dark maps
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(QRectF(pt.x() - 5, pt.y() - 5, 10, 10))
+            painter.setPen(QPen(QColor(self.theme_accent).lighter(135), 1.5))
+            painter.setBrush(QBrush(QColor("#ffffff")))
             painter.drawRect(QRectF(pt.x() - 4, pt.y() - 4, 8, 8))
         painter.restore()
 
@@ -2485,10 +2488,14 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
             s0 = self.world_to_screen(m.x(), m.y())
             s1 = self.world_to_screen(m.x() + m.width(), m.y() + m.height())
             r = QRectF(s0[0], s0[1], s1[0] - s0[0], s1[1] - s0[1]).normalized()
-            pen = QPen(QColor(self.theme_accent))
-            pen.setStyle(Qt.PenStyle.DashLine)
-            painter.setPen(pen)
             painter.fillRect(r, QColor(0, 255, 180, 25))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(0, 0, 0, 190), 4.0))
+            painter.drawRect(r)
+            pen = QPen(QColor(self.theme_accent).lighter(135))
+            pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setWidthF(1.8)
+            painter.setPen(pen)
             painter.drawRect(r)
 
         for g in self._smart_guides:
@@ -2877,10 +2884,13 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
 
         points = self._lasso_points
         if len(points) >= 2:
-            pen = QPen(accent); pen.setStyle(Qt.PenStyle.DashLine); pen.setWidthF(2)
-            painter.setPen(pen); painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPolyline(QPolygonF([
-                QPointF(*self.world_to_screen(x, y)) for x, y in points]))
+            poly = QPolygonF([QPointF(*self.world_to_screen(x, y)) for x, y in points])
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(0, 0, 0, 190), 4.5))
+            painter.drawPolyline(poly)
+            pen = QPen(QColor(accent).lighter(135)); pen.setStyle(Qt.PenStyle.DashLine); pen.setWidthF(2)
+            painter.setPen(pen)
+            painter.drawPolyline(poly)
 
         ruler = self._ruler_drag
         if ruler:
@@ -2952,19 +2962,51 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
             painter.drawEllipse(point, 6, 6)
         painter.restore()
 
-    def _draw_selection(self, painter, p: Piece):
+    def _selection_box(self, p: Piece):
+        """(centre x, centre y, w, h, rotation) in screen units of what a selected node visibly covers: a
+        Geomorph tile's plan (not its clear border), anything else its whole picture."""
         cx, cy = p.center
+        w, h, rot = p.w * p.scale, p.h * p.scale, p.rotation
+        room = p.room or {}
+        if room.get("fw") and room.get("fh"):
+            turn = math.radians(p.rotation - float(room.get("rot", p.rotation)))
+            ox, oy = float(room.get("ox", 0.0)), float(room.get("oy", 0.0))
+            cx += ox * math.cos(turn) - oy * math.sin(turn)
+            cy += ox * math.sin(turn) + oy * math.cos(turn)
+            w, h, rot = float(room["fw"]), float(room["fh"]), math.degrees(turn)
         scx, scy = self.world_to_screen(cx, cy)
-        w = p.w * self.zoom * p.scale
-        h = p.h * self.zoom * p.scale
+        return scx, scy, w * self.zoom, h * self.zoom, rot
+
+    def _draw_selection(self, painter, p: Piece):
+        """A bright outline with a dark halo and a light tint, so a selection stands out on any map (a blue
+        outline alone disappears into a blue grid)."""
+        accent = QColor(self.theme_accent)
+        bright = accent.lighter(135)
+        tint = QColor(accent)
+        tint.setAlpha(46)
+        tx, ty, tw, th, trot = self._selection_box(p)       # the tint covers what is visibly there
+        painter.save()
+        painter.translate(tx, ty)
+        painter.rotate(trot)
+        painter.fillRect(QRectF(-tw / 2, -th / 2, tw, th), tint)
+        painter.restore()
+        scx, scy = self.world_to_screen(*p.center)           # the outline matches the resize handles
+        w, h = p.w * self.zoom * p.scale, p.h * self.zoom * p.scale
         painter.save()
         painter.translate(scx, scy)
         painter.rotate(p.rotation)
-        pen = QPen(QColor(self.theme_accent))
-        pen.setWidthF(2)
-        painter.setPen(pen)
+        rect = QRectF(-w / 2, -h / 2, w, h)
+        halo = QPen(QColor(0, 0, 0, 190))
+        halo.setWidthF(5.0)
+        halo.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(QRectF(-w / 2, -h / 2, w, h))
+        painter.setPen(halo)
+        painter.drawRect(rect)
+        pen = QPen(bright)
+        pen.setWidthF(2.5)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        painter.drawRect(rect)
         painter.restore()
 
     def _draw_rotate_handle(self, painter, p: Piece):
@@ -3228,7 +3270,8 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
                 points.append((wx, wy))
             if len(points) >= 3:
                 hits = [piece for piece in self.level.pieces
-                        if not piece.locked and self._point_in_polygon(piece.center, points)]
+                        if not piece.locked and not piece.lighting
+                        and self._point_in_polygon(piece.center, points)]
                 hits = self._with_groups(hits)
                 if not self._lasso_add:
                     self.select(hits)
@@ -3429,7 +3472,31 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
         primary = hit if (hit is not None and hit.id in self.selection) \
             else self._primary()
         self._drag = {"mode": "move", "offs": offs, "primary": primary,
-                      "origin": (wx, wy)}
+                      "origin": (wx, wy), "followers": self._lighting_followers()}
+
+    def _lighting_followers(self) -> list:
+        """The lighting nodes (room darkness and lamps) over the selected Geomorph tiles that are not selected
+        themselves: they move with their tile."""
+        sel = [p for p in self.selected_pieces() if p.room]
+        if not sel:
+            return []
+        out = []
+        for ln in self.level.pieces:
+            if not ln.lighting or ln.id in self.selection:
+                continue
+            for t in sel:
+                if ln.lighting.get("host") == t.id:
+                    out.append(ln)
+                    break
+                if ln.lighting.get("host") or ln.lighting.get("tile") != t.room.get("tile"):
+                    continue
+                cx, cy, w, h, _rot = self._selection_box(t)      # an untouched map: matched by where it lies
+                x0, y0 = self.screen_to_world(cx - w / 2, cy - h / 2)
+                if abs(ln.x - x0) < 1.5 and abs(ln.y - y0) < 1.5:
+                    ln.lighting["host"] = t.id
+                    out.append(ln)
+                    break
+        return out
 
     def _primary(self) -> Optional[Piece]:
         sel = self.selected_pieces()
@@ -3562,7 +3629,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
         self._guide_flash = set()
         if mods & Qt.KeyboardModifier.AltModifier:
             dx, dy = raw_x - primary.x, raw_y - primary.y
-            for p in sel:
+            for p in sel + self._drag.get("followers", []):
                 p.x += dx
                 p.y += dy
             self._smart_guides = []
@@ -3593,7 +3660,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
         # rigid delta from the primary, applied to the whole selection
         dx = tgt_x - primary.x
         dy = tgt_y - primary.y
-        for p in sel:
+        for p in sel + self._drag.get("followers", []):
             p.x += dx
             p.y += dy
 
@@ -3845,7 +3912,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
             return
         m = self._marquee
         hits = [p for p in self.level.paint_order()
-                if not (p.locked) and m.intersects(
+                if not (p.locked) and not p.lighting and m.intersects(
                     QRectF(p.x, p.y, p.w * p.scale, p.h * p.scale))]
         hits = self._with_groups(hits)
         if not add:
@@ -3937,7 +4004,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToo
         if not sel:
             return
         self.push_history("Delete")
-        for p in sel:
+        for p in sel + self._lighting_followers():     # a tile's lighting goes with it
             self.level.remove(p)
         self.select([])
         self.dirty.emit()

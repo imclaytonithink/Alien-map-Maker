@@ -65,6 +65,41 @@ tiles = [p for p in level.pieces if p.room]
 assert tiles and all(p.room.get("tile") for p in tiles), "tile nodes remember their tile"
 assert not [p for p in level.pieces if p.is_text], "no key numbers or marker letters on the canvas"
 
+# ---- a click on a dark room selects the tile, not its see-through lighting; the lighting follows the tile -----
+from PyQt6.QtCore import QPoint
+from PyQt6.QtTest import QTest
+win.resize(1300, 850)
+app.processEvents()
+canvas.fit_to_view()
+app.processEvents()
+dark = with_lamps[0]
+host_tile = next(p for p in level.pieces if p.room and p.room.get("tile") == dark.lighting["tile"]
+                 and abs(canvas._selection_box(p)[0] - canvas.world_to_screen(dark.x + dark.w * dark.scale / 2, 0)[0]) < 3)
+hx, hy = canvas.world_to_screen(*host_tile.center)
+QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(hx), int(hy)))
+app.processEvents()
+assert [p.id for p in canvas.selected_pieces()] == [host_tile.id], [p.name for p in canvas.selected_pieces()]
+start = (dark.x, dark.y, host_tile.x, host_tile.y)
+QTest.mousePress(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(hx), int(hy)))
+for k in range(1, 5):
+    QTest.mouseMove(canvas, QPoint(int(hx + 40 * k), int(hy + 20 * k)))
+    app.processEvents()
+QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(int(hx + 160), int(hy + 80)))
+moved = (host_tile.x - start[2], host_tile.y - start[3])
+assert moved != (0, 0) and (dark.x - start[0], dark.y - start[1]) == moved, "the room's lighting moved with its tile"
+canvas.select([p for p in level.pieces if p.room])
+assert not any(p.lighting for p in canvas.selected_pieces())
+win.undo()
+level = canvas.level
+dark = next(p for p in level.pieces if p.id == dark.id)
+assert (dark.x, dark.y) == start[:2]
+canvas.select([next(p for p in level.pieces if p.id == host_tile.id)])
+canvas.delete_selected()
+assert dark.id not in {p.id for p in canvas.level.pieces}, "deleting a tile deletes its lighting"
+win.undo()
+level = canvas.level
+with_lamps = [p for p in level.pieces if p.lighting and p.lighting["lights"]]
+
 # ---- the tool and its bar -------------------------------------------------------------------------------
 win._start_lights_tool()
 app.processEvents()
