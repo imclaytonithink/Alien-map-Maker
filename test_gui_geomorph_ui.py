@@ -215,4 +215,27 @@ assert "edits were kept" in dlg.lbl_status.text()
 dlg.tabs.setCurrentIndex(1)
 dlg.generate()
 assert dlg.result.text["title"] != "The Night Ferry"
+# ---- with Auto-update on, changes on the right are not thrown away by a remake -------------------------------
+dlg.tabs.setCurrentIndex(0)
+dlg.overlay_checks["power_failure"].setChecked(True)
+dlg.ed_seed.setText("ui-live")
+dlg.generate()
+dlg.ck_live.setChecked(True)
+dlg._live_timer.stop()
+res = dlg.result
+zone = next(z for z in res.zones if dressing.room_state(res, z) == "normal")
+dlg.cb_zone.setCurrentIndex(dlg.cb_zone.findData(zone))
+dlg.cb_room_state.setCurrentIndex(dlg.cb_room_state.findData("lockdown"))
+dlg._room_state_chosen()
+assert not dlg._live_timer.isActive(), "a room's state is not an option: no remake"
+assert dlg.result is res and dressing.room_state(res, zone) == "lockdown"
+tiles_before = [(p.tile.id, p.x, p.y) for g in res.grids for p in g.placed]
+dlg._reroll_zone()
+app.processEvents()
+assert not dlg._live_timer.isActive(), "a re-roll does not set off a remake"
+assert dlg.result is res, "the re-rolled map is the one kept"
+dlg.cb_cond.setCurrentIndex((dlg.cb_cond.currentIndex() + 1) % dlg.cb_cond.count())
+assert dlg._live_timer.isActive(), "options on the left still remake the map"
+dlg._live_timer.stop()
+dlg.ck_live.setChecked(False)
 print("generator layout ok")
