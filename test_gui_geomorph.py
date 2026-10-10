@@ -95,7 +95,7 @@ assert len(win.project.levels) == n_levels + len(dlg.result.grids)
 new_levels = win.project.levels[n_levels:]
 tiles_on_canvas = sum(1 for lv in new_levels for p in lv.pieces if p.layer and not p.is_text and p.asset_path)
 assert tiles_on_canvas == sum(len(g.placed) for g in dlg.result.grids), tiles_on_canvas
-assert any(p.is_text for lv in new_levels for p in lv.pieces), "key numbers placed"
+assert not any(p.is_text for lv in new_levels for p in lv.pieces), "no stray key numbers or marker letters"
 assert any(p.embedded for lv in new_levels for p in lv.pieces), "filler embedded"
 lv0 = new_levels[1]
 layer_names = {l.name for l in lv0.layers}
@@ -136,6 +136,8 @@ assert not [p for p in placed if p.tile.tags.get("weapons", 0) >= 0.6]
 assert dlg.result.options["craft"] == ["escape"] and dlg.result.options["parts"]["counts"] == {"weapons": 0, "escape": 2}
 
 # ---- symbol decor options ------------------------------------------------------
+for sp in dlg.count_spins.values():                 # an ordinary ship (escape pod decks hold no furniture)
+    sp.setValue(-1)
 dlg.ck_decor.setChecked(True)
 dlg.cb_incident.setCurrentIndex(dlg.cb_incident.findData("overrun"))
 dlg.cb_where.setCurrentIndex(dlg.cb_where.findData("all"))

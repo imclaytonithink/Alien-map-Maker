@@ -46,6 +46,7 @@ from ui.color_picker import choose_color
 from ui.app_icon import app_icon
 from ui.stamp_bar import StampBar
 from ui.cutout_bar import CutoutBar
+from ui.lights_tool import LightsBar
 
 # Older builds kept the recent-maps list beside this file. That works from a
 # source checkout, but a one-file EXE runs from a temporary folder that is
@@ -96,7 +97,7 @@ def save_recent(items: list, path: Optional[str] = None) -> bool:
 
 # Tools shown on the toolbar by default; the rest live in the menus (and the
 # right-click menu) and can be added back via View → Customize toolbar.
-COMPACT_TOOLBAR = ("new", "open", "save", "export", "undo", "redo", "generate")
+COMPACT_TOOLBAR = ("new", "open", "save", "export", "undo", "redo", "generate", "lights")
 
 # The inspector (Node / Layers / Zones / History) can be dragged this narrow
 # at the normal text size; its rows wrap to fit. Larger text needs more room.
@@ -551,6 +552,15 @@ class MainWindow(QMainWindow):
             self.canvas.cutout_shape = "rect"
         self.canvas.cutout_snap = self.settings.value("tools/cutout_snap", True, type=bool)
         self.canvas.cutoutChanged.connect(self._refresh_cutout_bar)
+        # Lights tool options float at the top of the canvas too
+        self.lights_bar = LightsBar(self.canvas)
+        self.lights_bar.kindChosen.connect(self._set_light_kind)
+        self.lights_bar.colorChosen.connect(self._set_light_color)
+        self.lights_bar.reachChosen.connect(self._set_light_reach)
+        self.lights_bar.actionRequested.connect(self._lights_action)
+        self.canvas.lightsChanged.connect(self._refresh_lights_bar)
+        self.canvas.light_context = self._light_context
+        self.canvas.light_kind = "ceiling" if self.settings.value("tools/light_kind", "wall") == "ceiling" else "wall"
         self.canvas.cutoutMenuRequested.connect(self._show_cutout_menu)
         self.canvas.installEventFilter(self)
         center_widget = QWidget()
@@ -742,8 +752,18 @@ class MainWindow(QMainWindow):
         bar.move(left, margin)
         bar.raise_()
 
+    def _place_lights_bar(self):
+        if not hasattr(self, "lights_bar") or not self.lights_bar.isVisible():
+            return
+        bar = self.lights_bar
+        margin = 8 + self.canvas.rail_thickness()
+        bar.fit_width(self.canvas.width() - 2 * margin)
+        bar.move(max(margin, (self.canvas.width() - bar.width()) // 2), margin)
+        bar.raise_()
+
     def _place_stamp_bar(self):
         self._place_cutout_bar()
+        self._place_lights_bar()
         if not hasattr(self, "stamp_bar"):
             return
         bar = self.stamp_bar
@@ -1100,6 +1120,7 @@ class MainWindow(QMainWindow):
                              ("lasso", "Lasso (freehand)"), ("polygon", "Polygon")):
             cut_menu.addAction(label, lambda s=shape: self._start_cutout_tool(s))
         t.addAction("Clone patch over a label", self._start_clone_tool)
+        t.addAction("Lights (place, move, auto-light)", self._start_lights_tool)
         t.addSeparator()
         t.addAction("Place MU/TH/UR terminal", self._place_terminal)
         t.addAction("Export MU/TH/UR terminal code…", self._export_muthur)
@@ -1142,6 +1163,8 @@ class MainWindow(QMainWindow):
              "delete it, cut or copy it, or make it a new node."),
             ("clone", "Clone", self._start_clone_tool,
              "Cover a baked-in label with a clean piece of the same picture."),
+            ("lights", "Lights", self._start_lights_tool,
+             "Place, move and remove lamps on Geomorph tiles, or light rooms automatically."),
             ("ruler", "Ruler", self._start_ruler_tool,
              "Measure map distance; hold Shift to snap endpoints to the grid."),
             ("scale", "Scale", self._start_scale_tool,
@@ -1179,6 +1202,14 @@ class MainWindow(QMainWindow):
             action.triggered.connect(
                 lambda checked=False, fn=callback: fn())
             actions[tool_id] = action
+        if not self.settings.value("toolbar/lights_added", False, type=bool):
+            # the Lights button is new: show it once on a toolbar that was set up before it existed
+            vis = self.settings.value("toolbar/visible", None)
+            if vis:
+                vis = [v for v in (vis.split(",") if isinstance(vis, str) else list(vis)) if v]
+                if "lights" not in vis:
+                    self.settings.setValue("toolbar/visible", vis + ["lights"])
+            self.settings.setValue("toolbar/lights_added", True)
         self.toolbar = CustomizableToolBar(
             "Main toolbar", actions, self.settings, self,
             default_visible=COMPACT_TOOLBAR, layout_version=2)
@@ -1373,6 +1404,8 @@ class MainWindow(QMainWindow):
             self._refresh_stamp_bar()          # text/marker glyphs follow the theme
         if hasattr(self, "cutout_bar"):
             self.cutout_bar.set_theme(self.theme_mode, self.theme_accent)
+        if hasattr(self, "lights_bar"):
+            self.lights_bar.set_theme(self.theme_mode, self.theme_accent)
         self.scanlines.set_accent(accent)
         self.scanlines.setVisible(
             self.theme_mode == "alien" and self.alien_scanlines)
@@ -2649,6 +2682,74 @@ class MainWindow(QMainWindow):
 
     def _start_clone_tool(self):
         self.canvas.set_clone_tool(True)
+
+    # -- Lights tool --------------------------------------------------------------------------------------
+    def _start_lights_tool(self):
+        self.canvas.set_lights_tool(True)
+
+    def _light_context(self):
+        """(registry, tile images) for the Lights tool: the generator's own when it is open, else loaded once."""
+        dlg = getattr(self, "_geomorph_dialog", None)
+        if dlg is not None and getattr(dlg, "images", None) is not None:
+            return dlg.registry, dlg.images
+        if getattr(self, "_light_ctx_cache", None) is None:
+            import json
+            import os
+            from pathlib import Path
+            from geomorph import render
+            from geomorph.registry import Registry, Tile
+            from ui.geomorph_dialog import PACK_FOLDERS, find_tiles_dirs, user_data_dir
+            udir = user_data_dir()
+            ov = udir / "edge_overrides.json"
+            reg = Registry.load(overrides=ov if ov.exists() else None)
+            custom = udir / "custom_tiles.json"
+            if custom.exists():
+                for d in json.loads(custom.read_text(encoding="utf-8")).get("tiles", []):
+                    reg.add(Tile.from_json(d))
+            d = self.settings.value("geomorph/tiles_dir", "", str) or ""
+            ok = bool(d) and os.path.isdir(os.path.join(d, PACK_FOLDERS[0]))
+            lib = getattr(self.library.library, "root", "") or ""
+            extra = [x for x in find_tiles_dirs(lib, getattr(self.project, "asset_store", ""))
+                     if os.path.normcase(x) != os.path.normcase(d)]
+            reg.tiles_dir, reg.extra_dirs = (Path(d) if ok else None), extra
+            images = render.TileImages(d if ok else None, cache_dir=udir / "thumbs", extra_dirs=extra)
+            self._light_ctx_cache = (reg, images)
+        return self._light_ctx_cache
+
+    def _refresh_lights_bar(self):
+        c = self.canvas
+        self.lights_bar.set_state(c.light_kind, c.light_color, c.light_reach)
+        self.lights_bar.setVisible(c.lights_tool)
+        self._place_lights_bar()
+
+    def _set_light_kind(self, kind):
+        self.canvas.light_kind = kind
+        self.settings.setValue("tools/light_kind", kind)
+        self._refresh_lights_bar()
+        from ui.lights_tool import _hint
+        self.status.showMessage(_hint(kind), 6000)
+
+    def _set_light_color(self, light, fixture):
+        self.canvas.light_color = (light, fixture)
+
+    def _set_light_reach(self, reach):
+        self.canvas.light_reach = float(reach)
+
+    def _lights_now(self, name):
+        """Auto-light or clear the selected tiles straight from the right-click menu (opens the tool)."""
+        if not self.canvas.lights_tool:
+            sel = self.canvas.selected_pieces()
+            self.canvas.set_lights_tool(True)
+            self.canvas.select(sel)
+        self._lights_action(name)
+
+    def _lights_action(self, name):
+        if name == "auto":
+            self.canvas.auto_light()
+        elif name == "clear":
+            self.canvas.clear_lights()
+        else:
+            self.canvas.set_lights_tool(False)
 
     def _repick_clone_source(self):
         selected = self.canvas.selected_pieces()

@@ -142,6 +142,17 @@ class ExportDialog(QDialog):
         self.chk_legend.toggled.connect(self._legend_toggled)
         form.addRow(self.chk_legend)
 
+        from geomorph.canvas_export import LAYER_LEGEND, LAYER_STATES
+        state_layers = [layer for level in self.project.levels for layer in level.layers
+                        if layer.name in (LAYER_LEGEND, LAYER_STATES)]
+        self.chk_states = QCheckBox("Include room-state symbols and the map legend")
+        self.chk_states.setToolTip("The symbols on dark, locked-down, quarantined and breached rooms, and the legend "
+                                   "that explains them (placed in an empty corner of each level).")
+        self.chk_states.setChecked(any(getattr(layer, "export", True) for layer in state_layers) if state_layers else True)
+        self.chk_states.setVisible(bool(state_layers))
+        self._state_layers = state_layers
+        form.addRow(self.chk_states)
+
         left_out = sorted({layer.name for level in self.project.levels
                            for layer in level.layers
                            if not getattr(layer, "export", True)})
@@ -321,6 +332,8 @@ class ExportDialog(QDialog):
         self.project.export_centerlines = extras["include_centerlines"]
         self.project.export_guides = extras["include_guides"]
         self.project.export_coordinates = extras["include_coordinates"]
+        for layer in self._state_layers:          # remembered with the map, like the Layers panel's export button
+            layer.export = self.chk_states.isChecked()
         if self.parent() and hasattr(self.parent(), "_mark_dirty"):
             self.parent()._mark_dirty()
 

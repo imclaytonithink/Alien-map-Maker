@@ -122,8 +122,9 @@ def choose_dims(tonnage, symmetric=True, fins=True, square=False):
     return best[1], best[2]
 
 
-def tags_for_slots(slots, ship_type, rng, mode, counts=None, C=1):
-    """Planned: guarantee required rooms, bias function to hull position."""
+def tags_for_slots(slots, ship_type, rng, mode, counts=None, C=1, short=None):
+    """Planned: guarantee required rooms, bias function to hull position. Rooms the user asked for by number come
+    first; any that do not fit the hull are listed in ``short`` ({tag: (asked, placed)})."""
     cfg = SHIP_TYPES[ship_type]
     need = dict(BASE_REQUIRED)
     for k, v in cfg["extra"].items():
@@ -141,7 +142,8 @@ def tags_for_slots(slots, ship_type, rng, mode, counts=None, C=1):
     open_ = [i for i, t in tags.items() if t is None]
     rng.shuffle(open_)
     required = []
-    for tag, n in need.items():
+    asked = [k for k, v in counts.items() if v > 0]
+    for tag, n in sorted(need.items(), key=lambda kv: kv[0] not in asked):   # the user's numbers before the defaults
         if tag in ("bridge", "engineering"):
             n = max(0, n - 1)
         required += [tag] * n
@@ -156,6 +158,11 @@ def tags_for_slots(slots, ship_type, rng, mode, counts=None, C=1):
         pick = min(pool, key=lambda i: abs(slots[i]["row"] - pref) + rng.random() * 0.35)
         tags[pick] = [tag]
         open_.remove(pick)
+    if short is not None:
+        for tag in asked:
+            got = sum(1 for t in tags.values() if t and t[0] == tag) + (1 if tag in ("bridge", "engineering") else 0)
+            if got < counts[tag]:
+                short[tag] = (counts[tag], got)
     palette = {k: v for k, v in cfg["palette"].items() if k not in banned} or {"staterooms": 1}
     names = list(palette)
     for i in open_:
@@ -284,10 +291,11 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
         fuel_end = rng.choice(("bow_t", "stern_t"))
     picker = TilePicker(registry, rng)
     grid = LevelGrid(0, "Main deck", cols=PAD * 2 + 72 + 20 * (C + 4) + 20, rows=PAD * 2 + 20 * (R + 4) + 80)
+    short = {}
     if mode == "random":
         tags = {i: None for i in range(len(slots))}
     else:
-        tags = tags_for_slots(slots, ship_type, rng, mode, counts, C)
+        tags = tags_for_slots(slots, ship_type, rng, mode, counts, C, short)
         if mode == "planned":
             optimize_tags(slots, tags, rng, C, parts.get("grouping", 0.6))
     banned = {k for k, v in counts.items() if v == 0}
@@ -357,6 +365,9 @@ def generate_ship(registry, rng, tonnage=1000, ship_type="Merchant", mode="plann
         placed[i] = grid.place(tile, s["x"], s["y"], o, zone=(t[0] if t else ""))
     if pairs:
         _place_wings(grid, wing, C, R, issues)
+    for tag, (want, got) in short.items():
+        issues.append(f"asked for {want} {tag.replace('_', ' ')} room(s), only room for {got} at this size: "
+                      "raise the tonnage")
     info = {"nose_chain": chain, "wings": [t.id for t in wing] if wing else [], "fuel_end": fuel_end,
             "C": C, "R": R, "tonnage_target": tonnage, "ship_type": ship_type, "mode": mode,
             "symmetric": symmetric, "issues": issues}

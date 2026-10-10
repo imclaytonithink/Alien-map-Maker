@@ -131,6 +131,45 @@ def test_light_pools_fade_and_wings_get_lamps():
     assert with_lamps, "at least one wing gets a lamp"
 
 
+ALL_STATES = ["lockdown", "power_failure", "quarantine", "breach", "battle"]
+
+
+def test_a_room_has_one_state_at_most():
+    for kind in ("ship", "site"):
+        for seed in range(6):
+            opts = {"kind": kind, "seed": f"one-{seed}", "overlays": ALL_STATES, "intensity": 1.0}
+            if kind == "site" and seed % 2:
+                opts["archetype"] = "Derelict ship"         # torn hull and structural damage before the states
+            res = pipeline.generate(REG, opts)
+            seen = {}
+            for k in ("lockdown", "power_failure", "quarantine"):
+                for z in res.overlays.get(k, []):
+                    assert z not in seen, (kind, seed, z, seen[z], k)
+                    seen[z] = k
+            for m in res.markers:
+                if m["type"] in ("breach", "damage"):
+                    assert m["zone"] not in seen, (kind, seed, m["zone"], seen[m["zone"]], m["type"])
+                    seen[m["zone"]] = m["type"]
+    res = pipeline.generate(REG, {"kind": "ship", "seed": "one-old", "overlays": ALL_STATES, "intensity": 1.0})
+    pkg = exporter.to_package(res)
+    z = pkg["overlays"]["lockdown"][0]
+    pkg["overlays"]["power_failure"].append(z)         # a layout saved before the rule
+    back = exporter.load_layout(pkg, REG)
+    assert z in back.overlays["power_failure"] and z not in back.overlays["lockdown"]
+
+
+def test_breach_and_damage_have_symbols_and_legend_rows():
+    from geomorph import states
+    for st in ("breach", "damage"):
+        assert st in states.ORDER and states.LABEL[st] and states.ABOUT[st]
+        im = states.symbol(st, 40)
+        assert im.getbbox() is not None
+    res = pipeline.generate(REG, {"kind": "ship", "seed": "dmg-1", "overlays": ["breach", "battle"], "intensity": 1.0})
+    have = {st for g in res.grids for st, _x, _y in states.placements(res, g)}
+    assert {"breach", "damage"} <= have, have
+    assert {"breach", "damage"} <= set(states.states_in(res))
+
+
 def main():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

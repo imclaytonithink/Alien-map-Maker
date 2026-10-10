@@ -110,7 +110,9 @@ class TileImages:
 
 
 def _font(size, bold=True):
-    names = ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial.ttf") if bold else ("DejaVuSans.ttf", "Arial.ttf")
+    # Windows finds its fonts only by their lower-case file names ("arialbd.ttf", not "Arial.ttf")
+    names = (("DejaVuSans-Bold.ttf", "arialbd.ttf", "DejaVuSans.ttf", "arial.ttf", "Arial.ttf") if bold
+             else ("DejaVuSans.ttf", "arial.ttf", "Arial.ttf"))
     for name in names:
         try:
             return ImageFont.truetype(name, size)
@@ -222,7 +224,7 @@ def _draw_overlooks(res, g, layer, images, x0, y0, pps, px):
 
 
 def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=True,
-                 bounds=None, title=True, shared=True, decor=True, atmosphere=True) -> Image.Image:
+                 bounds=None, title=True, shared=True, decor=True, atmosphere=True, legend=True) -> Image.Image:
     g = res.grids[level_index]
     x0, y0, x1, y1 = bounds or (shared_bounds(res) if shared else level_bounds(res, level_index))
     W, H = int((x1 - x0) * pps), int((y1 - y0) * pps)
@@ -262,6 +264,21 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
             F.draw_filler(d, f["kind"], box, pps, f.get("rot", 0), f.get("label", "") if f["kind"] in ("void", "airlock") else "")
     _overlays(res, g, layer, x0, y0, pps, gm, atmosphere, images)
     _markers(res, g, layer, x0, y0, pps, gm, numbers)
+    from . import states as _states
+    outside = None
+    if legend:                             # room-state symbols, and a legend explaining them in an empty corner
+        for st, sx, sy in _states.placements(res, g):
+            icon = _states.symbol(st, max(8, int(pps * _states.SYMBOL_SQ)))
+            _paste_clipped(layer, icon, int((sx - x0) * pps - icon.width / 2), int((sy - y0) * pps - icon.height / 2))
+        lpx = max(10, int(pps))
+        spot = _states.legend_spot(res, g, (x0, y0, x1, y1), ratio=lpx / pps)
+        if spot is not None:
+            panel = _states.legend(_states.level_states(res, g), lpx)
+            lx, ly0 = int((spot[0] - x0) * pps), int((spot[1] - y0) * pps)
+            if lx + panel.width <= layer.width and ly0 + panel.height <= layer.height:
+                layer.alpha_composite(panel, (max(0, lx), max(0, ly0)))
+            else:
+                outside = panel                    # no room inside the map: it goes just right of it
     tilt = res.meta.get("tilt")
     if tilt:                               # a crashed wreck sits at an angle
         layer = layer.rotate(tilt, expand=True, resample=Image.BICUBIC, fillcolor=BG)
@@ -280,6 +297,11 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
     dr.rectangle((int(pps), ly, int(pps) + sq, ly + sq), outline=F.LINE)
     dr.rectangle((int(pps) + sq, ly, int(pps) + 2 * sq, ly + sq), outline=F.LINE)
     dr.text((int(pps) + 2 * sq + 6, ly + 2), "= 1 TON  (5 ft squares)", fill=F.LINE, font=_font(max(8, int(pps * 0.8))))
+    if outside is not None:
+        wide = Image.new("RGBA", (im.width + outside.width + int(pps), max(im.height, outside.height + head)), BG)
+        wide.paste(im, (0, 0))
+        wide.alpha_composite(outside, (im.width, head))
+        im = wide
     return im
 
 
@@ -385,8 +407,8 @@ def _markers(res, g, layer, x0, y0, pps, gm, numbers):
             d.text((cx - r * 0.35, cy - r * 0.55), "U", fill=F.LINE, font=fnt)
         elif t == "entrance":
             d.polygon([(cx, cy), (cx - r, cy - r * 1.4), (cx + r, cy - r * 1.4)], fill=F.ALERT)
-        elif t in ("breach", "damage", "salvage"):
-            col = {"breach": (255, 140, 40, 255), "damage": (230, 90, 60, 255), "salvage": (140, 140, 160, 255)}[t]
+        elif t == "salvage":                                  # breaches and damage are state symbols (states.py)
+            col = (140, 140, 160, 255)
             d.ellipse((cx - r * 0.7, cy - r * 0.7, cx + r * 0.7, cy + r * 0.7), outline=col, width=3)
             d.line((cx - r * 0.5, cy - r * 0.5, cx + r * 0.5, cy + r * 0.5), fill=col, width=2)
     if numbers:

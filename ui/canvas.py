@@ -22,6 +22,7 @@ from core.transforms import (grid_offsets, mirror_piece_data, on_mirror_line,
 from core import exporter
 from core.render import draw_node_border, draw_piece, draw_zone_borders
 from ui.canvas_tools import CloneToolMixin, CutoutToolMixin, SelectionToolsMixin
+from ui.lights_tool import LightsToolMixin
 from ui.theme import theme_colors
 
 HANDLE_DIST = 26
@@ -94,7 +95,7 @@ class _DecodeTask(QRunnable):
             pass
 
 
-class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
+class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, LightsToolMixin, QWidget):
     selectionChanged = pyqtSignal(object)   # list[Piece]
     zoneSelectionChanged = pyqtSignal(object)  # ZoneRegion or None
     dirty = pyqtSignal()
@@ -106,6 +107,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
     layerSoloChanged = pyqtSignal(object)
     historyDiscardLast = pyqtSignal()
     statusMessage = pyqtSignal(str)
+    lightsChanged = pyqtSignal()          # the Lights tool was switched on or off
     freeTransformChanged = pyqtSignal(bool)
     guideMenuRequested = pyqtSignal(QPoint, object)  # global pos, {"guide": id} | {"rail": side}
     guideEditRequested = pyqtSignal(str)             # guide id (double-click)
@@ -221,6 +223,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
         self._style_template = None
         self._init_cutout_state()
         self._init_clone_state()
+        self._init_lights_state()
 
         # quick toolbar (J3)
         self.quick = QFrame(self)
@@ -268,6 +271,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
         was_stamping = self.stamp_tool
         was_cutting = self._reset_cutout_state()
         self._reset_clone_state()
+        self._reset_lights_state()
         self.stamp_slot = None
         self._stamp_tighten = False
         self._stamp_hover = None
@@ -431,9 +435,12 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
     def cancel_extra_tool(self) -> bool:
         active = (self.stamp_tool or self.crop_tool or self.ruler_tool
                   or self.scale_tool or self.connector_tool or self.lasso_tool
-                  or self.copy_style_mode or self.cutout_tool or self.clone_tool)
+                  or self.copy_style_mode or self.cutout_tool or self.clone_tool or self.lights_tool)
         if active:
+            was_lights = self.lights_tool
             self._reset_tool_state()
+            if was_lights:
+                self.lightsChanged.emit()
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
             self.update()
         return active
@@ -2457,6 +2464,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
         self._draw_stamp_preview(painter)
         self._draw_cutout_overlay(painter)
         self._draw_clone_overlay(painter)
+        self._draw_lights_overlay(painter)
         if self.selected_zone:
             self._draw_zone_edit_overlay(painter, self.selected_zone)
         self._draw_guides(painter)
@@ -2993,6 +3001,8 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
             return self._cutout_press(sx, sy, event)
         if self.clone_tool:
             return self._clone_press(sx, sy, event)
+        if self.lights_tool:
+            return self._lights_press(sx, sy, event)
         wx, wy = self.screen_to_world(sx, sy)
         left = event.button() == Qt.MouseButton.LeftButton
         right = event.button() == Qt.MouseButton.RightButton
@@ -3094,6 +3104,8 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
             return True
         if self.clone_tool and self._clone_motion(sx, sy, event):
             return True
+        if self.lights_tool and self._lights_motion(sx, sy, event):
+            return True
         if self.stamp_tool and self._stamp_drag_last is not None:
             if self._stamp_edge:
                 self._place_stamp(wx, wy)      # skips spots already filled
@@ -3155,6 +3167,8 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
         if self.cutout_tool and self._cutout_release(sx, sy, event):
             return True
         if self.clone_tool and self._clone_release(sx, sy, event):
+            return True
+        if self.lights_tool and self._lights_release(sx, sy, event):
             return True
         wx, wy = self.screen_to_world(sx, sy)
         if self.stamp_tool and self._stamp_drag_last is not None:
@@ -3230,7 +3244,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
         if e.key() == Qt.Key.Key_Escape and self.cancel_guide_drag():
             e.accept()
             return
-        if self.handle_cutout_key(e) or self.handle_clone_key(e):
+        if self.handle_cutout_key(e) or self.handle_clone_key(e) or self.handle_lights_key(e):
             e.accept()
             return
         if e.key() == Qt.Key.Key_Escape:
@@ -3765,7 +3779,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
         if (self.zone_tool or self.patch_tool or self.stamp_tool or self.crop_tool
                 or self.ruler_tool or self.scale_tool or self.connector_tool
                 or self.lasso_tool or self.copy_style_mode or self.cutout_tool
-                or self.clone_tool):
+                or self.clone_tool or self.lights_tool):
             self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -3776,7 +3790,7 @@ class CanvasView(SelectionToolsMixin, CutoutToolMixin, CloneToolMixin, QWidget):
                     or self.crop_tool or self.ruler_tool or self.scale_tool
                     or self.connector_tool or self.lasso_tool
                     or self.copy_style_mode or self.cutout_tool or self.clone_tool
-                    or self._color_pick_callback)
+                    or self.lights_tool or self._color_pick_callback)
 
     def _open_context_menu(self, e):
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))

@@ -11,11 +11,13 @@ import json
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QStandardPaths, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import QObject, QRectF, QStandardPaths, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QImage, QPainter, QPixmap
 from PyQt6.QtWidgets import (
-    QAbstractSpinBox, QCheckBox, QComboBox, QDialog, QListWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget,
+    QAbstractSpinBox, QCheckBox, QComboBox, QDialog, QListWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
+    QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu,
+    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QSplitter, QTabBar, QTabWidget,
+    QToolButton,
     QVBoxLayout, QWidget,
 )
 
@@ -151,26 +153,165 @@ class _BestOfDialog(QDialog):
         self.accept()
 
 
-class _ClickLabel(QLabel):
-    """Preview label that reports where it was clicked."""
-    clicked = pyqtSignal(int, int, int)          # x, y, button (1 left, 2 right)
-    dragged = pyqtSignal(int, int)               # x, y while the left button is held
+class _MapView(QGraphicsView):
+    """The map preview: scroll to zoom (towards the mouse), drag to pan, Fit shows the whole map.
+
+    Clicks and drags are reported in the picture's own pixels, whatever the zoom: ``clicked(x, y, button)``
+    (1 left, 2 right), ``dragged(x, y)`` while the left button is held, ``released(x, y)``. A left drag pans
+    unless ``grabbing()`` says the dialog picked something up (a lamp) on the click."""
+    clicked = pyqtSignal(int, int, int)
+    dragged = pyqtSignal(int, int)
     released = pyqtSignal(int, int)
+    MIN_ZOOM, MAX_ZOOM = 0.1, 8.0
 
-    def mouseMoveEvent(self, e):
-        if e.buttons() & Qt.MouseButton.LeftButton:
-            self.dragged.emit(int(e.position().x()), int(e.position().y()))
-        super().mouseMoveEvent(e)
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self.setScene(QGraphicsScene(self))
+        self._item = QGraphicsPixmapItem()
+        self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        self.scene().addItem(self._item)
+        self._text = self.scene().addText(text)
+        self._text.setDefaultTextColor(QColor("#9fb4bd"))
+        self._pm = None
+        self._fit = True
+        self._press = None                 # {"button", "pos", "pan", "moved"}
+        self.grabbing = lambda: False
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setRenderHints(QPainter.RenderHint.SmoothPixmapTransform | QPainter.RenderHint.Antialiasing)
+        self.setBackgroundBrush(QColor("#0b0f12"))
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setToolTip("Scroll to zoom, drag to move around, double-click to see the whole map.")
 
-    def mouseReleaseEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.released.emit(int(e.position().x()), int(e.position().y()))
-        super().mouseReleaseEvent(e)
+    # -- like a QLabel ---------------------------------------------------------------------------------
+    def setPixmap(self, pm: QPixmap):
+        self._pm = pm
+        self._item.setPixmap(pm)
+        self._text.setVisible(False)
+        self.scene().setSceneRect(QRectF(pm.rect()))
+        if self._fit:
+            self.fit()
+
+    def pixmap(self):
+        return self._pm
+
+    def setText(self, text):
+        self._text.setPlainText(text)
+        self._text.setVisible(True)
+
+    # -- zoom and pan ----------------------------------------------------------------------------------
+    def zoom(self) -> float:
+        return self.transform().m11()
+
+    def fit(self):
+        if self._pm is None:
+            return
+        self.resetTransform()
+        self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
+        if self.zoom() > 2.0:              # a small map is not blown up into a blur
+            self.resetTransform()
+            self.scale(2.0, 2.0)
+        self._fit = True
+
+    def zoom_by(self, factor, centre=False):
+        z = self.zoom() or 1.0
+        factor = max(self.MIN_ZOOM / z, min(self.MAX_ZOOM / z, factor))
+        old = self.transformationAnchor()
+        if centre:
+            self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.scale(factor, factor)
+        self.setTransformationAnchor(old)
+        self._fit = False
+
+    def wheelEvent(self, e):
+        steps = e.angleDelta().y() / 120.0
+        if steps:
+            self.zoom_by(1.2 ** steps)
+        e.accept()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self._fit:
+            self.fit()
+
+    def mouseDoubleClickEvent(self, e):
+        self.fit()
+
+    def _pos(self, e):
+        p = self.mapToScene(e.position().toPoint())
+        return int(p.x()), int(p.y())
 
     def mousePressEvent(self, e):
-        if e.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
-            self.clicked.emit(int(e.position().x()), int(e.position().y()), int(e.button().value))
-        super().mousePressEvent(e)
+        b = e.button()
+        if b == Qt.MouseButton.LeftButton:
+            self.clicked.emit(*self._pos(e), 1)
+            self._press = {"button": b, "pos": e.position(), "pan": not self.grabbing(), "moved": False}
+        elif b in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
+            self._press = {"button": b, "pos": e.position(), "pan": True, "moved": False}
+        e.accept()
+
+    def mouseMoveEvent(self, e):
+        pr = self._press
+        if pr is None:
+            return
+        d = e.position() - pr["pos"]
+        if abs(d.x()) + abs(d.y()) > 2:
+            pr["moved"] = True
+        if pr["pan"]:                      # the map follows the mouse
+            if pr["moved"]:
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                pr["pos"] = e.position()
+                self.horizontalScrollBar().setValue(int(self.horizontalScrollBar().value() - d.x()))
+                self.verticalScrollBar().setValue(int(self.verticalScrollBar().value() - d.y()))
+        elif pr["button"] == Qt.MouseButton.LeftButton:
+            self.dragged.emit(*self._pos(e))
+
+    def mouseReleaseEvent(self, e):
+        pr, self._press = self._press, None
+        self.viewport().unsetCursor()
+        if pr is None:
+            return
+        if pr["button"] == Qt.MouseButton.LeftButton:
+            self.released.emit(*self._pos(e))
+        elif pr["button"] == Qt.MouseButton.RightButton and not pr["moved"]:   # a right click, not a right drag
+            self.clicked.emit(*self._pos(e), 2)
+
+
+class _Fold(QWidget):
+    """A section that opens and closes with a click on its title (remembered between sessions)."""
+
+    def __init__(self, title, settings=None, key="", open_=False, parent=None):
+        super().__init__(parent)
+        self._settings, self._key = settings, key
+        if settings is not None and key:
+            open_ = settings.value(key, open_, type=bool)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        self.button = QToolButton()
+        self.button.setText(title)
+        self.button.setCheckable(True)
+        self.button.setChecked(bool(open_))
+        self.button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.button.setAutoRaise(True)
+        self.button.setStyleSheet("QToolButton { font-weight: bold; border: none; padding: 3px 0; }")
+        self.button.toggled.connect(self._toggled)
+        lay.addWidget(self.button)
+        self.body = QWidget()
+        self.inner = QVBoxLayout(self.body)
+        self.inner.setContentsMargins(12, 0, 0, 4)
+        lay.addWidget(self.body)
+        self._toggled(bool(open_))
+
+    def _toggled(self, on):
+        self.button.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
+        self.body.setVisible(on)
+        if self._settings is not None and self._key:
+            self._settings.setValue(self._key, bool(on))
+
+    def add(self, w):
+        self.inner.addWidget(w)
+        return w
 
 
 def _set_combo(cb, data):
@@ -232,81 +373,243 @@ class GeomorphDialog(QDialog):
         return find_tiles_dirs(lib, getattr(self.main.project, "asset_store", ""))
 
     def _build(self):
-        # Both columns scroll, so the window fits any screen (the options are taller than most).
+        """Left: what to make, in the order you decide it (start from, ship or site, situation, furnishing,
+        seed), with everything else folded away under More options. Right: the map, then what to do with it."""
         outer = QHBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
         left_w, right_w = QWidget(), QWidget()
         left = QVBoxLayout(left_w)
         right = QVBoxLayout(right_w)
         for lay in (left, right):
             lay.setContentsMargins(0, 0, 6, 0)
+            lay.setSpacing(6)
         self.left_scroll, self.right_scroll = QScrollArea(), QScrollArea()
         for sc, w in ((self.left_scroll, left_w), (self.right_scroll, right_w)):
             sc.setWidgetResizable(True)
             sc.setFrameShape(QFrame.Shape.NoFrame)
             sc.setWidget(w)
-        from PyQt6.QtWidgets import QSplitter
+        self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)   # options fit its width
         self.columns = QSplitter(Qt.Orientation.Horizontal)      # drag the divider to give either side more room
         self.columns.setChildrenCollapsible(False)
         self.columns.addWidget(self.left_scroll)
         self.columns.addWidget(self.right_scroll)
-        self.columns.setStretchFactor(0, 2)
-        self.columns.setStretchFactor(1, 3)
-        self.left_scroll.setMinimumWidth(320)
-        self.right_scroll.setMinimumWidth(320)
+        self.columns.setStretchFactor(0, 0)
+        self.columns.setStretchFactor(1, 1)
+        self.left_scroll.setMinimumWidth(300)
+        self.right_scroll.setMinimumWidth(360)
         outer.addWidget(self.columns)
 
-        left.addWidget(_help("Builds a connected deck plan from the Geomorphs tiles: a starship, or a site "
-                             "(colony, mine, lab, prison, station, wreck…). Same seed + options = same map.",
-                             self.colors))
-        box = QGroupBox("Tile pack")
-        f = QFormLayout(box)
-        row = QHBoxLayout()
-        self.ed_tiles = QLineEdit()
-        self.ed_tiles.setPlaceholderText("Folder with '100x100 Core', '100x50 Edge', … (optional, for the preview)")
-        self.ed_tiles.editingFinished.connect(lambda: self._set_tiles_dir(self.ed_tiles.text()))
-        b = QPushButton("Browse…")
-        b.clicked.connect(self._browse_tiles)
-        row.addWidget(self.ed_tiles, 1)
-        row.addWidget(b)
-        f.addRow(row)
-        self.lbl_pack = QLabel("")
-        self.lbl_pack.setWordWrap(True)
-        f.addRow(self.lbl_pack)
-        left.addWidget(box)
+        def form(box):
+            f = QFormLayout(box)
+            f.setContentsMargins(8, 6, 8, 6)
+            f.setVerticalSpacing(4)
+            f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+            return f
 
-        box = QGroupBox("Scenarios && presets")
+        # ---- 1. start from a preset (applied as soon as it is picked) ---------------------------------
+        box = QGroupBox("Start from")
         v = QVBoxLayout(box)
-        self.cb_preset = QComboBox()
-        v.addWidget(self.cb_preset)
+        v.setContentsMargins(8, 6, 8, 6)
         row = QHBoxLayout()
-        b_apply = QPushButton("Apply")
-        b_apply.clicked.connect(self._apply_preset)
-        b_save = QPushButton("Save current…")
-        b_save.clicked.connect(self._save_preset)
-        b_del = QPushButton("Delete")
-        b_del.clicked.connect(self._delete_preset)
-        for wdg in (b_apply, b_save, b_del):
-            row.addWidget(wdg)
+        self.cb_preset = QComboBox()
+        self.cb_preset.setToolTip("A ready-made situation or one of your saved presets. Picking one sets the options "
+                                  "below and makes the map.")
+        self.cb_preset.activated.connect(lambda _i: self._apply_preset())
+        row.addWidget(self.cb_preset, 1)
+        b_more = QToolButton()
+        b_more.setText("⋯")
+        b_more.setToolTip("Save the current options as a preset, or delete one of yours.")
+        b_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        m = QMenu(b_more)
+        m.addAction("Save current options as a preset…", self._save_preset)
+        m.addAction("Delete this preset", self._delete_preset)
+        b_more.setMenu(m)
+        row.addWidget(b_more)
         v.addLayout(row)
         self.lbl_preset = _help("", self.colors)
         v.addWidget(self.lbl_preset)
         left.addWidget(box)
         self._fill_presets()
 
-        self.tabs = QTabWidget()
-        left.addWidget(self.tabs)
-        # ---- ship ----
+        # ---- 2. ship or site ----------------------------------------------------------------------------
+        self.tabs = QTabBar()                    # Ship | Site: only the chosen one's few options show below it
+        self.tabs.setExpanding(True)
+        self.tabs.setDocumentMode(True)
+        self._kind_pages = []
         w = QWidget()
-        f = QFormLayout(w)
+        f = form(w)
         self.cb_ship_type = QComboBox()
         self.cb_ship_type.addItems(list(self.ship.SHIP_TYPES))
         self.sp_tonnage = QSpinBox()
         self.sp_tonnage.setRange(100, 20000)
         self.sp_tonnage.setSingleStep(100)
         self.sp_tonnage.setValue(1000)
+        self.sp_tonnage.setSuffix(" tons")
+        self.sp_tonnage.setToolTip("How big the ship is. Bigger ships have room for more of the rooms you ask for.")
+        f.addRow("Type", self.cb_ship_type)
+        f.addRow("Size", self.sp_tonnage)
+        self.tabs.addTab("Ship")
+        self._kind_pages.append(w)
+        w = QWidget()
+        f = form(w)
+        self.cb_arch = QComboBox()
+        self.cb_arch.currentIndexChanged.connect(self._arch_changed)
+        self.cb_scale = QComboBox()
+        for s_, label in (("small", "Small"), ("medium", "Medium"), ("large", "Large")):
+            self.cb_scale.addItem(label, s_)
+        self.cb_scale.setCurrentIndex(1)
+        self.cb_env = QComboBox()
+        f.addRow("Kind of site", self.cb_arch)
+        f.addRow("Size", self.cb_scale)
+        f.addRow("Environment", self.cb_env)
+        self.lbl_arch = _help("", self.colors)
+        f.addRow(self.lbl_arch)
+        self.tabs.addTab("Site")
+        self._kind_pages.append(w)
+        self.tabs.currentChanged.connect(self._kind_changed)
+        kind_box = QFrame()
+        kind_box.setObjectName("KindBox")
+        kv = QVBoxLayout(kind_box)
+        kv.setContentsMargins(0, 0, 0, 0)
+        kv.setSpacing(0)
+        kv.addWidget(self.tabs)
+        for page in self._kind_pages:
+            kv.addWidget(page)
+        left.addWidget(kind_box)
+
+        # ---- 3. the situation: condition and room states --------------------------------------------------
+        box = QGroupBox("Situation")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(4)
+        f = QFormLayout()
+        f.setVerticalSpacing(4)
+        self.cb_cond = QComboBox()
+        self.cb_cond.addItem("Usual for this kind", "")
+        for c in self.dressing.conditions():
+            self.cb_cond.addItem(c, c)
+        f.addRow("Condition", self.cb_cond)
+        v.addLayout(f)
+        lbl = QLabel("Rooms that are…")
+        lbl.setToolTip("A room is only ever in one of these states.")
+        v.addWidget(lbl)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(2)
+        self.overlay_checks = {}
+        tips = {"power_failure": "Dark, red emergency lamps in the corridors and big rooms.",
+                "lockdown": "Doors sealed (cut them open), power on: caution tape and amber alarm lamps.",
+                "quarantine": "Sealed against contamination: green dashed line round the room.",
+                "breach": "A hole in the hull: decompression, vacuum beyond.",
+                "battle": "Scorched and torn up, rubble on the floor.",
+                "salvage": "Stripped by salvagers.",
+                "threat": "Where something lurks: marked on the GM map only.",
+                "secrets": "Hidden things: marked on the GM map only."}
+        for i, (key, label) in enumerate((("power_failure", "Power out"), ("lockdown", "Locked down"),
+                                          ("quarantine", "Quarantined"), ("breach", "Hull breached"),
+                                          ("battle", "Battle-damaged"), ("salvage", "Salvage-stripped"),
+                                          ("threat", "Threats (GM only)"), ("secrets", "Secrets (GM only)"))):
+            c = QCheckBox(label)
+            c.setToolTip(tips[key])
+            c.toggled.connect(self._states_changed)
+            self.overlay_checks[key] = c
+            grid.addWidget(c, i // 2, i % 2)
+        v.addLayout(grid)
+        row = QHBoxLayout()
+        self.lbl_int = QLabel("How many")
+        row.addWidget(self.lbl_int)
+        self.sl_int = QSlider(Qt.Orientation.Horizontal)
+        self.sl_int.setRange(0, 100)
+        self.sl_int.setValue(50)
+        self.sl_int.setToolTip("How many rooms are in the states ticked above.")
+        row.addWidget(self.sl_int)
+        v.addLayout(row)
+        f = QFormLayout()
+        f.setVerticalSpacing(4)
+        self.cb_incident = QComboBox()
+        for key, label in (("none", "Nothing — tidy"), ("struggle", "Signs of a struggle"),
+                           ("ransacked", "Ransacked — things missing, overturned"),
+                           ("overrun", "Overrun — barricades, burns, resin, drag marks")):
+            self.cb_incident.addItem(label, key)
+        self.cb_incident.setToolTip("Marks on the floor and the furniture (needs Furnish rooms).")
+        self.cb_where = QComboBox()
+        for key, label in (("all", "In every room"), ("overlay", "Only in rooms with a state, or threats"),
+                           ("random", "In about a third of the rooms"),
+                           ("spread", "Spreading from one room (a nest, a breach…)")):
+            self.cb_where.addItem(label, key)
+        self.cb_origin = QComboBox()
+        for key, label in (("random", "A random room"), ("entrance", "The entrance"), ("medical", "A medical room"),
+                           ("lab", "A laboratory"), ("cargo", "A cargo hold"), ("engineering", "Engineering"),
+                           ("staterooms", "Crew quarters")):
+            self.cb_origin.addItem(label, key)
+        self.cb_origin.setToolTip("Where it started. The worst damage is here; it thins out with every door away, "
+                                  "barricades stand on the doors facing it, and drag marks lead toward it.")
+        self.cb_reach = QComboBox()
+        for key, label in (("short", "About 2 doors"), ("medium", "About 3 doors"), ("far", "About 5 doors")):
+            self.cb_reach.addItem(label, key)
+        self.cb_reach.setCurrentIndex(1)
+        f.addRow("What happened", self.cb_incident)
+        f.addRow("Where", self.cb_where)
+        f.addRow("Starting from", self.cb_origin)
+        f.addRow("Spreads", self.cb_reach)
+        self._incident_rows = [(f, w_) for w_ in (self.cb_where, self.cb_origin, self.cb_reach)]
+        v.addLayout(f)
+        for w_ in (self.cb_incident, self.cb_where):
+            w_.currentIndexChanged.connect(lambda _i: self._update_visibility())
+        left.addWidget(box)
+
+        # ---- 4. furnishing ---------------------------------------------------------------------------------
+        box = QGroupBox("Furnishing")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(4)
+        row = QHBoxLayout()
+        self.ck_decor = QCheckBox("Furnish rooms")
+        self.ck_decor.setToolTip("Furniture, machinery and cargo from the Symbols pack, at real size, matched to each "
+                                 "room. Never blocks corridors. Needs the Symbols ZIP in the library for the canvas.")
+        self.ck_decor.toggled.connect(lambda _c: self._update_visibility())
+        self.sl_decor = QSlider(Qt.Orientation.Horizontal)
+        self.sl_decor.setRange(10, 100)
+        self.sl_decor.setValue(50)
+        self.sl_decor.setToolTip("How full the rooms are.")
+        row.addWidget(self.ck_decor)
+        row.addWidget(self.sl_decor, 1)
+        v.addLayout(row)
+        self.ck_outdoor = QCheckBox("Outdoor features")
+        self.ck_outdoor.setChecked(True)
+        self.ck_outdoor.setToolTip("Trees, rocks, benches, fields. Only where they make sense: trees need air, a hostile world gets "
+                                   "rocks and scrub, an airless one only rocks; ships and stations get nothing.")
+        v.addWidget(self.ck_outdoor)
+        left.addWidget(box)
+
+        # ---- 5. seed and name ------------------------------------------------------------------------------
+        box = QGroupBox("Seed and name")
+        f = form(box)
+        row = QHBoxLayout()
+        self.ed_seed = QLineEdit(new_seed())
+        self.ed_seed.setMaxLength(MAX_SEED_LENGTH)
+        self.ed_seed.setToolTip("The same seed and options always make the same map.")
+        b1 = QPushButton("New")
+        b1.setToolTip("A new random seed.")
+        b1.clicked.connect(lambda: self.ed_seed.setText(new_seed()))
+        row.addWidget(self.ed_seed, 1)
+        row.addWidget(b1)
+        f.addRow("Seed", row)
+        self.ed_name = QLineEdit()
+        self.ed_name.setPlaceholderText("Made up for you")
+        f.addRow("Name", self.ed_name)
+        left.addWidget(box)
+
+        # ---- more options, folded away ---------------------------------------------------------------------
+        self.more = _Fold("More options", self.settings, "geomorph/more_open", False)
+        left.addWidget(self.more)
+        # ship layout and parts
+        self.box_ship = QGroupBox("Ship layout")
+        f = form(self.box_ship)
         self.cb_ship_mode = QComboBox()
-        for key, label in (("planned", "Planned — required rooms guaranteed"), ("random", "Random — tiles in any order"),
-                           ("selective", "Selectively random — reject placements that make no sense"),
+        for key, label in (("planned", "Planned — the rooms it needs, where they belong"),
+                           ("random", "Random — any tile anywhere"),
+                           ("selective", "Random, but nothing that makes no sense"),
                            ("movie", "Movie set — only the connected action area")):
             self.cb_ship_mode.addItem(label, key)
         self.cb_orient = QComboBox()
@@ -314,18 +617,19 @@ class GeomorphDialog(QDialog):
             self.cb_orient.addItem(label, key)
         self.ck_sym = QCheckBox("Port / starboard symmetry")
         self.ck_sym.setChecked(True)
-        self.ck_fins = QCheckBox("Aerofin (wing) tiles")
+        self.ck_fins = QCheckBox("Wings (aerofins)")
         self.ck_fins.setChecked(True)
-        f.addRow("Ship type", self.cb_ship_type)
-        f.addRow("Target tonnage", self.sp_tonnage)
-        f.addRow("Layout approach", self.cb_ship_mode)
-        f.addRow("Orientation", self.cb_orient)
+        self.ck_square = QCheckBox("Square shoulders")
+        self.ck_square.setToolTip("No corner pieces beside a single nose or tail: a squarer hull.")
+        self.ck_square.setChecked(True)
+        f.addRow("Layout", self.cb_ship_mode)
+        f.addRow("Facing", self.cb_orient)
         f.addRow(self.ck_sym)
         f.addRow(self.ck_fins)
-        # ship parts: every part can be left on Auto, chosen, or removed
+        f.addRow(self.ck_square)
         reg = self.registry
         self.cb_wing = QComboBox()
-        self.cb_wing.addItem("Auto (matched to ship type)", None)
+        self.cb_wing.addItem("Auto (suits the ship type)", None)
         self.cb_wing.addItem("No wings", "none")
         for port, _star in reg.wing_pairs():
             self.cb_wing.addItem(f"{port.number} {port.title.replace('Wing Port ', '')}"[:70], port.id)
@@ -339,270 +643,347 @@ class GeomorphDialog(QDialog):
             self.cb_tail.addItem(st.replace("Engineering, ", ""), "style:" + st)
         self.cb_trans = QComboBox()
         self.cb_trans.addItem("Auto", None)
-        self.cb_trans.addItem("None (single-piece nose and tail)", "none")
+        self.cb_trans.addItem("None (one-piece nose and tail)", "none")
         for t in sorted((t for t in reg.tiles.values() if t.type == "trans" and not t.mirror_of), key=lambda t: t.id):
             self.cb_trans.addItem(f"{t.id}  {t.title.replace('Nose transition ', '')}"[:70], t.id)
-        self.ck_square = QCheckBox("Square shoulders (no corner pieces beside a lone nose/tail)")
-        self.ck_square.setChecked(True)
-        f.addRow(self.ck_square)
+        for cb in (self.cb_wing, self.cb_nose, self.cb_tail, self.cb_trans):
+            cb.setMinimumContentsLength(14)
+            cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         f.addRow("Wings", self.cb_wing)
-        f.addRow("Nose (bridge)", self.cb_nose)
-        f.addRow("Tail (engineering)", self.cb_tail)
-        f.addRow("Nose/tail transition", self.cb_trans)
+        f.addRow("Nose", self.cb_nose)
+        f.addRow("Tail", self.cb_tail)
+        f.addRow("Nose / tail joint", self.cb_trans)
+        rooms = QWidget()
+        g = QGridLayout(rooms)
+        g.setContentsMargins(0, 4, 0, 0)
+        g.setHorizontalSpacing(6)
+        g.setVerticalSpacing(2)
         self.count_spins = {}
-        for tag, label in (("escape", "Escape pods"), ("weapons", "Guns / barbettes"), ("hangar", "Launch bays / hangars"),
-                           ("scoop", "Fuel scoops"), ("vehicle_bay", "Vehicle bays"), ("cargo", "Cargo holds"),
-                           ("medical", "Medical"), ("lab", "Labs"), ("staterooms", "Staterooms"),
-                           ("recreation", "Lounges / recreation"), ("hydroponics", "Hydroponics")):
+        for i, (tag, label) in enumerate((("escape", "Escape pods"), ("weapons", "Guns"), ("hangar", "Launch bays"),
+                                          ("scoop", "Fuel scoops"), ("vehicle_bay", "Vehicle bays"),
+                                          ("cargo", "Cargo holds"), ("medical", "Medical"), ("lab", "Labs"),
+                                          ("staterooms", "Staterooms"), ("recreation", "Lounges"),
+                                          ("hydroponics", "Hydroponics"))):
             sp = QSpinBox()
             sp.setRange(-1, 20)
             sp.setValue(-1)
             sp.setSpecialValueText("Auto")
-            sp.setToolTip("Auto lets the ship type decide. 0 leaves this part out. A number asks for that many "
-                          "rooms. Escape pods, guns, launch bays and fuel scoops always come in mirrored pairs.")
+            sp.setToolTip("Auto lets the ship type decide, 0 leaves this room out, a number asks for that many. "
+                          "Rooms you ask for come first; if the ship is too small for them all the map check says so "
+                          "(make the ship bigger). Escape pods, guns, launch bays and scoops come in pairs.")
             self.count_spins[tag] = sp
-            f.addRow(label, sp)
+            g.addWidget(QLabel(label), i // 2, (i % 2) * 2)
+            g.addWidget(sp, i // 2, (i % 2) * 2 + 1)
+        f.addRow(QLabel("Rooms"))
+        f.addRow(rooms)
         self.craft_checks = {}
         from geomorph.overlays import CATEGORIES
+        f.addRow(_help("Craft drawn in the bays (only on tiles that have them, with the tile pack set):", self.colors))
         for key, (label, _rx) in CATEGORIES.items():
-            c = QCheckBox("Show: " + label)
+            c = QCheckBox(label.split(",")[0].replace(" and small vehicles", ""))
+            c.setToolTip(label)
             self.craft_checks[key] = c
             f.addRow(c)
-        self.tabs.addTab(w, "Ship")
-        # ---- site ----
-        w = QWidget()
-        f = QFormLayout(w)
-        self.cb_arch = QComboBox()
-        self.cb_arch.currentIndexChanged.connect(self._arch_changed)
-        b = QPushButton("Edit / add archetypes…")
-        b.clicked.connect(self._edit_archetypes)
-        self.cb_scale = QComboBox()
-        for s, label in (("small", "Small"), ("medium", "Medium"), ("large", "Large")):
-            self.cb_scale.addItem(label, s)
-        self.cb_scale.setCurrentIndex(1)
-        self.cb_env = QComboBox()
+        self.more.add(self.box_ship)
+        # site layout
+        self.box_site = QGroupBox("Site layout")
+        f = form(self.box_site)
         self.cb_site_mode = QComboBox()
-        for key, label in (("planned", "Planned — required zones guaranteed"), ("random", "Random"),
-                           ("selective", "Selectively random"), ("movie", "Movie set — action area only")):
+        for key, label in (("planned", "Planned — the zones it needs"), ("random", "Random"),
+                           ("selective", "Random, but nothing that makes no sense"),
+                           ("movie", "Movie set — action area only")):
             self.cb_site_mode.addItem(label, key)
-        f.addRow("Archetype", self.cb_arch)
+        f.addRow("Layout", self.cb_site_mode)
+        b = QPushButton("Edit / add kinds of site…")
+        b.clicked.connect(self._edit_archetypes)
         f.addRow(b)
-        f.addRow("Scale", self.cb_scale)
-        f.addRow("Environment", self.cb_env)
-        f.addRow("Layout approach", self.cb_site_mode)
-        self.lbl_arch = _help("", self.colors)
-        f.addRow(self.lbl_arch)
-        self.tabs.addTab(w, "Site")
-
-        box = QGroupBox("Look and feel")
-        f = QFormLayout(box)
-        self.cb_cond = QComboBox()
-        self.cb_cond.addItem("Archetype default", "")
-        for c in self.dressing.conditions():
-            self.cb_cond.addItem(c, c)
-        self.ck_mixed = QCheckBox("Mix conditions between zones")
+        self.more.add(self.box_site)
+        # style
+        box = QGroupBox("Style")
+        f = form(box)
         self.cb_theme = QComboBox()
         for k, label in self.names.theme_labels().items():
             self.cb_theme.addItem(label, k)
+        self.cb_theme.setToolTip("The style of the names and descriptions.")
         self.sp_pec = QSpinBox()
         self.sp_pec.setRange(0, 6)
         self.sp_pec.setValue(2)
-        self.ed_name = QLineEdit()
-        self.ed_name.setPlaceholderText("Leave empty for a generated name")
-        f.addRow("Name", self.ed_name)
-        f.addRow("Condition", self.cb_cond)
-        f.addRow(self.ck_mixed)
-        f.addRow("Theme", self.cb_theme)
-        f.addRow("Quirks & perks", self.sp_pec)
+        self.sp_pec.setToolTip("Odd details and advantages written into the description.")
+        self.ck_mixed = QCheckBox("Mixed conditions")
+        self.ck_mixed.setToolTip("Rooms in different conditions (some worn, some new).")
         self.sl_group = QSlider(Qt.Orientation.Horizontal)
         self.sl_group.setRange(0, 100)
         self.sl_group.setValue(60)
-        self.sl_group.setToolTip("Smart grouping: related rooms are generated close together (medical with labs and the "
-                                 "morgue, cargo with loading bays, quarters with freshers, canteens with the galley...). "
-                                 "0 turns it off. The rules are in geomorph/data/affinity.json.")
+        self.sl_group.setToolTip("Related rooms close together (medical with labs and the morgue, cargo with loading "
+                                 "bays, quarters with freshers…). 0 turns it off.")
+        f.addRow("Names", self.cb_theme)
+        f.addRow("Quirks && perks", self.sp_pec)
         f.addRow("Room grouping", self.sl_group)
-        left.addWidget(box)
-
-        box = QGroupBox("Symbols (furniture, machinery, cargo…)")
-        v = QVBoxLayout(box)
-        self.ck_decor = QCheckBox("Furnish open rooms with symbols at real size")
-        self.ck_decor.setToolTip("Uses the Symbols pack. Items match the room's function, keep to the walls and never "
-                                 "block corridors. Needs the Symbols ZIP in the library to place on the canvas.")
-        v.addWidget(self.ck_decor)
-        self.ck_outdoor = QCheckBox("Outdoor features on sites: trees, bushes, boulders, benches, fields")
-        self.ck_outdoor.setChecked(True)
-        self.ck_outdoor.setToolTip("Only where they make sense: trees need a breathable atmosphere, a hostile world gets rocks "
-                                   "and scrub, an airless one only rocks; a garrison stays bare, a farm gets fields, and "
-                                   "ships and stations get nothing.")
-        v.addWidget(self.ck_outdoor)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Amount"))
-        self.sl_decor = QSlider(Qt.Orientation.Horizontal)
-        self.sl_decor.setRange(10, 100)
-        self.sl_decor.setValue(50)
-        row.addWidget(self.sl_decor)
-        v.addLayout(row)
-        self.cb_incident = QComboBox()
-        for key, label in (("none", "Tidy — as if nothing happened"), ("struggle", "Signs of a struggle"),
-                           ("ransacked", "Ransacked — things missing and overturned"),
-                           ("overrun", "Overrun — barricades, burns, resin, drag marks")):
-            self.cb_incident.addItem(label, key)
-        self.cb_where = QComboBox()
-        for key, label in (("all", "In every room"), ("overlay", "Only lockdown / quarantine / threat zones"),
-                           ("random", "In about a third of the rooms"),
-                           ("spread", "Spreading from a starting room (nest, breach…)")):
-            self.cb_where.addItem(label, key)
-        self.cb_origin = QComboBox()
-        for key, label in (("random", "A random room"), ("entrance", "The entrance"), ("medical", "A medical room"),
-                           ("lab", "A laboratory"), ("cargo", "A cargo hold"), ("engineering", "Engineering"),
-                           ("staterooms", "Crew quarters")):
-            self.cb_origin.addItem(label, key)
-        self.cb_origin.setToolTip("Where it started. The worst damage is here (resin and burns all over); it thins out "
-                                  "with every door away, barricades stand on the doors facing it, and drag marks lead toward it.")
-        self.cb_reach = QComboBox()
-        for key, label in (("short", "Short — about 2 doors"), ("medium", "Medium — about 3 doors"), ("far", "Far — about 5 doors")):
-            self.cb_reach.addItem(label, key)
-        self.cb_reach.setCurrentIndex(1)
-        f2 = QFormLayout()
-        f2.addRow("Something bad happened", self.cb_incident)
-        f2.addRow("Where", self.cb_where)
-        f2.addRow("Starting from", self.cb_origin)
-        f2.addRow("How far it spreads", self.cb_reach)
-        v.addLayout(f2)
-        left.addWidget(box)
-
-        box = QGroupBox("State overlays (seeded)")
-        v = QVBoxLayout(box)
-        self.overlay_checks = {}
-        for key, label in (("lockdown", "Lockdown"), ("power_failure", "Power failure"), ("breach", "Breach / decompression"),
-                           ("quarantine", "Quarantine"), ("salvage", "Salvage-stripped"), ("battle", "Battle damage"),
-                           ("threat", "Unknown-threat markers (GM only)"), ("secrets", "Secrets (GM only)")):
-            c = QCheckBox(label)
-            self.overlay_checks[key] = c
-            v.addWidget(c)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Intensity"))
-        self.sl_int = QSlider(Qt.Orientation.Horizontal)
-        self.sl_int.setRange(0, 100)
-        self.sl_int.setValue(50)
-        row.addWidget(self.sl_int)
-        v.addLayout(row)
-        left.addWidget(box)
-
+        f.addRow(self.ck_mixed)
+        self.more.add(box)
+        # emergency lamps
         from geomorph import atmosphere as _atmo
         self.light_color, self.fixture_color = _atmo.DEFAULT_LIGHT, _atmo.DEFAULT_FIXTURE
         self.my_light_color, self.my_fixture_color = "#ffd27a", "#fff1c9"
-        box = QGroupBox("Lights")
-        v = QVBoxLayout(box)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Emergency lamps"))
+        box = QGroupBox("Emergency lamps (power out)")
+        row = QHBoxLayout(box)
         self.btn_light_color = self._color_button("light_color", "Colour of the emergency light")
-        self.btn_fixture_color = self._color_button("fixture_color", "Colour of the emergency fixtures")
+        self.btn_fixture_color = self._color_button("fixture_color", "Colour of the emergency lamps themselves")
         b_reset = QPushButton("Red")
         b_reset.setToolTip("Back to the standard red emergency lamps.")
         b_reset.clicked.connect(self._reset_lamp_colors)
-        for wdg in (QLabel("light"), self.btn_light_color, QLabel("fixture"), self.btn_fixture_color, b_reset):
+        for wdg in (QLabel("light"), self.btn_light_color, QLabel("lamp"), self.btn_fixture_color, b_reset):
             row.addWidget(wdg)
         row.addStretch(1)
-        v.addLayout(row)
+        self.more.add(box)
+        # tile pack
+        box = QGroupBox("Tile pack")
+        f = form(box)
         row = QHBoxLayout()
-        self.btn_place_light = QPushButton("Place lights")
+        self.ed_tiles = QLineEdit()
+        self.ed_tiles.setPlaceholderText("Folder with '100x100 Core', '100x50 Edge', … (for the preview)")
+        self.ed_tiles.editingFinished.connect(lambda: self._set_tiles_dir(self.ed_tiles.text()))
+        b = QPushButton("Browse…")
+        b.clicked.connect(self._browse_tiles)
+        row.addWidget(self.ed_tiles, 1)
+        row.addWidget(b)
+        f.addRow(row)
+        self.lbl_pack = _help("", self.colors)
+        f.addRow(self.lbl_pack)
+        b_edge = QPushButton("Edge editor…")
+        b_edge.setToolTip("Fix where a tile's doors and walls are.")
+        b_edge.clicked.connect(self._edge_editor)
+        f.addRow(b_edge)
+        self.more.add(box)
+        # learning
+        box = QGroupBox("Learning")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(8, 6, 8, 6)
+        row = QHBoxLayout()
+        self.ck_learn = QCheckBox("Learn from my ratings")
+        self.ck_learn.setChecked(True)
+        self.ck_learn.setToolTip("Tiles from maps you like are used more, tiles from maps you do not like less. Maps you "
+                                 "place or export also count a little, by their score. Taste never bends the rules.")
+        self.btn_forget = QPushButton("Forget")
+        self.btn_forget.setToolTip("Forget everything learned so far.")
+        self.btn_forget.clicked.connect(self._forget)
+        row.addWidget(self.ck_learn)
+        row.addStretch(1)
+        row.addWidget(self.btn_forget)
+        v.addLayout(row)
+        self.lbl_learn = _help("", self.colors)
+        v.addWidget(self.lbl_learn)
+        self.more.add(box)
+        left.addStretch(1)
+        left.addWidget(_help("Tiles: Starship Geomorphs 2.0 by Robert Pearce (Pearce Design Studio, LLC), CC BY-NC 4.0; "
+                             "PNG renderings by Eric Smith / RPG Mobius. Non-commercial fan tool; Traveller is a "
+                             "trademark of Far Future Enterprises.", self.colors))
+
+        # ---- right: make it --------------------------------------------------------------------------------
+        top = QHBoxLayout()
+        self.btn_gen = QPushButton("Generate")
+        self.btn_gen.setDefault(True)
+        self.btn_gen.setToolTip("Make the map from these options (same seed = same map).")
+        self.btn_gen.setStyleSheet("font-weight: bold; padding: 4px 14px;")
+        self.btn_gen.clicked.connect(self.generate)
+        self.btn_regen = QPushButton("Another one")
+        self.btn_regen.setToolTip("A new seed, then Generate: a different map with the same options.")
+        self.btn_regen.clicked.connect(self._regenerate)
+        self.btn_best = QPushButton("Best of 6")
+        self.btn_best.setToolTip("Make 6 maps from these options, score them (and your taste), and pick one.")
+        self.btn_best.clicked.connect(self._best_of)
+        self.ck_live = QCheckBox("Auto-update")
+        self.ck_live.setToolTip("Make the map again a moment after any option changes.")
+        self.btn_undo = QPushButton("Undo")
+        self.btn_undo.setToolTip("Back to the map before the last re-roll or new map.")
+        self.btn_undo.setEnabled(False)
+        self.btn_undo.clicked.connect(self._undo)
+        self.cb_level = QComboBox()
+        self.cb_level.setToolTip("Which deck or level to show.")
+        self.cb_level.setMinimumContentsLength(14)
+        self.cb_level.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_level.currentIndexChanged.connect(self._level_changed)
+        for wdg in (self.btn_gen, self.btn_regen, self.btn_best, self.ck_live, self.btn_undo):
+            top.addWidget(wdg)
+        top.addStretch(1)
+        top.addWidget(QLabel("Level"))
+        top.addWidget(self.cb_level)
+        right.addLayout(top)
+
+        view = QHBoxLayout()
+        self.ck_gm = QCheckBox("GM view")
+        self.ck_gm.setChecked(True)
+        self.ck_gm.setToolTip("Off: the map as players see it (no threats, secrets or GM notes).")
+        self.ck_gm.toggled.connect(lambda _c: self._show_level())
+        self.ck_atmo = QCheckBox("Lighting && states")
+        self.ck_atmo.setChecked(True)
+        self.ck_atmo.setToolTip("Dark rooms with red emergency lamps, caution tape and amber alarm lamps on "
+                                "locked-down rooms, green dashed lines round quarantined ones.")
+        self.ck_atmo.toggled.connect(lambda _c: self._show_level())
+        self.ck_show_decor = QCheckBox("Furniture")
+        self.ck_show_decor.setChecked(True)
+        self.ck_show_decor.setToolTip("Show the furniture and outdoor features, or just the layout.")
+        self.ck_show_decor.toggled.connect(lambda _c: self._show_level())
+        self.ck_legend = QCheckBox("Legend")
+        self.ck_legend.setChecked(self.settings.value("geomorph/legend", True, type=bool))
+        self.ck_legend.setToolTip("The symbols on rooms in a state, and the legend that explains them. Also decides "
+                                  "whether Export includes them.")
+        self.ck_legend.toggled.connect(self._legend_toggled)
+        for wdg in (self.ck_gm, self.ck_atmo, self.ck_show_decor, self.ck_legend):
+            view.addWidget(wdg)
+        view.addStretch(1)
+        for label, tip, fn in (("−", "Zoom out", lambda: self.preview.zoom_by(1 / 1.25, True)),
+                               ("Fit", "The whole map", lambda: self.preview.fit()),
+                               ("+", "Zoom in", lambda: self.preview.zoom_by(1.25, True))):
+            b = QToolButton()
+            b.setText(label)
+            b.setToolTip(tip + " (or scroll on the map; drag to move around)")
+            b.clicked.connect(fn)
+            view.addWidget(b)
+        right.addLayout(view)
+
+        self.preview = _MapView("Press Generate.")
+        self.preview.clicked.connect(self._preview_clicked)
+        self.preview.dragged.connect(self._preview_dragged)
+        self.preview.released.connect(self._preview_released)
+        self.preview.grabbing = lambda: self._drag_light is not None or self.btn_place_light.isChecked()
+        self._drag_light = None
+        self.preview.setMinimumSize(360, 260)
+
+        lamps = QHBoxLayout()
+        self.btn_place_light = QPushButton("Place lamps")
         self.btn_place_light.setCheckable(True)
-        self.btn_place_light.setToolTip("Click the map preview to add a light of your own (with this off, drag a placed light to move it): wall lights snap to the nearest wall, "
-                                        "ceiling lights go where you click. Right-click a light to remove it.")
+        self.btn_place_light.setToolTip("Click the map to add a lamp: wall lamps snap to the nearest wall, ceiling "
+                                        "lamps go where you click. Right-click a lamp to remove it. With this off, "
+                                        "drag a lamp to move it. (On the canvas, use the Lights tool.)")
         self.btn_place_light.toggled.connect(self._place_mode_changed)
         self.cb_light_kind = QComboBox()
-        self.cb_light_kind.addItem("Wall light", "wall")
-        self.cb_light_kind.addItem("Ceiling light", "ceiling")
+        self.cb_light_kind.addItem("Wall lamp", "wall")
+        self.cb_light_kind.addItem("Ceiling lamp", "ceiling")
         self.sp_light_radius = QSpinBox()
         self.sp_light_radius.setRange(1, 12)
         self.sp_light_radius.setValue(4)
+        self.sp_light_radius.setPrefix("reach ")
         self.sp_light_radius.setSuffix(" sq")
-        self.sp_light_radius.setToolTip("How far the light reaches, in grid squares.")
+        self.sp_light_radius.setToolTip("How far the light reaches, in grid squares (walls stop it).")
         self.sp_light_strength = QSpinBox()
         self.sp_light_strength.setRange(10, 100)
         self.sp_light_strength.setValue(100)
         self.sp_light_strength.setSuffix(" %")
-        self.sp_light_strength.setToolTip("How bright the light is.")
-        for wdg in (self.btn_place_light, self.cb_light_kind, QLabel("reach"), self.sp_light_radius,
-                    QLabel("bright"), self.sp_light_strength):
-            row.addWidget(wdg)
-        v.addLayout(row)
-        row = QHBoxLayout()
-        self.btn_my_light_color = self._color_button("my_light_color", "Colour of the lights you place")
-        self.btn_my_fixture_color = self._color_button("my_fixture_color", "Colour of the fixtures you place")
-        self.btn_clear_lights = QPushButton("Clear my lights")
+        self.sp_light_strength.setToolTip("How bright the lamp is.")
+        self.btn_my_light_color = self._color_button("my_light_color", "Colour of the lamps you place")
+        self.btn_my_fixture_color = self._color_button("my_fixture_color", "Colour of the lamp itself")
+        self.btn_clear_lights = QPushButton("Remove my lamps")
         self.btn_clear_lights.clicked.connect(self._clear_lights)
-        for wdg in (QLabel("My lights: light"), self.btn_my_light_color, QLabel("fixture"), self.btn_my_fixture_color,
-                    self.btn_clear_lights):
-            row.addWidget(wdg)
-        row.addStretch(1)
-        v.addLayout(row)
-        left.addWidget(box)
+        for wdg in (self.btn_place_light, self.cb_light_kind, self.sp_light_radius, self.sp_light_strength,
+                    self.btn_my_light_color, self.btn_my_fixture_color, self.btn_clear_lights):
+            lamps.addWidget(wdg)
+        lamps.addStretch(1)
 
-        box = QGroupBox("Seed")
-        row = QHBoxLayout(box)
-        self.ed_seed = QLineEdit(new_seed())
-        self.ed_seed.setMaxLength(MAX_SEED_LENGTH)
-        b1 = QPushButton("New")
-        b1.clicked.connect(lambda: self.ed_seed.setText(new_seed()))
-        row.addWidget(self.ed_seed, 1)
-        row.addWidget(b1)
-        left.addWidget(box)
-        left.addStretch(1)
+        rooms = QHBoxLayout()
+        self.cb_zone = QComboBox()
+        self.cb_zone.setToolTip("A room (or click it on the map).")
+        self.cb_zone.setMinimumContentsLength(16)
+        self.cb_zone.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_zone.currentIndexChanged.connect(self._zone_changed)
+        self.ck_lock = QCheckBox("Keep")
+        self.ck_lock.setToolTip("Kept rooms stay as they are when you re-roll the level or everything else.")
+        self.ck_lock.toggled.connect(self._lock_toggled)
+        self.btn_reroll = QPushButton("Re-roll room")
+        self.btn_reroll.setToolTip("A different tile for this room.")
+        self.btn_reroll.clicked.connect(self._reroll_zone)
+        self.btn_reroll_level = QPushButton("Re-roll level")
+        self.btn_reroll_level.setToolTip("New tiles for every room on this level except kept ones and stair/lift cores.")
+        self.btn_reroll_level.clicked.connect(self._reroll_level)
+        self.btn_reroll_all = QPushButton("Re-roll the rest")
+        self.btn_reroll_all.setToolTip("New tiles for every room that is not kept.")
+        self.btn_reroll_all.clicked.connect(self._reroll_all)
+        rooms.addWidget(QLabel("Room"))
+        for wdg in (self.cb_zone, self.ck_lock, self.btn_reroll, self.btn_reroll_level, self.btn_reroll_all):
+            rooms.addWidget(wdg)
+        rooms.addStretch(1)
 
-        # ---- right: preview, text, reports ----
-        top = QHBoxLayout()
-        self.btn_gen = QPushButton("Generate")
-        self.btn_gen.clicked.connect(self.generate)
-        self.btn_regen = QPushButton("New seed + Generate")
-        self.btn_regen.clicked.connect(self._regenerate)
-        self.cb_level = QComboBox()
-        self.cb_level.currentIndexChanged.connect(self._level_changed)
-        self.ck_gm = QCheckBox("GM view")
-        self.ck_gm.setChecked(True)
-        self.ck_gm.toggled.connect(lambda _c: self._show_level())
-        self.ck_show_decor = QCheckBox("Furniture && outdoors")
-        self.ck_show_decor.setChecked(True)
-        self.ck_show_decor.setToolTip("Show the symbols and outdoor features in the preview, or the bare layout.")
-        self.ck_show_decor.toggled.connect(lambda _c: self._show_level())
-        self.ck_atmo = QCheckBox("Atmosphere")
-        self.ck_atmo.setChecked(True)
-        self.ck_atmo.setToolTip("Dim rooms with the power out, red emergency lamps over their doors, a red shutter "
-                                "across locked-down doors (GM view only) and hazard borders on quarantined rooms.")
-        self.ck_atmo.toggled.connect(lambda _c: self._show_level())
-        self.btn_best = QPushButton("Best of 6")
-        self.btn_best.setToolTip("Make 6 maps from the current settings, score them (and your taste), and pick one.")
-        self.btn_best.clicked.connect(self._best_of)
-        self.ck_live = QCheckBox("Live preview")
-        self.ck_live.setToolTip("Regenerate automatically a moment after any option changes.")
-        for wdg in (self.btn_gen, self.btn_regen, self.btn_best, self.ck_live, QLabel("Level"), self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo):
-            top.addWidget(wdg)
-        top.addStretch(1)
-        right.addLayout(top)
-        self.preview = _ClickLabel("Press Generate.")
-        self.preview.clicked.connect(self._preview_clicked)
-        self.preview.dragged.connect(self._preview_dragged)
-        self.preview.released.connect(self._preview_released)
-        self._drag_light = None
-        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumSize(400, 300)
-        sc = QScrollArea()
-        sc.setWidgetResizable(True)
-        sc.setWidget(self.preview)
-        right.addWidget(sc, 3)
+        out = QHBoxLayout()
+        self.btn_place = QPushButton("Place on canvas")
+        self.btn_place.setStyleSheet("font-weight: bold; padding: 4px 14px;")
+        self.btn_place.setToolTip("Add the map to the canvas as new levels (one per deck).")
+        self.btn_place.clicked.connect(self.place_on_canvas)
+        self.btn_export = QPushButton("Export…")
+        self.btn_export.setToolTip("PNG per level, a PDF and the layout, for the GM and for players.")
+        self.btn_export.clicked.connect(self.export)
+        self.btn_save = QPushButton("Save layout…")
+        self.btn_save.clicked.connect(self._save_layout)
+        self.btn_load = QPushButton("Load layout…")
+        self.btn_load.clicked.connect(self._load_layout)
+        b_close = QPushButton("Close")
+        b_close.clicked.connect(self.accept)
+        for wdg in (self.btn_place, self.btn_export, self.btn_save, self.btn_load):
+            out.addWidget(wdg)
+        out.addStretch(1)
+        out.addWidget(b_close)
+
+        upper = QWidget()
+        uv = QVBoxLayout(upper)
+        uv.setContentsMargins(0, 0, 0, 0)
+        uv.setSpacing(4)
+        uv.addWidget(self.preview, 1)
+        uv.addLayout(lamps)
+        uv.addLayout(rooms)
+        uv.addLayout(out)
+        self.lbl_gaps = QLabel("")
+        self.lbl_gaps.setWordWrap(True)
+        self.lbl_gaps.setStyleSheet("color: #f0b040;")
+        self.lbl_gaps.hide()
+        uv.addWidget(self.lbl_gaps)
+        self.lbl_status = QLabel("")
+        self.lbl_status.setWordWrap(True)
+        uv.addWidget(self.lbl_status)
+
+        # details: description, key, room notes, the map check (drag the divider to give them more room)
         self.info_tabs = QTabWidget()
+        self.info_tabs.setDocumentMode(True)
+        self.box_check = QWidget()
+        vc = QVBoxLayout(self.box_check)
+        hc = QHBoxLayout()
+        vc.addLayout(hc)
+        self.lbl_score = QLabel("–")
+        self.lbl_score.setMinimumWidth(64)
+        self.lbl_score.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_score.setStyleSheet("font-size: 26px; font-weight: bold;")
+        self.lbl_score.setToolTip("Map score out of 100.")
+        self.lbl_quality = QLabel("")
+        self.lbl_quality.setWordWrap(True)
+        self.lbl_changes = QLabel("")
+        self.lbl_changes.setWordWrap(True)
+        self.lbl_changes.setStyleSheet("color: #8fd3ff;")
+        col = QVBoxLayout()
+        col.addWidget(self.lbl_quality)
+        col.addWidget(self.lbl_changes)
+        hc.addWidget(self.lbl_score)
+        hc.addLayout(col, 1)
+        lr = QHBoxLayout()
+        self.btn_like = QPushButton("👍 Like this map")
+        self.btn_like.setToolTip("The tiles in this map will be picked a little more often from now on.")
+        self.btn_like.clicked.connect(lambda: self._rate(+1))
+        self.btn_dislike = QPushButton("👎 Not for me")
+        self.btn_dislike.setToolTip("The tiles in this map will be picked a little less often from now on.")
+        self.btn_dislike.clicked.connect(lambda: self._rate(-1))
+        lr.addWidget(self.btn_like)
+        lr.addWidget(self.btn_dislike)
+        lr.addStretch(1)
+        vc.addLayout(lr)
+        vc.addStretch(1)
+        self.info_tabs.addTab(self.box_check, "Map check")
         self.txt_main = QPlainTextEdit()
         self.txt_key = QPlainTextEdit()
         self.txt_report = QPlainTextEdit()
-        for t, name in ((self.txt_main, "Description && hooks"), (self.txt_key, "Key"), (self.txt_report, "Checks && gaps")):
+        for t, name in ((self.txt_main, "Description && hooks"), (self.txt_key, "Key")):
             t.setReadOnly(True)
             self.info_tabs.addTab(t, name)
-        # editable per-room notes (what the GM sees / what players get)
         w = QWidget()
         h = QHBoxLayout(w)
         self.lst_notes = QListWidget()
-        self.lst_notes.setMaximumWidth(260)
+        self.lst_notes.setMaximumWidth(240)
         self.lst_notes.currentRowChanged.connect(self._note_selected)
         h.addWidget(self.lst_notes)
         col = QVBoxLayout()
@@ -616,106 +997,65 @@ class GeomorphDialog(QDialog):
         col.addWidget(self.ed_note_player)
         h.addLayout(col, 1)
         self.info_tabs.addTab(w, "Room notes")
-        right.addWidget(self.info_tabs, 2)
-        row = QHBoxLayout()
-        self.cb_zone = QComboBox()
-        self.btn_reroll = QPushButton("Reroll this zone")
-        self.btn_reroll.clicked.connect(self._reroll_zone)
-        self.btn_place = QPushButton("Place on canvas")
-        self.btn_place.clicked.connect(self.place_on_canvas)
-        self.btn_export = QPushButton("Export…")
-        self.btn_export.clicked.connect(self.export)
-        self.btn_save = QPushButton("Save layout…")
-        self.btn_save.clicked.connect(self._save_layout)
-        self.btn_load = QPushButton("Load layout…")
-        self.btn_load.clicked.connect(self._load_layout)
-        b_edge = QPushButton("Edge editor…")
-        b_edge.clicked.connect(self._edge_editor)
-        b_close = QPushButton("Close")
-        b_close.clicked.connect(self.accept)
-        self.cb_zone.currentIndexChanged.connect(self._zone_changed)
-        self.ck_lock = QCheckBox("Lock")
-        self.ck_lock.setToolTip("Locked tiles stay put when you re-roll the level or everything else.")
-        self.ck_lock.toggled.connect(self._lock_toggled)
-        self.btn_reroll_level = QPushButton("Re-roll level")
-        self.btn_reroll_level.setToolTip("New tiles for every room on this level except locked ones and stair/lift cores.")
-        self.btn_reroll_level.clicked.connect(self._reroll_level)
-        self.btn_reroll_all = QPushButton("Re-roll all unlocked")
-        self.btn_reroll_all.clicked.connect(self._reroll_all)
-        for wdg in (self.cb_zone, self.ck_lock, self.btn_reroll, self.btn_reroll_level, self.btn_reroll_all):
-            row.addWidget(wdg)
-        row2 = QHBoxLayout()
-        right.addLayout(row)
-        row = row2
-        for wdg in (self.btn_place, self.btn_export, self.btn_save, self.btn_load, b_edge, b_close):
-            row.addWidget(wdg)
-        right.addLayout(row)
-        self.box_check = QGroupBox("Map check")
-        vc = QVBoxLayout(self.box_check)
-        hc = QHBoxLayout()
-        vc.addLayout(hc)
-        self.lbl_score = QLabel("–")
-        self.lbl_score.setMinimumWidth(64)
-        self.lbl_score.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_score.setStyleSheet("font-size: 26px; font-weight: bold;")
-        self.lbl_quality = QLabel("")
-        self.lbl_quality.setWordWrap(True)
-        self.lbl_changes = QLabel("")
-        self.lbl_changes.setWordWrap(True)
-        self.lbl_changes.setStyleSheet("color: #8fd3ff;")
-        col = QVBoxLayout()
-        col.addWidget(self.lbl_quality)
-        col.addWidget(self.lbl_changes)
-        self.btn_undo = QPushButton("Undo")
-        self.btn_undo.setToolTip("Go back to how the map was before the last re-roll or new map.")
-        self.btn_undo.setEnabled(False)
-        self.btn_undo.clicked.connect(self._undo)
-        hc.addWidget(self.lbl_score)
-        hc.addLayout(col, 1)
-        hc.addWidget(self.btn_undo)
-        lr = QHBoxLayout()
-        self.btn_like = QPushButton("👍 Like this map")
-        self.btn_like.setToolTip("The tiles in this map will be picked a little more often from now on.")
-        self.btn_like.clicked.connect(lambda: self._rate(+1))
-        self.btn_dislike = QPushButton("👎 Not for me")
-        self.btn_dislike.setToolTip("The tiles in this map will be picked a little less often from now on.")
-        self.btn_dislike.clicked.connect(lambda: self._rate(-1))
-        self.ck_learn = QCheckBox("Learn from my ratings")
-        self.ck_learn.setChecked(True)
-        self.ck_learn.setToolTip("Tiles from maps you like are used more, tiles from maps you do not like less. Maps you "
-                                 "place or export also count a little, by their score. Taste never bends the rules.")
-        self.btn_forget = QPushButton("Reset")
-        self.btn_forget.setToolTip("Forget everything learned so far.")
-        self.btn_forget.clicked.connect(self._forget)
-        self.lbl_learn = QLabel("")
-        self.lbl_learn.setStyleSheet("color: #8fd3ff;")
-        for wdg in (self.btn_like, self.btn_dislike, self.ck_learn, self.btn_forget):
-            lr.addWidget(wdg)
-        lr.addWidget(self.lbl_learn, 1)
-        vc.addLayout(lr)
-        right.addWidget(self.box_check)
-        self.lbl_gaps = QLabel("")
-        self.lbl_gaps.setWordWrap(True)
-        self.lbl_gaps.setStyleSheet("color: #f0b040;")
-        self.lbl_gaps.hide()
-        right.addWidget(self.lbl_gaps)
-        self.lbl_status = QLabel("")
-        self.lbl_status.setWordWrap(True)
-        right.addWidget(self.lbl_status)
-        credit = _help("Tiles: Starship Geomorphs 2.0 by Robert Pearce (Pearce Design Studio, LLC), CC BY-NC 4.0; "
-                       "PNG renderings by Eric Smith / RPG Mobius. Non-commercial fan tool; Traveller is a trademark of "
-                       "Far Future Enterprises.", self.colors)
-        right.addWidget(credit)
+        self.txt_report.setReadOnly(True)
+        self.info_tabs.addTab(self.txt_report, "Checks && gaps")
+
+        self.rows = QSplitter(Qt.Orientation.Vertical)
+        self.rows.setChildrenCollapsible(True)
+        self.rows.addWidget(upper)
+        self.rows.addWidget(self.info_tabs)
+        self.rows.setStretchFactor(0, 4)
+        self.rows.setStretchFactor(1, 1)
+        right.addWidget(self.rows, 1)
+        for cb in left_w.findChildren(QComboBox):          # long choices shorten instead of widening the column
+            cb.setMinimumContentsLength(12)
+            cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self._enable(False)
+        self._kind_changed(self.tabs.currentIndex())
+        self._update_visibility()
+
+    def _size_rows(self):
+        total = self.columns.width()
+        want = self.left_scroll.widget().minimumSizeHint().width() + 24
+        left = max(320, min(want, 390, int(total * 0.36)))
+        self.columns.setSizes([left, total - left])
+        h = self.rows.height()
+        self.rows.setSizes([int(h * 0.86), h - int(h * 0.86)])        # the map gets most of the height
+
+    def _kind_changed(self, index):
+        """Ship and site options: only the ones for what is being made are shown."""
+        ship = index == 0
+        for i, page in enumerate(self._kind_pages):
+            page.setVisible(i == index)
+        self.box_ship.setVisible(ship)
+        self.box_site.setVisible(not ship)
+        self.ck_outdoor.setVisible(not ship)
+
+    def _states_changed(self, *_a):
+        self._update_visibility()
+
+    def _update_visibility(self):
+        """Hide what would do nothing: the incident details without an incident, the spread settings unless it
+        spreads, the amount without furniture or states."""
+        incident = (self.cb_incident.currentData() or "none") != "none"
+        spread = incident and self.cb_where.currentData() == "spread"
+        f = self._incident_rows[0][0]
+        for w_, on in ((self.cb_where, incident), (self.cb_origin, spread), (self.cb_reach, spread)):
+            f.setRowVisible(w_, on)
+        self.sl_decor.setEnabled(self.ck_decor.isChecked())
+        any_state = any(c.isChecked() for c in self.overlay_checks.values())
+        self.sl_int.setEnabled(any_state)
+        self.lbl_int.setEnabled(any_state)
+
+    def _legend_toggled(self, on):
+        self.settings.setValue("geomorph/legend", bool(on))
+        self._show_level()
 
     def showEvent(self, event):
         super().showEvent(event)
         if not getattr(self, "_columns_sized", False) and self.columns.width() > 0:
             self._columns_sized = True             # first show: room for the options, the rest for the preview
-            total = self.columns.width()
-            want = self.left_scroll.widget().minimumSizeHint().width() + 24
-            left = max(320, min(want, int(total * 0.45)))
-            self.columns.setSizes([left, total - left])
+            QTimer.singleShot(0, self._size_rows)
 
     def _enable(self, has):
         for b in (self.btn_place, self.btn_export, self.btn_save, self.btn_reroll, self.ck_lock,
@@ -873,7 +1213,7 @@ class GeomorphDialog(QDialog):
         self._live_timer.setSingleShot(True)
         self._live_timer.setInterval(600)
         self._live_timer.timeout.connect(self._live_fire)
-        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo, self.ck_learn, self.btn_place_light, self.cb_light_kind, self.sp_light_radius, self.sp_light_strength, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
+        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo, self.ck_legend, self.ck_learn, self.btn_place_light, self.cb_light_kind, self.sp_light_radius, self.sp_light_strength, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
         for w in self.findChildren(QWidget):
             if w in skip or w.parent() is None:
                 continue
@@ -1380,8 +1720,9 @@ class GeomorphDialog(QDialog):
         from geomorph import render
         res._previews = {}
         for g in res.grids:
-            res._previews[(g.index, True, True, True)] = render.render_level(res, g.index, self.images, pps=8, gm=True)
-            res._previews[(g.index, False, True, True)] = render.render_level(res, g.index, self.images, pps=8, gm=False)
+            for gm in (True, False):
+                res._previews[(g.index, gm, True, True, True)] = render.render_level(res, g.index, self.images, pps=8,
+                                                                                    gm=gm)
 
     def _generated(self, res, err, push=True):
         if err:
@@ -1439,7 +1780,8 @@ class GeomorphDialog(QDialog):
         res = self.result
         if res is None:
             return
-        key = (self.level_index, self.ck_gm.isChecked(), self.ck_show_decor.isChecked(), self.ck_atmo.isChecked())
+        key = (self.level_index, self.ck_gm.isChecked(), self.ck_show_decor.isChecked(), self.ck_atmo.isChecked(),
+               self.ck_legend.isChecked())
         previews = getattr(res, "_previews", None)
         if previews is None:
             previews = res._previews = {}
@@ -1447,10 +1789,9 @@ class GeomorphDialog(QDialog):
         if pv is None:
             from geomorph import render
             pv = previews[key] = render.render_level(res, self.level_index, self.images, pps=8,
-                                                     gm=key[1], decor=key[2], atmosphere=key[3])
+                                                     gm=key[1], decor=key[2], atmosphere=key[3], legend=key[4])
         pv = self._mark_tiles(pv)
         self.preview.setPixmap(pil_to_pixmap(pv))
-        self.preview.resize(pv.size[0], pv.size[1])
 
     def _mark_tiles(self, im):
         """Outline the selected tile (yellow) and locked tiles (cyan) on a copy."""
@@ -1519,7 +1860,7 @@ class GeomorphDialog(QDialog):
         d = QFileDialog.getExistingDirectory(self, "Export folder (PNG per level, PDF and JSON, GM and player)")
         if not d:
             return
-        files = exporter.export_all(res, d, self.images, pps=16)
+        files = exporter.export_all(res, d, self.images, pps=16, legend=self.ck_legend.isChecked())
         self.lbl_status.setText(f"Exported {len(files)} files to {d}.")
         self._soft_vote()
 
