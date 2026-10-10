@@ -84,6 +84,8 @@ class MenuOverlay(QWidget):
             ("↓  Export PDF…", self.main._export_pdf, "Export a PDF with level and grid options"),
             ("♟  Export for Tabletop Simulator…", self.main._export_tts,
              "Create an opaque, sized PNG for a Tabletop Simulator Custom Board"),
+            ("⌨  Export MU/TH/UR terminal code…", self.main._export_muthur,
+             "Check the terminals you placed and get the code for the MU/TH/UR terminal in Tabletop Simulator"),
             ("▣  Export project bundle / PNG pack…", self.main._export_bundle,
              "Package the project, its referenced assets, and PNG level renders"),
             ("#  Generate Map…", self.main._open_generator,

@@ -400,6 +400,26 @@ reports anything that did not fit.
   from File → Open to extract a local working copy; saving that copy does not
   overwrite the original pack.
 
+### MU/TH/UR terminal code (Alien RPG terminal in Tabletop Simulator)
+SceneBoard is the source of the rooms for the MU/TH/UR terminal object in Tabletop
+Simulator (v51 or later of its script).
+- **Place a terminal marker** in every room that has a terminal: right-click the map →
+  *Place MU/TH/UR terminal here*, or **Tools → Place MU/TH/UR terminal**. The marker is a
+  one-square picture on its own layer (*MU/TH/UR terminals*) and shows in PNG/PDF exports.
+- **File → Export MU/TH/UR terminal code…** (also in the Tools and Esc menus) matches every
+  marker to its room: a hand-drawn gameplay zone (its label) wins over the Geomorph room under
+  it, unless you untick that option. Names are matched to the closest room in
+  `core/muthur_catalog.json`, which also says which rooms may have a terminal.
+- Type how many terminals the map has. The code is only given when that number matches the
+  markers, every marker is in a room that may have one, no two share a room, each floor has at
+  most one quarantined and one locked-down room, and at least one room starts Normal. Pick each
+  room's starting state (Normal, Power out, Quarantine, Lockdown) in the list; Geomorph overlays
+  fill it in. Floors are the map's levels that hold anything, in order.
+- The result is a short code such as `4T4C-ER30-E048-T0Q8` (letters and digits, a built-in
+  typo check). Paste it into the terminal's GEN tab in Tabletop Simulator and press LOAD.
+- The room catalog is frozen: codes point into it by position. Add rooms only by appending
+  (`python build_muthur_catalog.py` refuses to reorder released entries).
+
 ### 7. Save / Open
 - Projects are `.bmap` JSON (node placements and outlines, gameplay zones and
   labels, tint overlays, editable text, non-destructive crops and patches,
@@ -511,7 +531,8 @@ core/   project (data model) · history (undo/redo) · asset_manager (internal
         guides · transforms (mirror / grid copies) · stamps (hotbar keys) ·
         backups (rolling auto-save backups) · relink (missing images) ·
         userfiles (recent maps, previews, file names) · cutouts (cut-out
-        holes, pasted parts, clone patches)
+        holes, pasted parts, clone patches) · muthur (MU/TH/UR terminal
+        markers, room matching and the terminal code; muthur_catalog.json)
 ui/     main_window · canvas · library · properties · layers_panel · zones_panel ·
         menu_overlay (ESC project menu) · generator_dialog · theme (Dark/Light/Alien) ·
         export_dialog · stamp_bar · tool_dialogs · glyphs · app_icon ·

@@ -72,6 +72,7 @@ def build_canvas_menu(main, hit_piece, world_pos=None) -> QMenu:
     def add_paste_here():
         if world_pos is not None:
             add(menu, "Paste here", lambda: canvas.paste_at(*world_pos), has_clipboard)
+            add(menu, "Place MU/TH/UR terminal here", lambda: main._place_terminal_at(*world_pos))
 
     if sel:
         images = [piece for piece in sel if _is_image(piece)]

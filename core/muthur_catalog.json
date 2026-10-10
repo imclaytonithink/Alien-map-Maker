@@ -1,0 +1,2529 @@
+{
+ "version": 1,
+ "settings": [
+  "SPACESHIP",
+  "COLONY",
+  "RESEARCH LAB (WEYLAND-YUTANI)",
+  "MINING OPERATION",
+  "SPACE STATION",
+  "MILITARY BASE (USCM)",
+  "PRISON",
+  "DERELICT (ABANDONED SHIP)"
+ ],
+ "archetypes": [
+  {
+   "name": "Ship",
+   "setting": 0,
+   "rooms": [
+    {
+     "id": "bridge",
+     "name": "Bridge",
+     "tags": [
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "BRIDGE",
+     "allowed": true
+    },
+    {
+     "id": "engineering",
+     "name": "Engineering",
+     "tags": [
+      "engineering"
+     ],
+     "access": "restricted",
+     "pool": "ENGINEERING DECK",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power plant",
+     "tags": [
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "drive",
+     "name": "Drive room",
+     "tags": [
+      "drive"
+     ],
+     "access": "restricted",
+     "pool": "ENGINE ROOM",
+     "allowed": true
+    },
+    {
+     "id": "fuel",
+     "name": "Fuel tanks",
+     "tags": [
+      "fuel"
+     ],
+     "access": "restricted",
+     "pool": "STORAGE DEPOT",
+     "allowed": false
+    },
+    {
+     "id": "scoop",
+     "name": "Fuel scoops",
+     "tags": [
+      "scoop"
+     ],
+     "access": "restricted",
+     "pool": "ENGINEERING",
+     "allowed": false
+    },
+    {
+     "id": "cargo",
+     "name": "Cargo hold",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "CARGO HOLD",
+     "allowed": true
+    },
+    {
+     "id": "hangar",
+     "name": "Hangar",
+     "tags": [
+      "hangar"
+     ],
+     "access": "staff",
+     "pool": "DROPSHIP BAY",
+     "allowed": true
+    },
+    {
+     "id": "vehicle_bay",
+     "name": "Vehicle bay",
+     "tags": [
+      "vehicle_bay"
+     ],
+     "access": "staff",
+     "pool": "VEHICLE GARAGE",
+     "allowed": true
+    },
+    {
+     "id": "docking",
+     "name": "Docking port",
+     "tags": [
+      "docking"
+     ],
+     "access": "staff",
+     "pool": "DOCKING RING",
+     "allowed": true
+    },
+    {
+     "id": "airlock",
+     "name": "Airlock",
+     "tags": [
+      "airlock"
+     ],
+     "access": "staff",
+     "pool": "AIRLOCK",
+     "allowed": true
+    },
+    {
+     "id": "weapons",
+     "name": "Gunnery",
+     "tags": [
+      "weapons"
+     ],
+     "access": "restricted",
+     "pool": "WEAPONS LOCKER",
+     "allowed": true
+    },
+    {
+     "id": "armory",
+     "name": "Armory",
+     "tags": [
+      "armory"
+     ],
+     "access": "secure",
+     "pool": "ARMORY",
+     "allowed": true
+    },
+    {
+     "id": "staterooms",
+     "name": "Staterooms",
+     "tags": [
+      "staterooms"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "crew_quarters",
+     "name": "Crew quarters",
+     "tags": [
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "barracks",
+     "name": "Barracks",
+     "tags": [
+      "barracks"
+     ],
+     "access": "staff",
+     "pool": "BARRACKS",
+     "allowed": true
+    },
+    {
+     "id": "passenger",
+     "name": "Passenger deck",
+     "tags": [
+      "passenger"
+     ],
+     "access": "public",
+     "pool": "HABITAT RING",
+     "allowed": true
+    },
+    {
+     "id": "galley",
+     "name": "Galley",
+     "tags": [
+      "galley"
+     ],
+     "access": "public",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "recreation",
+     "name": "Lounge",
+     "tags": [
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "ASSEMBLY HALL",
+     "allowed": true
+    },
+    {
+     "id": "concourse",
+     "name": "Concourse",
+     "tags": [
+      "concourse"
+     ],
+     "access": "public",
+     "pool": "ASSEMBLY HALL",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Med-bay",
+     "tags": [
+      "medical"
+     ],
+     "access": "staff",
+     "pool": "MED-BAY",
+     "allowed": true
+    },
+    {
+     "id": "morgue",
+     "name": "Morgue",
+     "tags": [
+      "morgue"
+     ],
+     "access": "restricted",
+     "pool": "MORGUE",
+     "allowed": true
+    },
+    {
+     "id": "lowberth",
+     "name": "Hypersleep chamber",
+     "tags": [
+      "lowberth"
+     ],
+     "access": "staff",
+     "pool": "HYPERSLEEP CHAMBER",
+     "allowed": true
+    },
+    {
+     "id": "lab",
+     "name": "Laboratory",
+     "tags": [
+      "lab"
+     ],
+     "access": "restricted",
+     "pool": "SCIENCE LAB",
+     "allowed": true
+    },
+    {
+     "id": "hydroponics",
+     "name": "Hydroponics",
+     "tags": [
+      "hydroponics"
+     ],
+     "access": "staff",
+     "pool": "HYDROPONICS BAY",
+     "allowed": true
+    },
+    {
+     "id": "security",
+     "name": "Security",
+     "tags": [
+      "security"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "brig",
+     "name": "Brig",
+     "tags": [
+      "brig"
+     ],
+     "access": "secure",
+     "pool": "BRIG",
+     "allowed": true
+    },
+    {
+     "id": "office",
+     "name": "Office",
+     "tags": [
+      "office"
+     ],
+     "access": "staff",
+     "pool": "ADMIN OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "workshop",
+     "name": "Workshop",
+     "tags": [
+      "workshop"
+     ],
+     "access": "staff",
+     "pool": "MAINTENANCE BAY",
+     "allowed": true
+    },
+    {
+     "id": "waste",
+     "name": "Waste recycling",
+     "tags": [
+      "waste"
+     ],
+     "access": "staff",
+     "pool": "RECYCLING PLANT",
+     "allowed": true
+    },
+    {
+     "id": "water",
+     "name": "Water tanks",
+     "tags": [
+      "water"
+     ],
+     "access": "staff",
+     "pool": "LIFE SUPPORT HUB",
+     "allowed": true
+    },
+    {
+     "id": "refinery",
+     "name": "Refinery",
+     "tags": [
+      "refinery"
+     ],
+     "access": "restricted",
+     "pool": "ORE PROCESSING",
+     "allowed": true
+    },
+    {
+     "id": "sensors",
+     "name": "Sensors",
+     "tags": [
+      "sensors"
+     ],
+     "access": "staff",
+     "pool": "COMMS CENTER",
+     "allowed": true
+    },
+    {
+     "id": "comms",
+     "name": "Comms center",
+     "tags": [
+      "comms"
+     ],
+     "access": "staff",
+     "pool": "COMMS CENTER",
+     "allowed": true
+    },
+    {
+     "id": "escape",
+     "name": "Escape pods",
+     "tags": [
+      "escape"
+     ],
+     "access": "public",
+     "pool": "AIRLOCK",
+     "allowed": false
+    },
+    {
+     "id": "vertical",
+     "name": "Lift",
+     "tags": [
+      "vertical"
+     ],
+     "access": "staff",
+     "pool": "MINE ELEVATOR",
+     "allowed": true
+    },
+    {
+     "id": "interstitial",
+     "name": "Crawlspace",
+     "tags": [
+      "interstitial"
+     ],
+     "access": "staff",
+     "pool": "MAINTENANCE BAY",
+     "allowed": false
+    },
+    {
+     "id": "fresher",
+     "name": "Washroom",
+     "tags": [
+      "fresher"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": false
+    },
+    {
+     "id": "multipurpose",
+     "name": "Multipurpose bay",
+     "tags": [
+      "multipurpose"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": false
+    }
+   ]
+  },
+  {
+   "name": "Abandoned / \"ghost\" station",
+   "setting": 7,
+   "rooms": [
+    {
+     "id": "dock",
+     "name": "Docking",
+     "tags": [
+      "docking",
+      "hangar"
+     ],
+     "access": "public",
+     "pool": "DOCKING RING",
+     "allowed": true
+    },
+    {
+     "id": "habitat",
+     "name": "Habitat",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "command",
+     "name": "Command",
+     "tags": [
+      "bridge",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Medical",
+     "tags": [
+      "medical",
+      "lab"
+     ],
+     "access": "public",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "cargo",
+     "name": "Cargo",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "CARGO BAY",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Agricultural / hydroponics colony",
+   "setting": 1,
+   "rooms": [
+    {
+     "id": "hydro",
+     "name": "Hydroponics",
+     "tags": [
+      "hydroponics"
+     ],
+     "access": "staff",
+     "pool": "HYDROPONICS BAY",
+     "allowed": true
+    },
+    {
+     "id": "storage",
+     "name": "Crop storage",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    },
+    {
+     "id": "processing",
+     "name": "Processing",
+     "tags": [
+      "workshop",
+      "refinery"
+     ],
+     "access": "staff",
+     "pool": "MAINTENANCE BAY",
+     "allowed": true
+    },
+    {
+     "id": "bunk",
+     "name": "Bunkhouse",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "BUNKHOUSE",
+     "allowed": true
+    },
+    {
+     "id": "mess",
+     "name": "Mess",
+     "tags": [
+      "galley",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "water",
+     "name": "Water plant",
+     "tags": [
+      "water",
+      "engineering"
+     ],
+     "access": "staff",
+     "pool": "LIFE SUPPORT HUB",
+     "allowed": true
+    },
+    {
+     "id": "garage",
+     "name": "Vehicle bay",
+     "tags": [
+      "vehicle_bay"
+     ],
+     "access": "staff",
+     "pool": "VEHICLE GARAGE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Archaeological / dig site",
+   "setting": 2,
+   "rooms": [
+    {
+     "id": "dig",
+     "name": "Excavation area",
+     "tags": [
+      "cargo",
+      "vehicle_bay"
+     ],
+     "access": "restricted",
+     "pool": "DRILL CONTROL",
+     "allowed": false
+    },
+    {
+     "id": "camp",
+     "name": "Camp",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "finds",
+     "name": "Finds lab",
+     "tags": [
+      "lab"
+     ],
+     "access": "staff",
+     "pool": "SCIENCE LAB",
+     "allowed": true
+    },
+    {
+     "id": "security",
+     "name": "Security",
+     "tags": [
+      "security"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "vehicles",
+     "name": "Vehicle bay",
+     "tags": [
+      "vehicle_bay",
+      "hangar"
+     ],
+     "access": "staff",
+     "pool": "VEHICLE GARAGE",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "staff",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Asteroid mining station",
+   "setting": 3,
+   "rooms": [
+    {
+     "id": "dock",
+     "name": "Docking arms",
+     "tags": [
+      "docking",
+      "hangar"
+     ],
+     "access": "public",
+     "pool": "DOCKING RING",
+     "allowed": false
+    },
+    {
+     "id": "ore",
+     "name": "Ore processing",
+     "tags": [
+      "refinery",
+      "cargo",
+      "workshop"
+     ],
+     "access": "staff",
+     "pool": "ORE PROCESSING",
+     "allowed": true
+    },
+    {
+     "id": "bunks",
+     "name": "Bunks",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "BUNKHOUSE",
+     "allowed": true
+    },
+    {
+     "id": "mess",
+     "name": "Mess",
+     "tags": [
+      "galley",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "command",
+     "name": "Command",
+     "tags": [
+      "bridge",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "storage",
+     "name": "Storage",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Black site / secret corporate lab",
+   "setting": 2,
+   "rooms": [
+    {
+     "id": "front",
+     "name": "Decoy front",
+     "tags": [
+      "office",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "ADMIN OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "access",
+     "name": "Badge-only access",
+     "tags": [
+      "security",
+      "airlock"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "labs",
+     "name": "Secure labs",
+     "tags": [
+      "lab",
+      "medical"
+     ],
+     "access": "secure",
+     "pool": "BIO-RESEARCH LAB",
+     "allowed": true
+    },
+    {
+     "id": "holding",
+     "name": "Holding",
+     "tags": [
+      "brig",
+      "lowberth",
+      "security"
+     ],
+     "access": "containment",
+     "pool": "CELL BLOCK",
+     "allowed": true
+    },
+    {
+     "id": "disposal",
+     "name": "Incinerator / disposal",
+     "tags": [
+      "waste",
+      "engineering"
+     ],
+     "access": "restricted",
+     "pool": "RECYCLING PLANT",
+     "allowed": true
+    },
+    {
+     "id": "escape",
+     "name": "Escape routes",
+     "tags": [
+      "escape",
+      "vertical",
+      "hangar"
+     ],
+     "access": "restricted",
+     "pool": "AIRLOCK",
+     "allowed": false
+    },
+    {
+     "id": "quarters",
+     "name": "Staff quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "galley"
+     ],
+     "access": "staff",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Bunker / shelter",
+   "setting": 5,
+   "rooms": [
+    {
+     "id": "door",
+     "name": "Blast door",
+     "tags": [
+      "airlock",
+      "security"
+     ],
+     "access": "public",
+     "pool": "AIRLOCK",
+     "allowed": true
+    },
+    {
+     "id": "living",
+     "name": "Living quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "stores",
+     "name": "Stores",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    },
+    {
+     "id": "air",
+     "name": "Air plant",
+     "tags": [
+      "engineering",
+      "water"
+     ],
+     "access": "restricted",
+     "pool": "LIFE SUPPORT HUB",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Medical",
+     "tags": [
+      "medical"
+     ],
+     "access": "public",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "comms",
+     "name": "Comms",
+     "tags": [
+      "comms",
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "COMMS CENTER",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Company town",
+   "setting": 1,
+   "rooms": [
+    {
+     "id": "admin",
+     "name": "Admin block",
+     "tags": [
+      "office",
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "ADMIN OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "housing",
+     "name": "Housing blocks",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "commissary",
+     "name": "Company commissary",
+     "tags": [
+      "cargo",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "CARGO BAY",
+     "allowed": true
+    },
+    {
+     "id": "bar",
+     "name": "Bar & rec hall",
+     "tags": [
+      "recreation",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "clinic",
+     "name": "Clinic",
+     "tags": [
+      "medical"
+     ],
+     "access": "public",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "security",
+     "name": "Security office",
+     "tags": [
+      "security",
+      "brig"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "plant",
+     "name": "Processing plant",
+     "tags": [
+      "refinery",
+      "engineering",
+      "workshop"
+     ],
+     "access": "restricted",
+     "pool": "ORE PROCESSING",
+     "allowed": true
+    },
+    {
+     "id": "depot",
+     "name": "Depot",
+     "tags": [
+      "cargo",
+      "vehicle_bay"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    },
+    {
+     "id": "plaza",
+     "name": "Plaza",
+     "tags": [
+      "recreation",
+      "concourse"
+     ],
+     "access": "public",
+     "pool": "ASSEMBLY HALL",
+     "allowed": false
+    }
+   ]
+  },
+  {
+   "name": "Crashed or half-buried wreck",
+   "setting": 7,
+   "rooms": [
+    {
+     "id": "bridge",
+     "name": "Bridge section",
+     "tags": [
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "engineering",
+     "name": "Engineering section",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "staff",
+     "pool": "ENGINEERING",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Deep mine",
+   "setting": 3,
+   "rooms": [
+    {
+     "id": "shaft",
+     "name": "Main shaft & lifts",
+     "tags": [
+      "vertical",
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "MINE ELEVATOR",
+     "allowed": false
+    },
+    {
+     "id": "ore",
+     "name": "Ore chambers",
+     "tags": [
+      "cargo",
+      "refinery"
+     ],
+     "access": "staff",
+     "pool": "ORE PROCESSING",
+     "allowed": false
+    },
+    {
+     "id": "pump",
+     "name": "Pump room",
+     "tags": [
+      "water",
+      "engineering"
+     ],
+     "access": "restricted",
+     "pool": "LIFE SUPPORT HUB",
+     "allowed": true
+    },
+    {
+     "id": "vent",
+     "name": "Ventilation",
+     "tags": [
+      "engineering"
+     ],
+     "access": "restricted",
+     "pool": "LIFE SUPPORT HUB",
+     "allowed": true
+    },
+    {
+     "id": "refuge",
+     "name": "Refuge chamber",
+     "tags": [
+      "medical",
+      "escape"
+     ],
+     "access": "public",
+     "pool": "STORAGE",
+     "allowed": true
+    },
+    {
+     "id": "head",
+     "name": "Surface head-frame",
+     "tags": [
+      "vertical",
+      "workshop"
+     ],
+     "access": "public",
+     "pool": "MINE ELEVATOR",
+     "allowed": false
+    },
+    {
+     "id": "store",
+     "name": "Stores & shop",
+     "tags": [
+      "workshop",
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Derelict ship",
+   "setting": 7,
+   "rooms": [
+    {
+     "id": "bridge",
+     "name": "Bridge",
+     "tags": [
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "engineering",
+     "name": "Engineering",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "staff",
+     "pool": "ENGINEERING",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Domed or underground town",
+   "setting": 1,
+   "rooms": [
+    {
+     "id": "plaza",
+     "name": "Plaza / market",
+     "tags": [
+      "recreation",
+      "concourse"
+     ],
+     "access": "public",
+     "pool": "ASSEMBLY HALL",
+     "allowed": false
+    },
+    {
+     "id": "housing",
+     "name": "Housing",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "civic",
+     "name": "Civic hall",
+     "tags": [
+      "office",
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "ADMIN OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Medical",
+     "tags": [
+      "medical"
+     ],
+     "access": "public",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "school",
+     "name": "School",
+     "tags": [
+      "lab",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "ASSEMBLY HALL",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "air",
+     "name": "Air plant",
+     "tags": [
+      "engineering",
+      "water"
+     ],
+     "access": "restricted",
+     "pool": "LIFE SUPPORT HUB",
+     "allowed": true
+    },
+    {
+     "id": "gate",
+     "name": "Gates / airlocks",
+     "tags": [
+      "airlock",
+      "hangar"
+     ],
+     "access": "public",
+     "pool": "AIRLOCK",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Factory / shipyard / ship-breaking yard",
+   "setting": 3,
+   "rooms": [
+    {
+     "id": "floor",
+     "name": "Production floor",
+     "tags": [
+      "workshop",
+      "cargo",
+      "engineering"
+     ],
+     "access": "staff",
+     "pool": "FOUNDRY",
+     "allowed": true
+    },
+    {
+     "id": "parts",
+     "name": "Parts storage",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    },
+    {
+     "id": "gantry",
+     "name": "Gantry / dock",
+     "tags": [
+      "hangar",
+      "docking"
+     ],
+     "access": "staff",
+     "pool": "DOCKING RING",
+     "allowed": true
+    },
+    {
+     "id": "office",
+     "name": "Offices",
+     "tags": [
+      "office",
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "ADMIN OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "crew",
+     "name": "Crew facilities",
+     "tags": [
+      "galley",
+      "recreation",
+      "staterooms"
+     ],
+     "access": "public",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "scrap",
+     "name": "Scrap yard",
+     "tags": [
+      "waste",
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "RECYCLING PLANT",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Frontier colony outpost",
+   "setting": 1,
+   "rooms": [
+    {
+     "id": "command",
+     "name": "Command & admin",
+     "tags": [
+      "bridge",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "habitat",
+     "name": "Habitat module",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "mess",
+     "name": "Mess hall",
+     "tags": [
+      "galley",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Medical clinic",
+     "tags": [
+      "medical"
+     ],
+     "access": "public",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power plant",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "water",
+     "name": "Water & air plant",
+     "tags": [
+      "water",
+      "engineering"
+     ],
+     "access": "staff",
+     "pool": "LIFE SUPPORT HUB",
+     "allowed": true
+    },
+    {
+     "id": "workshop",
+     "name": "Workshop",
+     "tags": [
+      "workshop"
+     ],
+     "access": "staff",
+     "pool": "MAINTENANCE BAY",
+     "allowed": true
+    },
+    {
+     "id": "garage",
+     "name": "Vehicle bay",
+     "tags": [
+      "vehicle_bay",
+      "hangar"
+     ],
+     "access": "staff",
+     "pool": "VEHICLE GARAGE",
+     "allowed": true
+    },
+    {
+     "id": "pad",
+     "name": "Landing pad",
+     "tags": [
+      "hangar"
+     ],
+     "access": "public",
+     "pool": "DROPSHIP BAY",
+     "allowed": true
+    },
+    {
+     "id": "store",
+     "name": "Stores",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    },
+    {
+     "id": "rec",
+     "name": "Rec hall",
+     "tags": [
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "ASSEMBLY HALL",
+     "allowed": true
+    },
+    {
+     "id": "comms",
+     "name": "Comms shack",
+     "tags": [
+      "comms",
+      "sensors"
+     ],
+     "access": "staff",
+     "pool": "COMMS TOWER",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Fuel depot / waystation / relay",
+   "setting": 4,
+   "rooms": [
+    {
+     "id": "tanks",
+     "name": "Tanks",
+     "tags": [
+      "fuel",
+      "cargo"
+     ],
+     "access": "restricted",
+     "pool": "STORAGE DEPOT",
+     "allowed": true
+    },
+    {
+     "id": "dock",
+     "name": "Docking",
+     "tags": [
+      "docking",
+      "hangar"
+     ],
+     "access": "public",
+     "pool": "DOCKING RING",
+     "allowed": true
+    },
+    {
+     "id": "crew",
+     "name": "Minimal crew quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "comms",
+     "name": "Comms",
+     "tags": [
+      "comms",
+      "sensors",
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "COMMS CENTER",
+     "allowed": true
+    },
+    {
+     "id": "repair",
+     "name": "Repair",
+     "tags": [
+      "workshop",
+      "engineering"
+     ],
+     "access": "staff",
+     "pool": "MAINTENANCE BAY",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Military base / garrison",
+   "setting": 5,
+   "rooms": [
+    {
+     "id": "barracks",
+     "name": "Barracks",
+     "tags": [
+      "barracks",
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "staff",
+     "pool": "BARRACKS",
+     "allowed": true
+    },
+    {
+     "id": "armory",
+     "name": "Armory",
+     "tags": [
+      "armory",
+      "weapons"
+     ],
+     "access": "secure",
+     "pool": "ARMORY",
+     "allowed": true
+    },
+    {
+     "id": "motor",
+     "name": "Motor pool",
+     "tags": [
+      "vehicle_bay",
+      "workshop"
+     ],
+     "access": "staff",
+     "pool": "MOTOR POOL",
+     "allowed": true
+    },
+    {
+     "id": "command",
+     "name": "Command",
+     "tags": [
+      "bridge",
+      "office",
+      "comms"
+     ],
+     "access": "restricted",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "hangar",
+     "name": "Hangar",
+     "tags": [
+      "hangar"
+     ],
+     "access": "staff",
+     "pool": "DROPSHIP BAY",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Medical",
+     "tags": [
+      "medical"
+     ],
+     "access": "staff",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "mess",
+     "name": "Mess",
+     "tags": [
+      "galley",
+      "recreation"
+     ],
+     "access": "staff",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "gate",
+     "name": "Gatehouse",
+     "tags": [
+      "security",
+      "airlock"
+     ],
+     "access": "public",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Observatory / sensor array / listening post",
+   "setting": 2,
+   "rooms": [
+    {
+     "id": "array",
+     "name": "Dish / array",
+     "tags": [
+      "sensors",
+      "comms"
+     ],
+     "access": "restricted",
+     "pool": "COMMS TOWER",
+     "allowed": true
+    },
+    {
+     "id": "control",
+     "name": "Control",
+     "tags": [
+      "bridge",
+      "sensors",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "quarters",
+     "name": "Small crew quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "storage",
+     "name": "Storage",
+     "tags": [
+      "cargo",
+      "workshop"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Orbital / gas-giant refinery",
+   "setting": 4,
+   "rooms": [
+    {
+     "id": "intake",
+     "name": "Intake & processing",
+     "tags": [
+      "refinery",
+      "fuel"
+     ],
+     "access": "restricted",
+     "pool": "ORE PROCESSING",
+     "allowed": true
+    },
+    {
+     "id": "tanks",
+     "name": "Tank farm",
+     "tags": [
+      "fuel",
+      "cargo"
+     ],
+     "access": "restricted",
+     "pool": "STORAGE DEPOT",
+     "allowed": true
+    },
+    {
+     "id": "control",
+     "name": "Control",
+     "tags": [
+      "bridge",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "crew",
+     "name": "Crew quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "dock",
+     "name": "Docking",
+     "tags": [
+      "docking",
+      "hangar"
+     ],
+     "access": "public",
+     "pool": "DOCKING RING",
+     "allowed": true
+    },
+    {
+     "id": "safety",
+     "name": "Safety systems",
+     "tags": [
+      "engineering",
+      "medical",
+      "escape"
+     ],
+     "access": "staff",
+     "pool": "LIFE SUPPORT HUB",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Prison / penal colony",
+   "setting": 6,
+   "rooms": [
+    {
+     "id": "intake",
+     "name": "Intake",
+     "tags": [
+      "security",
+      "office",
+      "airlock"
+     ],
+     "access": "public",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "cells",
+     "name": "Cell blocks",
+     "tags": [
+      "brig",
+      "security"
+     ],
+     "access": "containment",
+     "pool": "CELL BLOCK",
+     "allowed": true
+    },
+    {
+     "id": "dayroom",
+     "name": "Day room",
+     "tags": [
+      "recreation",
+      "galley"
+     ],
+     "access": "containment",
+     "pool": "ASSEMBLY HALL",
+     "allowed": true
+    },
+    {
+     "id": "monitor",
+     "name": "Monitoring station",
+     "tags": [
+      "security",
+      "bridge"
+     ],
+     "access": "secure",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "guards",
+     "name": "Guard quarters",
+     "tags": [
+      "staterooms",
+      "barracks",
+      "galley"
+     ],
+     "access": "staff",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "mech",
+     "name": "Mechanical",
+     "tags": [
+      "engineering",
+      "power",
+      "water",
+      "waste"
+     ],
+     "access": "restricted",
+     "pool": "ENGINEERING",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Infirmary",
+     "tags": [
+      "medical"
+     ],
+     "access": "secure",
+     "pool": "INFIRMARY",
+     "allowed": true
+    },
+    {
+     "id": "armory",
+     "name": "Armory",
+     "tags": [
+      "armory",
+      "weapons",
+      "security"
+     ],
+     "access": "secure",
+     "pool": "ARMORY",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Quarantine station / cryo (hypersleep) vault",
+   "setting": 2,
+   "rooms": [
+    {
+     "id": "cryo",
+     "name": "Cryo bays",
+     "tags": [
+      "lowberth"
+     ],
+     "access": "restricted",
+     "pool": "CRYO VAULT",
+     "allowed": true
+    },
+    {
+     "id": "monitor",
+     "name": "Monitoring",
+     "tags": [
+      "bridge",
+      "sensors",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Medical",
+     "tags": [
+      "medical",
+      "lab"
+     ],
+     "access": "restricted",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "decon",
+     "name": "Decon",
+     "tags": [
+      "medical",
+      "airlock"
+     ],
+     "access": "staff",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "staff",
+     "name": "Staff quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Research facility",
+   "setting": 2,
+   "rooms": [
+    {
+     "id": "lab",
+     "name": "Laboratories",
+     "tags": [
+      "lab"
+     ],
+     "access": "restricted",
+     "pool": "BIO-RESEARCH LAB",
+     "allowed": true
+    },
+    {
+     "id": "specimen",
+     "name": "Specimen storage",
+     "tags": [
+      "lab",
+      "lowberth",
+      "cargo"
+     ],
+     "access": "secure",
+     "pool": "SPECIMEN CONTAINMENT",
+     "allowed": true
+    },
+    {
+     "id": "office",
+     "name": "Offices",
+     "tags": [
+      "office",
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "ADMIN OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "quarantine",
+     "name": "Quarantine",
+     "tags": [
+      "medical",
+      "lowberth",
+      "airlock"
+     ],
+     "access": "containment",
+     "pool": "SPECIMEN CONTAINMENT",
+     "allowed": true
+    },
+    {
+     "id": "observation",
+     "name": "Observation",
+     "tags": [
+      "sensors",
+      "recreation"
+     ],
+     "access": "restricted",
+     "pool": "OBSERVATION DECK",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "quarters",
+     "name": "Staff quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "checkpoint",
+     "name": "Security checkpoint",
+     "tags": [
+      "security"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Space station (ring / spindle / cylinder / modular)",
+   "setting": 4,
+   "rooms": [
+    {
+     "id": "dock",
+     "name": "Docking",
+     "tags": [
+      "docking",
+      "hangar"
+     ],
+     "access": "public",
+     "pool": "DOCKING RING",
+     "allowed": true
+    },
+    {
+     "id": "habitat",
+     "name": "Habitat",
+     "tags": [
+      "staterooms",
+      "crew_quarters",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "command",
+     "name": "Command",
+     "tags": [
+      "bridge",
+      "office",
+      "comms"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    },
+    {
+     "id": "hydro",
+     "name": "Hydroponics",
+     "tags": [
+      "hydroponics",
+      "water"
+     ],
+     "access": "staff",
+     "pool": "HYDROPONICS BAY",
+     "allowed": true
+    },
+    {
+     "id": "cargo",
+     "name": "Cargo",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "CARGO BAY",
+     "allowed": true
+    },
+    {
+     "id": "medical",
+     "name": "Medical",
+     "tags": [
+      "medical"
+     ],
+     "access": "public",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "security",
+     "name": "Security",
+     "tags": [
+      "security",
+      "brig"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Spaceport / starport",
+   "setting": 1,
+   "rooms": [
+    {
+     "id": "terminal",
+     "name": "Passenger terminal",
+     "tags": [
+      "concourse",
+      "passenger",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "ASSEMBLY HALL",
+     "allowed": true
+    },
+    {
+     "id": "customs",
+     "name": "Customs",
+     "tags": [
+      "security",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "hangar",
+     "name": "Hangars",
+     "tags": [
+      "hangar"
+     ],
+     "access": "staff",
+     "pool": "DROPSHIP BAY",
+     "allowed": true
+    },
+    {
+     "id": "pad",
+     "name": "Landing pads",
+     "tags": [
+      "hangar"
+     ],
+     "access": "public",
+     "pool": "DROPSHIP BAY",
+     "allowed": true
+    },
+    {
+     "id": "cargo",
+     "name": "Cargo handling",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "CARGO BAY",
+     "allowed": true
+    },
+    {
+     "id": "fuel",
+     "name": "Fuel",
+     "tags": [
+      "fuel",
+      "refinery"
+     ],
+     "access": "restricted",
+     "pool": "STORAGE DEPOT",
+     "allowed": true
+    },
+    {
+     "id": "hotel",
+     "name": "Hotels & bars",
+     "tags": [
+      "staterooms",
+      "recreation",
+      "galley"
+     ],
+     "access": "public",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "security",
+     "name": "Security",
+     "tags": [
+      "security",
+      "brig"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Surface mining operation",
+   "setting": 3,
+   "rooms": [
+    {
+     "id": "pit",
+     "name": "Pit access",
+     "tags": [
+      "cargo",
+      "vehicle_bay"
+     ],
+     "access": "staff",
+     "pool": "CARGO BAY",
+     "allowed": false
+    },
+    {
+     "id": "plant",
+     "name": "Processing plant",
+     "tags": [
+      "refinery",
+      "engineering",
+      "workshop"
+     ],
+     "access": "restricted",
+     "pool": "ORE PROCESSING",
+     "allowed": true
+    },
+    {
+     "id": "ore",
+     "name": "Ore storage",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "ORE PROCESSING",
+     "allowed": true
+    },
+    {
+     "id": "garage",
+     "name": "Vehicle garage",
+     "tags": [
+      "vehicle_bay",
+      "workshop"
+     ],
+     "access": "staff",
+     "pool": "VEHICLE GARAGE",
+     "allowed": true
+    },
+    {
+     "id": "bunk",
+     "name": "Bunkhouse",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "BUNKHOUSE",
+     "allowed": true
+    },
+    {
+     "id": "mess",
+     "name": "Mess",
+     "tags": [
+      "galley",
+      "recreation"
+     ],
+     "access": "public",
+     "pool": "MESS HALL",
+     "allowed": true
+    },
+    {
+     "id": "office",
+     "name": "Office",
+     "tags": [
+      "office",
+      "bridge"
+     ],
+     "access": "staff",
+     "pool": "ADMIN OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Terraforming / atmosphere processor",
+   "setting": 1,
+   "rooms": [
+    {
+     "id": "core",
+     "name": "Reactor & processor core",
+     "tags": [
+      "engineering",
+      "power",
+      "refinery"
+     ],
+     "access": "restricted",
+     "pool": "REACTOR ROOM",
+     "allowed": true
+    },
+    {
+     "id": "cooling",
+     "name": "Cooling plant",
+     "tags": [
+      "engineering",
+      "water"
+     ],
+     "access": "restricted",
+     "pool": "REACTOR ROOM",
+     "allowed": true
+    },
+    {
+     "id": "maint",
+     "name": "Maintenance",
+     "tags": [
+      "workshop"
+     ],
+     "access": "staff",
+     "pool": "MAINTENANCE BAY",
+     "allowed": true
+    },
+    {
+     "id": "control",
+     "name": "Control room",
+     "tags": [
+      "bridge",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "quarters",
+     "name": "Small crew quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "shelter",
+     "name": "Emergency shelter",
+     "tags": [
+      "medical",
+      "escape",
+      "airlock"
+     ],
+     "access": "public",
+     "pool": "STORAGE",
+     "allowed": true
+    },
+    {
+     "id": "store",
+     "name": "Stores",
+     "tags": [
+      "cargo"
+     ],
+     "access": "staff",
+     "pool": "STORAGE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Transit / tram hub",
+   "setting": 4,
+   "rooms": [
+    {
+     "id": "platform",
+     "name": "Platforms",
+     "tags": [
+      "concourse",
+      "docking"
+     ],
+     "access": "public",
+     "pool": "STORAGE",
+     "allowed": false
+    },
+    {
+     "id": "concourse",
+     "name": "Concourse",
+     "tags": [
+      "concourse",
+      "recreation",
+      "passenger"
+     ],
+     "access": "public",
+     "pool": "ASSEMBLY HALL",
+     "allowed": true
+    },
+    {
+     "id": "control",
+     "name": "Control",
+     "tags": [
+      "bridge",
+      "office"
+     ],
+     "access": "staff",
+     "pool": "COMMAND CENTER",
+     "allowed": true
+    },
+    {
+     "id": "maintenance",
+     "name": "Maintenance",
+     "tags": [
+      "workshop",
+      "engineering"
+     ],
+     "access": "staff",
+     "pool": "MAINTENANCE BAY",
+     "allowed": true
+    },
+    {
+     "id": "security",
+     "name": "Security",
+     "tags": [
+      "security",
+      "brig"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    }
+   ]
+  },
+  {
+   "name": "Xeno-biology containment lab",
+   "setting": 2,
+   "rooms": [
+    {
+     "id": "cells",
+     "name": "Containment cells",
+     "tags": [
+      "lab",
+      "lowberth",
+      "medical"
+     ],
+     "access": "containment",
+     "pool": "SPECIMEN CONTAINMENT",
+     "allowed": true
+    },
+    {
+     "id": "decon",
+     "name": "Decontamination",
+     "tags": [
+      "medical",
+      "airlock"
+     ],
+     "access": "restricted",
+     "pool": "MEDICAL BAY",
+     "allowed": true
+    },
+    {
+     "id": "observation",
+     "name": "Observation",
+     "tags": [
+      "sensors",
+      "lab",
+      "recreation"
+     ],
+     "access": "restricted",
+     "pool": "OBSERVATION DECK",
+     "allowed": true
+    },
+    {
+     "id": "autopsy",
+     "name": "Autopsy / surgery",
+     "tags": [
+      "medical",
+      "lab"
+     ],
+     "access": "secure",
+     "pool": "MORGUE",
+     "allowed": true
+    },
+    {
+     "id": "storage",
+     "name": "Secure storage",
+     "tags": [
+      "cargo",
+      "lowberth",
+      "security"
+     ],
+     "access": "secure",
+     "pool": "DATA VAULT",
+     "allowed": true
+    },
+    {
+     "id": "control",
+     "name": "Lockdown control",
+     "tags": [
+      "bridge",
+      "security"
+     ],
+     "access": "secure",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "checkpoint",
+     "name": "Checkpoint",
+     "tags": [
+      "security",
+      "airlock"
+     ],
+     "access": "staff",
+     "pool": "SECURITY OFFICE",
+     "allowed": true
+    },
+    {
+     "id": "quarters",
+     "name": "Staff quarters",
+     "tags": [
+      "staterooms",
+      "crew_quarters"
+     ],
+     "access": "public",
+     "pool": "CREW QUARTERS",
+     "allowed": true
+    },
+    {
+     "id": "power",
+     "name": "Power",
+     "tags": [
+      "engineering",
+      "power"
+     ],
+     "access": "restricted",
+     "pool": "POWER CONTROL",
+     "allowed": true
+    }
+   ]
+  }
+ ]
+}

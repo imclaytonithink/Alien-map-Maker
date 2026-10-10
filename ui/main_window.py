@@ -890,6 +890,7 @@ class MainWindow(QMainWindow):
         f.addAction("Export PNG…", self._export)
         f.addAction("Export PDF…", self._export_pdf)
         f.addAction("Export for Tabletop Simulator…", self._export_tts)
+        f.addAction("Export MU/TH/UR terminal code…", self._export_muthur)
         f.addAction("Export project bundle / PNG pack…", self._export_bundle)
         autosave_menu = f.addMenu("Auto-save")
         self.autosave_actions = {}
@@ -1099,6 +1100,9 @@ class MainWindow(QMainWindow):
                              ("lasso", "Lasso (freehand)"), ("polygon", "Polygon")):
             cut_menu.addAction(label, lambda s=shape: self._start_cutout_tool(s))
         t.addAction("Clone patch over a label", self._start_clone_tool)
+        t.addSeparator()
+        t.addAction("Place MU/TH/UR terminal", self._place_terminal)
+        t.addAction("Export MU/TH/UR terminal code…", self._export_muthur)
         t.addSeparator()
         t.addAction("Draw rectangle gameplay zone",
                     lambda: self.canvas.set_zone_tool("rectangle"))
@@ -2849,6 +2853,30 @@ class MainWindow(QMainWindow):
         w = self.canvas.width(); h = self.canvas.height()
         wx, wy = self.canvas.screen_to_world(w / 2, h / 2)
         self.canvas.add_text(wx, wy)
+
+    def _place_terminal(self):
+        w = self.canvas.width(); h = self.canvas.height()
+        self._place_terminal_at(*self.canvas.screen_to_world(w / 2, h / 2))
+
+    def _place_terminal_at(self, wx, wy):
+        """Put a MU/TH/UR terminal marker (one square) on the current level, on its own layer."""
+        from core import muthur
+        level = self.canvas.level
+        if level is None:
+            return None
+        self.canvas.push_history("Place MU/TH/UR terminal")
+        layer = self._ensure_layer(level, "MU/TH/UR terminals")
+        piece = muthur.make_marker(wx, wy, self.project.cell_size, layer)
+        level.add(piece)
+        self.layers.set_project(self.project, level)
+        self.canvas.select([piece])
+        self.canvas.update()
+        self.canvas.dirty.emit()
+        return piece
+
+    def _export_muthur(self):
+        from ui.muthur_dialog import MuthurExportDialog
+        MuthurExportDialog(self).exec()
 
     def _on_level_changed(self, idx):
         self.canvas.set_level(idx)
