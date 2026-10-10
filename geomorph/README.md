@@ -93,5 +93,5 @@ back to a single tile with a railed, dimmed overlook above it. Three-storey room
   options (`atmosphere: {light, fixture}`) and used in the preview, the exports and when the map is placed on the canvas.
 * **Your own lights**: press "Place lights", then click the preview: a *wall light* snaps to the nearest wall (found from the
   tile art), a *ceiling light* goes where you click. Set the reach, brightness and colours first; right-click a light to
-  remove it. They work in any tile (even one that is not dark), light only what they can see, are part of the saved layout,
+  remove it, or turn "Place lights" off and drag a light to move it (it re-snaps to the wall; Undo puts it back). They work in any tile (even one that is not dark), light only what they can see, are part of the saved layout,
   undo and the canvas, and are removed if a re-roll replaces the tile they were on.

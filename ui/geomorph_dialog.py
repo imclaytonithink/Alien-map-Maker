@@ -128,6 +128,18 @@ class _BestOfDialog(QDialog):
 class _ClickLabel(QLabel):
     """Preview label that reports where it was clicked."""
     clicked = pyqtSignal(int, int, int)          # x, y, button (1 left, 2 right)
+    dragged = pyqtSignal(int, int)               # x, y while the left button is held
+    released = pyqtSignal(int, int)
+
+    def mouseMoveEvent(self, e):
+        if e.buttons() & Qt.MouseButton.LeftButton:
+            self.dragged.emit(int(e.position().x()), int(e.position().y()))
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.released.emit(int(e.position().x()), int(e.position().y()))
+        super().mouseReleaseEvent(e)
 
     def mousePressEvent(self, e):
         if e.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
@@ -448,7 +460,7 @@ class GeomorphDialog(QDialog):
         row = QHBoxLayout()
         self.btn_place_light = QPushButton("Place lights")
         self.btn_place_light.setCheckable(True)
-        self.btn_place_light.setToolTip("Click the map preview to add a light of your own: wall lights snap to the nearest wall, "
+        self.btn_place_light.setToolTip("Click the map preview to add a light of your own (with this off, drag a placed light to move it): wall lights snap to the nearest wall, "
                                         "ceiling lights go where you click. Right-click a light to remove it.")
         self.btn_place_light.toggled.connect(self._place_mode_changed)
         self.cb_light_kind = QComboBox()
@@ -522,6 +534,9 @@ class GeomorphDialog(QDialog):
         right.addLayout(top)
         self.preview = _ClickLabel("Press Generate.")
         self.preview.clicked.connect(self._preview_clicked)
+        self.preview.dragged.connect(self._preview_dragged)
+        self.preview.released.connect(self._preview_released)
+        self._drag_light = None
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(400, 300)
         sc = QScrollArea()
@@ -909,6 +924,45 @@ class GeomorphDialog(QDialog):
         self._redraw()
         self.lbl_changes.setText(f"Placed a {light['kind']} light ({len(res.lights)} placed).")
 
+    def _grid_point(self, px, py):
+        from geomorph import render
+        x0, y0, _x1, _y1 = render.shared_bounds(self.result)
+        return px / 8 + x0, (py - 24) / 8 + y0
+
+    def _start_light_drag(self, gx, gy) -> bool:
+        """Pressing on a placed light picks it up (drag to move it); returns True when one was grabbed."""
+        from geomorph import pipeline
+        res = self.result
+        g = res.grids[self.level_index]
+        mine = [L for L in (getattr(res, "lights", None) or []) if L.get("level") == g.index]
+        near = min(mine, key=lambda L: (L["x"] - gx) ** 2 + (L["y"] - gy) ** 2, default=None)
+        if near is None or (near["x"] - gx) ** 2 + (near["y"] - gy) ** 2 > 1.0:
+            return False
+        self._drag_light = {"light": near, "snap": pipeline.snapshot(res), "moved": False}
+        return True
+
+    def _preview_dragged(self, px, py):
+        d = self._drag_light
+        if d is None or self.result is None:
+            return
+        from geomorph import atmosphere
+        res = self.result
+        gx, gy = self._grid_point(px, py)
+        L = d["light"]
+        new = atmosphere.snap_light(res, res.grids[self.level_index], gx, gy, self.images, L.get("kind", "wall"),
+                                    L.get("radius", 4.0), L.get("strength", 1.0), L.get("color"), L.get("fixture"))
+        if new is None or (new["x"], new["y"], new["wall"]) == (L["x"], L["y"], L["wall"]):
+            return
+        L.update(x=new["x"], y=new["y"], wall=new["wall"])
+        d["moved"] = True
+        self._redraw()
+
+    def _preview_released(self, px, py):
+        d, self._drag_light = self._drag_light, None
+        if d is not None and d["moved"]:
+            self._push_undo(("snap", d["snap"], "Move light"))
+            self.lbl_changes.setText("Moved a light (Undo puts it back).")
+
     def _preview_clicked(self, px, py, button=1):
         res = self.result
         if res is None:
@@ -917,6 +971,8 @@ class GeomorphDialog(QDialog):
         x0, y0, _x1, _y1 = render.shared_bounds(res)
         pps, head = 8, 3 * 8
         gx, gy = px / pps + x0, (py - head) / pps + y0
+        if button == 1 and not self.btn_place_light.isChecked() and self._start_light_drag(gx, gy):
+            return
         if self.btn_place_light.isChecked():
             self._light_click(gx, gy, button)
             return

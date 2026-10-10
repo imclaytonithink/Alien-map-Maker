@@ -411,6 +411,25 @@ for _ in range(6):
         assert "were on replaced tiles" in dlg.lbl_changes.text() or "removed" in dlg.lbl_changes.text()
         break
 dlg.btn_place_light.setChecked(False)
+# dragging a placed light moves it (and snaps it to a wall), and Undo puts it back
+dlg.result.lights = [dict(dlg.result.lights[0])] if dlg.result.lights else []
+if not dlg.result.lights:
+    dlg.btn_place_light.setChecked(True)
+    dlg._preview_clicked(*click_px, 1)
+    dlg.btn_place_light.setChecked(False)
+L0 = dlg.result.lights[0]
+old = (L0["x"], L0["y"])
+start = (int((L0["x"] - bx0) * 8), int(24 + (L0["y"] - by0) * 8))
+dlg._preview_clicked(*start, 1)
+assert dlg._drag_light is not None, "pressing on a light picks it up"
+dlg._preview_dragged(start[0] + 60, start[1])
+dlg._preview_dragged(start[0] - 60, start[1] + 40)
+dlg._preview_released(0, 0)
+moved = (dlg.result.lights[0]["x"], dlg.result.lights[0]["y"])
+assert dlg._drag_light is None and "Moved a light" in dlg.lbl_changes.text()
+if moved != old:
+    dlg._undo()
+    assert (dlg.result.lights[0]["x"], dlg.result.lights[0]["y"]) == old, "undo puts a dragged light back"
 # gap warning label follows the result
 res.gaps = {"Test zone": "no tile"}
 dlg._generated(res, None)
