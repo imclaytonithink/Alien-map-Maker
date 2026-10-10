@@ -91,6 +91,8 @@ def load_layout(path_or_dict, registry: Registry) -> Result:
                  issues=pkg.get("issues", []), gaps=pkg.get("gaps", {}),
                  text={"title": pkg.get("title", ""), "description": pkg.get("description", ""),
                        "notes": pkg.get("notes", []), "hooks": pkg.get("hooks", [])})
+    from .states import one_state_per_room
+    one_state_per_room(res)                # layouts saved before rooms were limited to a single state
     res.decor = pkg.get("decor", [])
     res.lights = pkg.get("lights", [])
     res.symbols = _symbols.load() if res.decor else {}

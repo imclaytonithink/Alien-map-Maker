@@ -1,11 +1,12 @@
-"""Atmosphere for rooms in a bad state: dim light, red emergency lamps, sealed shutters, quarantine hatching.
+"""Atmosphere for rooms in a bad state, so each state reads differently at a glance.
 
 One overlay image per affected room, built here and used both by the generator preview/exports (PIL) and
 when the map is placed on the canvas (as an embedded image on its own layer), so the two always match.
 
-* power failure: the room goes dark, with a red emergency lamp glowing over each doorway
-* lockdown: a faint red cast; **GM only**: a red shutter across every doorway (players do not see it)
-* quarantine: a sickly yellow-green cast and a hazard-striped border
+* power out: the room goes dark; red emergency lamps light the corridors, halls and big rooms
+* lockdown: the power stays on; amber alarm beacons and yellow-and-black caution tape around the room
+* quarantine: a faint green cast and a green dashed line around the room
+Small enclosed rooms get no automatic lamp. Each state also has a symbol and a legend entry (states.py).
 """
 from __future__ import annotations
 
@@ -95,13 +96,49 @@ def _put(dst: Image.Image, src: Image.Image, x: int, y: int):
 
 
 def _floor(p):
-    """The tile's floor map turned to its placed orientation: rows of cells (2 per square), or None."""
+    """The tile's floor map turned to its placed orientation: rows of cells (2 per square), or None.
+    Large enclosed rooms are marked as halls ('r') here, so lights reach every big open space; small rooms
+    (cabins, offices, washrooms) stay as room floor ('.') and get no automatic lamp."""
     from . import decor, floors
     code = decor.tile_floors().get(p.tile.id)
     if not code:
         return None
-    rows = floors.transform(floors.decode(code), p.o.rot, p.o.mirror)
+    key = (code, p.o.rot, p.o.mirror)
+    rows = _FLOOR_CACHE.get(key)
+    if rows is None:
+        rows = _open_up(floors.transform(floors.decode(code), p.o.rot, p.o.mirror))
+        if len(_FLOOR_CACHE) > 600:
+            _FLOOR_CACHE.clear()
+        _FLOOR_CACHE[key] = rows
     return rows if len(rows) == p.h * floors.SUB and len(rows[0]) == p.w * floors.SUB else None
+
+
+_FLOOR_CACHE = {}
+BIG_ROOM_CELLS = 40         # an enclosed room this big (half-square cells, = 10 squares) is lit like a hall
+
+
+def _open_up(rows):
+    """Rows with every connected patch of room floor ('.') of BIG_ROOM_CELLS or more turned into hall ('r')."""
+    H, W = len(rows), len(rows[0])
+    grid = [list(r) for r in rows]
+    seen = set()
+    for y0 in range(H):
+        for x0 in range(W):
+            if grid[y0][x0] != "." or (x0, y0) in seen:
+                continue
+            patch, stack = [], [(x0, y0)]
+            seen.add((x0, y0))
+            while stack:
+                x, y = stack.pop()
+                patch.append((x, y))
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if 0 <= nx < W and 0 <= ny < H and grid[ny][nx] == "." and (nx, ny) not in seen:
+                        seen.add((nx, ny))
+                        stack.append((nx, ny))
+            if len(patch) >= BIG_ROOM_CELLS:
+                for x, y in patch:
+                    grid[y][x] = "r"
+    return ["".join(r) for r in grid]
 
 
 def walk_chars(rows) -> str:
@@ -270,6 +307,11 @@ WALL_ALPHA, WALL_LUM = 200, 100        # walls are solid and dark in the art; fl
 RAY_STEP_DEG = 0.5
 SOFTEN_PX = 7.0             # extra blur (art pixels) so no pool has a hard edge
 DEFAULT_LIGHT = "#ff241c"
+ALARM_LIGHT = "#ffa21c"     # lockdown: amber alarm beacons (the power is on)
+ALARM_FIXTURE = "#ffbe2e"
+ALARM_RADIUS = 3.0
+TAPE_YELLOW, TAPE_BLACK = (247, 200, 20, 235), (16, 16, 16, 235)
+QUARANTINE_GREEN = (70, 220, 120, 230)
 DEFAULT_FIXTURE = "#e8261c"
 WASH_PEAK = 135            # how strongly a lamp tints the floor next to it (0-255)
 _CACHE = {}
@@ -532,15 +574,17 @@ def lamp_specs(room, rows, art, pps) -> list:
     p, states = room["tile"], room["states"]
     light_c, fixture_c = room.get("colors") or (DEFAULT_LIGHT, DEFAULT_FIXTURE)
     dark = "power_failure" in states
+    alarm = "lockdown" in states and not dark          # a lockdown keeps its power: the lamps are alarm beacons
     specs = []
-    if dark or "lockdown" in states:
+    if dark or alarm:
         for cx, cy, wall in _lamps(p, rows, art):
             face = wall_anchor(art, cx, cy, wall, p)
             if face is None:
                 x0, y0 = cx / 2.0, cy / 2.0
                 face = {"N": (x0 + 0.25, y0), "S": (x0 + 0.25, y0 + 0.5), "W": (x0, y0 + 0.25), "E": (x0 + 0.5, y0 + 0.25)}[wall]
-            specs.append({"fx": face[0], "fy": face[1], "wall": wall, "radius": LIGHT_RADIUS if dark else 2.0,
-                          "strength": 1.0 if dark else 0.55, "color": light_c, "fixture": fixture_c, "user": False})
+            specs.append({"fx": face[0], "fy": face[1], "wall": wall, "radius": LIGHT_RADIUS if dark else ALARM_RADIUS,
+                          "strength": 1.0 if dark else 0.8, "color": light_c if dark else ALARM_LIGHT,
+                          "fixture": fixture_c if dark else ALARM_FIXTURE, "user": False})
     for L in room.get("lights") or ():
         specs.append({"fx": L["x"] - p.x, "fy": L["y"] - p.y, "wall": (L.get("wall") or None) if L.get("kind", "wall") == "wall" else None,
                       "radius": float(L.get("radius", 4.0)), "strength": float(L.get("strength", 1.0)),
@@ -557,6 +601,32 @@ def _light_map(p, rows, W, H, pps, radius_sq, art=None, room=None):
     for sp in specs:
         light = ImageChops.lighter(light, _lamp_light(sp, p, rows, art, W, H, pps))
     return light, specs
+
+
+def _outline_band(mask, W, H, band, style, pps):
+    """A band just inside the building outline: "tape" = diagonal yellow and black stripes (lockdown),
+    "dashed" = a green dashed line (quarantine)."""
+    pad = Image.new("L", (W + 2 * band, H + 2 * band), 0)
+    pad.paste(mask, (band, band))
+    inner = pad.filter(ImageFilter.MinFilter(2 * band + 1)).crop((band, band, band + W, band + H))
+    ring = ImageChops.subtract(mask, inner)
+    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(out)
+    if style == "tape":
+        out.paste(TAPE_BLACK, (0, 0, W, H))
+        step = max(4, int(pps * 0.45))
+        for k in range(-H, W + H, step * 2):
+            d.polygon([(k, 0), (k + step, 0), (k + step - H, H), (k - H, H)], fill=TAPE_YELLOW)
+    else:
+        dash = max(4, int(pps * 0.5))
+        out.paste(QUARANTINE_GREEN, (0, 0, W, H))
+        gaps = Image.new("L", (W, H), 255)
+        gd = ImageDraw.Draw(gaps)
+        for k in range(0, W + H, dash * 2):                    # gaps run diagonally, so every side looks dashed
+            gd.polygon([(k, 0), (k + dash, 0), (k + dash - H, H), (k - H, H)], fill=0)
+        ring = ImageChops.multiply(ring, gaps)
+    out.putalpha(ImageChops.multiply(out.getchannel("A"), ring))
+    return out
 
 
 def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Image | None:
@@ -588,20 +658,11 @@ def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Ima
             layer = Image.new("RGBA", (W, H), (4, 6, 14, 0))
             layer.putalpha(shade)
             body.alpha_composite(layer)
-        if "lockdown" in states:
-            body.alpha_composite(Image.new("RGBA", (W, H), (200, 20, 20, 26 if dark else 34)))
-        if "quarantine" in states:
-            body.alpha_composite(Image.new("RGBA", (W, H), (200, 210, 40, 24)))
-            band = max(3, int(pps * 0.32))
-            stripes = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            sd = ImageDraw.Draw(stripes)
-            for k in range(-H, W + H, band * 2):
-                sd.polygon([(k, 0), (k + band, 0), (k + band - H, H), (k - H, H)], fill=(235, 200, 40, 215))
-            pad = Image.new("L", (W + 2 * band, H + 2 * band), 0)      # border follows the building outline
-            pad.paste(mask, (band, band))
-            inner = pad.filter(ImageFilter.MinFilter(2 * band + 1)).crop((band, band, band + W, band + H))
-            stripes.putalpha(ImageChops.multiply(stripes.getchannel("A"), ImageChops.subtract(mask, inner)))
-            body.alpha_composite(stripes)
+        if "quarantine" in states:                                     # biohazard green: tint and a dashed line
+            body.alpha_composite(Image.new("RGBA", (W, H), (60, 200, 110, 22)))
+            body.alpha_composite(_outline_band(mask, W, H, max(2, int(pps * 0.16)), "dashed", pps))
+        if "lockdown" in states:                                       # sealed: yellow and black caution tape
+            body.alpha_composite(_outline_band(mask, W, H, max(3, int(pps * 0.3)), "tape", pps))
         for sp, m in zip(specs, masks):                                # each lamp's coloured wash, strongest at the fixture
             wash = Image.new("RGBA", (W, H), _rgb(sp["color"]) + (0,))
             wash.putalpha(m.point(lambda v: int(v * WASH_PEAK / 255)))
@@ -628,18 +689,6 @@ def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Ima
                 sd2.pieslice(box, start, end, fill=fill, outline=edge, width=K)
             sprite = sprite.resize((2 * rr + 4, 2 * rr + 4), Image.LANCZOS).filter(ImageFilter.GaussianBlur(0.5))
             _put(img, sprite, ox, oy)
-    if part in ("all", "gm") and "lockdown" in states:
-        d = ImageDraw.Draw(img)
-        t = max(3, int(pps * 0.3))
-        for dx, dy, side in door_points(p):
-            cx, cy = int(dx * pps), int(dy * pps)
-            half = int(pps * 0.5)
-            if side in "NS":
-                y0 = 0 if side == "N" else H - t
-                d.rectangle((cx - half, y0, cx + half, y0 + t), fill=(255, 60, 50, 240))
-            else:
-                x0 = 0 if side == "W" else W - t
-                d.rectangle((x0, cy - half, x0 + t, cy + half), fill=(255, 60, 50, 240))
     if len(_CACHE) > 400:
         _CACHE.clear()
     _CACHE[key] = img

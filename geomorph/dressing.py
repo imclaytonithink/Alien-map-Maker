@@ -76,9 +76,17 @@ def apply_overlays(res, rng, enabled=None, intensity=0.5, arch=None):
     pool = [z for z in zone_ids if z != ent_zone] or zone_ids
     n = len(pool)
 
+    # a room is in one state at most (locked down, dark, quarantined, breached or battle-damaged): every state
+    # draws from the rooms still untouched, and takes the rooms it gets out of the pool
+    hit_already = {m.get("zone") for m in res.markers if m.get("type") in ("breach", "damage")}   # a wreck's torn hull
+    free = [z for z in pool if z not in hit_already]
+
     def pick(frac, minimum=1):
-        k = min(len(pool), max(minimum, round(n * frac * max(0.0, float(intensity)))))
-        return rng.sample(pool, k) if pool else []
+        k = min(len(free), max(minimum, round(n * frac * max(0.0, float(intensity)))))
+        got = rng.sample(free, k) if free else []
+        for z in got:
+            free.remove(z)
+        return got
     if "lockdown" in enabled:
         ov["lockdown"] = pick(0.25)
     if "power_failure" in enabled:
@@ -94,11 +102,18 @@ def apply_overlays(res, rng, enabled=None, intensity=0.5, arch=None):
                 cx = p.x + (p.w if side == "E" else -1 if side == "W" else p.w // 2)
                 cy = p.y + (p.h if side == "S" else -1 if side == "N" else p.h // 2)
                 g = res.grids[p.level]
-                if (cx, cy) not in g.occ:
+                if (cx, cy) not in g.occ and p.zone in free:
                     spot = _hull_point(p, side)
                     if spot is not None:
                         ext.append((p.level, spot[0], spot[1], p.zone))
-        for lvl, bx, by, z in (rng.sample(ext, min(k, len(ext))) if ext else []):
+        rng.shuffle(ext)
+        for lvl, bx, by, z in ext:
+            if k <= 0:
+                break
+            if z not in free:                    # one breach per room
+                continue
+            free.remove(z)
+            k -= 1
             markers.append({"type": "breach", "level": lvl, "x": bx, "y": by, "label": "Breach / decompression", "zone": z})
     if "salvage" in enabled and tiles:
         k = max(1, round(len(tiles) * 0.2 * float(intensity)))
@@ -108,7 +123,15 @@ def apply_overlays(res, rng, enabled=None, intensity=0.5, arch=None):
                             "label": "Salvage-stripped", "zone": p.zone})
     if "battle" in enabled and tiles:
         k = max(2, round(len(tiles) * 0.25 * float(intensity)))
-        for p in rng.sample(tiles, min(k, len(tiles))):
+        hit = [p for p in tiles if p.zone in free]
+        rng.shuffle(hit)
+        for p in hit:
+            if k <= 0:
+                break
+            if p.zone not in free:               # one damaged tile per room, and only rooms in no other state
+                continue
+            free.remove(p.zone)
+            k -= 1
             cx, cy = _tile_center(p)
             ox, oy = rng.randint(-5, 5), rng.randint(-5, 5)
             markers.append({"type": "damage", "level": p.level, "x": cx + ox, "y": cy + oy,
@@ -142,6 +165,8 @@ def apply_overlays(res, rng, enabled=None, intensity=0.5, arch=None):
                             "label": rng.choice(common()["secrets"]), "zone": p.zone})
     res.overlays = ov
     res.markers.extend(markers)
+    from .states import one_state_per_room
+    one_state_per_room(res)
 
 
 # ---------------------------------------------------------------------------

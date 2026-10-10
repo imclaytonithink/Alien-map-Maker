@@ -1130,8 +1130,9 @@ def check_hall_decor():
 
 
 def check_atmosphere():
-    """Rooms with the power out go dark with red lamps over their doors; lockdown shutters are GM-only; quarantine gets
-    a hazard border; the same overlay goes onto the canvas on its own layers."""
+    """Rooms with the power out go dark with red lamps; locked-down rooms keep their power and get caution tape and
+    amber alarm lamps (no shutter bars); quarantine gets a green dashed line; the same overlay goes onto the canvas
+    on its own layers."""
     import tempfile
     from geomorph import atmosphere, canvas_export, render
     reg = Registry.load()
@@ -1199,17 +1200,28 @@ def check_atmosphere():
     assert all(0.03 <= f <= 0.9 for f in shadows), ("some light and some shadow in every dark room", sorted(shadows)[:3], sorted(shadows)[-3:])
     assert 0.1 < sum(shadows) / len(shadows) < 0.7, "corridors and halls keep some shadow, rooms stay dark"
     llvl = level_with("lockdown")
-    red = lambda im: sum(1 for (r, g_, b, a) in im.getdata() if r > 235 and 40 < g_ < 90 and 30 < b < 80)
-    gm_l, pl_l = look(llvl, True), look(llvl, False)
-    assert red(gm_l) > red(pl_l) + 20, "lockdown shutters show in the GM view only"
-    assert gm_l.tobytes() != look(llvl, True, states=False).tobytes()
-    # the overlay itself: lamps over real doors; shutters only in the GM part
+    # lockdown: power on (not dark), caution tape round the room for GM and players alike, no red shutter bars
+    tape = lambda im: sum(1 for (r, g_, b, a) in im.getdata() if r > 230 and 180 < g_ < 220 and b < 60)
+    gm_l, pl_l, bare_l = look(llvl, True), look(llvl, False), look(llvl, True, states=False)
+    assert tape(gm_l) > tape(bare_l) + 50, "caution tape round locked-down rooms"
+    assert tape(pl_l) > tape(bare_l) + 50, "players see the tape too"
+    locked = [r for r in atmosphere.affected(res, res.grids[llvl]) if r["states"] == ["lockdown"]]
+    for room in locked:
+        assert median(gm_l, room["tile"]) > median(bare_l, room["tile"]) * 0.8, "locked-down rooms keep their power"
     room = next(r for r in atmosphere.affected(res, res.grids[llvl]) if "lockdown" in r["states"])
     pub, gmo = atmosphere.room_overlay(room, 20, "public"), atmosphere.room_overlay(room, 20, "gm")
     assert pub.getbbox() is not None
-    if atmosphere.door_points(room["tile"]):
-        assert gmo.getbbox() is not None
-    assert all(a < 200 or not (r > 240 and g_ < 80) for (r, g_, b, a) in pub.getdata()), "no shutters in the public part"
+    for part in (pub, gmo):
+        assert all(a < 200 or not (r > 240 and g_ < 80 and b < 80) for (r, g_, b, a) in part.getdata()), "no red shutter bars"
+    alarm = [sp for g2 in res.grids for rm in atmosphere.affected(res, g2) if rm["states"] == ["lockdown"]
+             and atmosphere._floor(rm["tile"]) is not None
+             for sp in atmosphere.lamp_specs(rm, atmosphere._floor(rm["tile"]), None, 20) if not sp.get("user")]
+    assert alarm, "locked-down rooms get alarm lamps"
+    assert all(sp["color"] == atmosphere.ALARM_LIGHT for sp in alarm), "amber, not the red of a power cut"
+    # quarantine: a green dashed line, not the old yellow hazard border
+    qlvl = level_with("quarantine")
+    green = lambda im: sum(1 for (r, g_, b, a) in im.getdata() if g_ > 190 and r < 110 and 80 < b < 150)
+    assert green(look(qlvl, True)) > green(look(qlvl, True, states=False)) + 50, "green dashed line round quarantine"
     # lamps touch a wall, and nothing is drawn outside the building or through a wall
     checked = lamps_seen = 0
     for g2 in res.grids:
@@ -1285,17 +1297,21 @@ def check_atmosphere():
                             n = max(abs(tx - cx), abs(ty - cy))
                             for k in range(1, n):
                                 assert rows[round(cy + (ty - cy) * k / n)][round(cx + (tx - cx) * k / n)] not in "#o"
-    # placing on the canvas: atmosphere on its own layer, shutters on the GM layer, none in a player build
+    # placing on the canvas: atmosphere on its own layer, nothing GM-only in a player build
     cell = 70.0
     out_gm = canvas_export.to_canvas(res, cell, None, images, tempfile.mkdtemp(prefix="atmo-"), gm=True)
     out_pl = canvas_export.to_canvas(res, cell, None, images, tempfile.mkdtemp(prefix="atmo-"), gm=False)
     names_gm = {p.get("layer_name") for lv in out_gm["levels"] for p in lv["pieces"]}
     names_pl = {p.get("layer_name") for lv in out_pl["levels"] for p in lv["pieces"]}
     assert canvas_export.LAYER_ATMO in names_gm and canvas_export.LAYER_ATMO in names_pl
-    gm_pieces = [p for lv in out_gm["levels"] for p in lv["pieces"] if p.get("layer_name") == canvas_export.LAYER_GM
-                 and p.get("name", "").startswith(canvas_export.LAYER_GM)]
-    assert gm_pieces and not [p for lv in out_pl["levels"] for p in lv["pieces"] if p.get("name", "").startswith(canvas_export.LAYER_GM)]
-    assert all(p.get("embedded") for p in gm_pieces)
+    assert not [p for lv in out_pl["levels"] for p in lv["pieces"] if p.get("layer_name") == canvas_export.LAYER_GM]
+    # room-state symbols and the legend, for GM and players alike; no key numbers or marker letters by default
+    for out in (out_gm, out_pl):
+        names = {p.get("layer_name") for lv in out["levels"] for p in lv["pieces"]}
+        assert canvas_export.LAYER_STATES in names and canvas_export.LAYER_LEGEND in names, names
+        assert canvas_export.LAYER_KEY not in names, "no stray numbers or letters on the canvas"
+        assert all(p.get("embedded") for lv in out["levels"] for p in lv["pieces"]
+                   if p.get("layer_name") in (canvas_export.LAYER_STATES, canvas_export.LAYER_LEGEND))
     print("atmosphere ok")
 
 
