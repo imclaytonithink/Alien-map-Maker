@@ -83,3 +83,15 @@ back to a single tile with a railed, dimmed overlook above it. Three-storey room
   on every door (GM view only); quarantine gets a hazard border. The same overlay is added to the canvas on its own layers.
 * **Exports for Tabletop Simulator**: "Tabletop Sim (sharp 100px/sq, in sections)" writes a big map as grid-aligned PNG
   sections (A1, A2, B1…) no bigger than the limit you choose (default 4096 px), with a `sections.txt` that says how they fit.
+
+## Lights
+
+* Each emergency lamp casts light as rays against the walls in the tile art (walls are the solid, dark bands), so a pool fills a
+  hallway **wall to wall**, is brightest at the fixture, feathers out to its reach and stops at walls. Pools are cached, so
+  redrawing is quick.
+* **Colours**: choose the emergency light and the fixture colour in the Lights box ("Red" resets them). They are saved in the
+  options (`atmosphere: {light, fixture}`) and used in the preview, the exports and when the map is placed on the canvas.
+* **Your own lights**: press "Place lights", then click the preview: a *wall light* snaps to the nearest wall (found from the
+  tile art), a *ceiling light* goes where you click. Set the reach, brightness and colours first; right-click a light to
+  remove it. They work in any tile (even one that is not dark), light only what they can see, are part of the saved layout,
+  undo and the canvas, and are removed if a re-roll replaces the tile they were on.

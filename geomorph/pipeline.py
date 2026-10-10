@@ -124,6 +124,7 @@ def generate(registry: Registry, options=None, archetypes=None) -> Result:
 
 
 def finish(res: Result, rng, o, arch, table, cond_default, theme) -> Result:
+    res.lights = []                         # lights placed by the user (see atmosphere.snap_light)
     res.meta["seed"] = o["seed"]
     res.meta["theme"] = theme
     res.meta["archetype"] = (arch or {}).get("name", o.get("ship_type", ""))
@@ -220,6 +221,7 @@ def snapshot(res: Result) -> dict:
                    "placed": [(p.tile, p.x, p.y, p.o, p.zone, p.key) for p in g.placed],
                    "filler": [dict(f) for f in g.filler]} for g in res.grids],
         "decor": [dict(d) for d in (getattr(res, "decor", None) or [])],
+        "lights": [dict(L) for L in (getattr(res, "lights", None) or [])],
         "key": copy.deepcopy(res.key), "markers": [dict(m) for m in res.markers],
         "issues": list(res.issues), "gaps": dict(res.gaps or {}),
         "quality": copy.deepcopy(getattr(res, "quality", None)),
@@ -234,6 +236,7 @@ def restore(res: Result, snap: dict) -> None:
             g.place(tile, x, y, o, zone=zone).key = key
         g.filler = [dict(f) for f in sg["filler"]]
     res.decor = [dict(d) for d in snap["decor"]]
+    res.lights = [dict(L) for L in snap.get("lights", [])]
     res.key = copy.deepcopy(snap["key"])
     res.markers = [dict(m) for m in snap["markers"]]
     res.issues = list(snap["issues"])
@@ -288,3 +291,22 @@ def generate_many(registry: Registry, options=None, n=6, archetypes=None, taste_
     out = [generate(registry, dict(base, seed=f"{seed}-{i + 1}"), archetypes) for i in range(max(1, int(n)))]
     out.sort(key=lambda r: -(r.quality["score"] + taste_weight * (learning.taste(r) if base.get("learn", True) else 0.0)))
     return out
+
+
+def drop_lights_on_changed(res: Result, before: dict, after: dict) -> int:
+    """Remove the user's lights that sit on a tile a re-roll replaced (they would float on the new artwork)."""
+    changed = set()
+    for g, sb, sa in zip(res.grids, before["grids"], after["grids"]):
+        old = {(x, y): t.id for t, x, y, _o, _z, _k in sb["placed"]}
+        for t, x, y, o, _z, _k in sa["placed"]:
+            if old.get((x, y)) != t.id:
+                changed.add((g.index, x, y, o.w, o.h))
+    keep, dropped = [], 0
+    for L in getattr(res, "lights", None) or []:
+        on_changed = any(L["level"] == lvl and x <= L["x"] < x + w and y <= L["y"] < y + h for lvl, x, y, w, h in changed)
+        if on_changed:
+            dropped += 1
+        else:
+            keep.append(L)
+    res.lights = keep
+    return dropped

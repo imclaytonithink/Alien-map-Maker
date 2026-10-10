@@ -13,8 +13,8 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 MAX_LAMPS = 14
 WALL_RUN = 2                # a lamp needs a straight wall this many cells (half squares) either side of it
-TARGET_LIT = 0.6            # add lamps until about this share of the open floor is lit
-LIT_CELLS = 5               # cells (half squares) a lamp lights well
+TARGET_LIT = 0.8            # add lamps until about this share of the open floor is lit
+LIT_CELLS = 7               # cells (half squares) a lamp lights well
 LIGHT_RADIUS = 3.8          # squares a lamp reaches (walls and furniture block it)
 LIT_AT = 48                 # light level (of 255) from which a spot counts as lit rather than in shadow
 DOOR = 1                    # edge class value for a door square (geomorph.edges.DOOR)
@@ -22,16 +22,22 @@ _GLOW = {}
 
 
 def affected(res, g) -> list:
-    """[{"tile": Placed, "states": [...]}] for the tiles on level ``g`` whose zone is dark, locked down or quarantined."""
+    """[{"tile", "states", "colors", "lights"}] for the tiles on level ``g`` whose zone is dark, locked down or
+    quarantined, or that hold a light the user placed."""
     ov = res.overlays or {}
     states = {}
     for key in ("power_failure", "lockdown", "quarantine"):
         for zid in ov.get(key, []):
             states.setdefault(zid, []).append(key)
+    lights = [L for L in (getattr(res, "lights", None) or []) if L.get("level") == g.index]
+    col = colors(res)
     out = []
     for p in g.placed:
-        if p.zone in states and p.tile.type != "wing":
-            out.append({"tile": p, "states": states[p.zone]})
+        if p.tile.type == "wing":
+            continue
+        mine = [L for L in lights if p.x <= L["x"] < p.x + p.w and p.y <= L["y"] < p.y + p.h]
+        if p.zone in states or mine:
+            out.append({"tile": p, "states": states.get(p.zone, []), "colors": col, "lights": mine})
     return out
 
 
@@ -167,11 +173,11 @@ def _lamps(p, rows):
         if not near:
             continue
         best = min(near, key=lambda c: (c[0] - ax) ** 2 + (c[1] - ay) ** 2)
-        if all(max(abs(best[0] - l[0]), abs(best[1] - l[1])) >= 6 for l in lamps):
+        if all(max(abs(best[0] - l[0]), abs(best[1] - l[1])) >= 8 for l in lamps):
             add(best)
     while rows is not None and cand and len(lamps) < MAX_LAMPS and floor and not covered():   # then spread more
         far = max(cand, key=lambda c: min([max(abs(c[0] - l[0]), abs(c[1] - l[1])) for l in lamps] or [99]))
-        if min([max(abs(far[0] - l[0]), abs(far[1] - l[1])) for l in lamps] or [99]) < 6:
+        if min([max(abs(far[0] - l[0]), abs(far[1] - l[1])) for l in lamps] or [99]) < 8:
             break
         add(far)
     return lamps[:MAX_LAMPS]
@@ -203,22 +209,45 @@ def _light_mask(rows, cx, cy, radius_cells, W, H, walk=None) -> Image.Image:
 
 ART_PPS = 15                # the tile thumbnails are 15 px per square, with a 2 square border all round
 ART_BORDER = 2
-INK = 16                    # alpha at which a thumbnail pixel counts as drawn wall
+INK = 16                    # alpha at which a thumbnail pixel counts as drawn art
+WALL_ALPHA, WALL_LUM = 200, 100        # walls are solid and dark in the art; floors are pale and see-through
+RAY_STEP_DEG = 0.5
+DEFAULT_LIGHT = "#ff241c"
+DEFAULT_FIXTURE = "#ff9682"
+WASH_PEAK = 95             # how strongly a lamp tints the floor next to it (0-255)
+_CACHE = {}
+
+
+def colors(res) -> tuple:
+    """(emergency light colour, fixture colour) chosen for this map (hex strings)."""
+    a = (res.options or {}).get("atmosphere") or {}
+    return a.get("light") or DEFAULT_LIGHT, a.get("fixture") or DEFAULT_FIXTURE
+
+
+def _rgb(c, default=DEFAULT_LIGHT) -> tuple:
+    try:
+        c = str(c).lstrip("#")
+        return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return _rgb(default) if c != default else (255, 36, 28)
+
+
+def _darker(rgb, f=0.45) -> tuple:
+    return tuple(int(v * f) for v in rgb)
 
 
 def _wall_face_point(art, cx, cy, wall, p):
     """Where the wall really is for the lamp on floor cell (cx, cy): the tile art is scanned from the cell centre toward
-    the wall, and the first inked pixel (median over a few parallel lines) is the wall face. Returns (x, y) in squares
-    relative to the tile, or None when there is no art to read."""
+    the wall, and the first solid wall pixel (median over a few parallel lines) is the wall face. Returns (x, y) in
+    squares relative to the tile, or None when there is no art to read."""
     if art is None:
         return None
     ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
     ax, ay = (1, 0) if wall in "NS" else (0, 1)
     sx = ((cx + 0.5) / 2.0 + ART_BORDER) * ART_PPS
     sy = ((cy + 0.5) / 2.0 + ART_BORDER) * ART_PPS
-    alpha = art.getchannel("A") if art.mode == "RGBA" else art.convert("RGBA").getchannel("A")
-    px = alpha.load()
-    W, H = alpha.size
+    wp = _wall_mask(art).load()
+    W, H = art.size
     hits = []
     for off in (-3.0, -1.5, 0.0, 1.5, 3.0):
         for i in range(0, int(ART_PPS * 1.2 / 0.5)):
@@ -226,8 +255,8 @@ def _wall_face_point(art, cx, cy, wall, p):
             x, y = int(sx + ux * t + ax * off), int(sy + uy * t + ay * off)
             if not (0 <= x < W and 0 <= y < H):
                 break
-            if px[x, y] >= INK:
-                if t >= 1.0:                      # ink on the floor cell itself contradicts the floor map: no reading
+            if wp[x, y]:
+                if t >= 1.0:                      # a wall pixel on the floor cell itself contradicts the floor map
                     hits.append(t)
                 break
     if len(hits) < 3:
@@ -236,59 +265,166 @@ def _wall_face_point(art, cx, cy, wall, p):
     return ((sx + ux * t) / ART_PPS - ART_BORDER, (sy + uy * t) / ART_PPS - ART_BORDER)
 
 
-def _light_map(p, rows, W, H, pps, radius_sq, art=None):
-    """Where the room's lamps reach, 0-255: bright at a lamp, fading out, blocked by walls and furniture.
-    Everything a lamp cannot see stays dark, which leaves real shadows."""
-    lamps = _lamps(p, rows)
+def _wall_mask(art) -> Image.Image:
+    """255 where the tile art is a wall: solid (opaque) and dark. Cached on the image object."""
+    cached = getattr(art, "_wall_mask", None)
+    if cached is None:
+        rgba = art if art.mode == "RGBA" else art.convert("RGBA")
+        solid = rgba.getchannel("A").point(lambda v: 255 if v >= WALL_ALPHA else 0)
+        dark = rgba.convert("L").point(lambda v: 255 if v < WALL_LUM else 0)
+        cached = ImageChops.multiply(solid, dark)
+        try:
+            art._wall_mask = cached
+        except AttributeError:
+            pass
+    return cached
+
+
+_ART_CELLS = {}
+
+
+def _cells_to_art(rows, chars, w, h, grow_sq=0.0) -> Image.Image:
+    """An art-sized mask (tile area placed inside the border) that is 255 on the floor cells in ``chars``,
+    optionally grown by ``grow_sq`` squares so it reaches right up to the walls. Cached per tile layout."""
+    key = ("".join(rows), len(rows[0]), chars, w, h, grow_sq)
+    full = _ART_CELLS.get(key)
+    if full is None:
+        m = Image.new("L", (len(rows[0]), len(rows)), 0)
+        m.putdata([255 if ch in chars else 0 for r in rows for ch in r])
+        m = m.resize((w * ART_PPS, h * ART_PPS), Image.NEAREST)
+        for _ in range(int(grow_sq * ART_PPS)):              # grow one pixel at a time: cheap, unlike one big filter
+            m = m.filter(ImageFilter.MaxFilter(3))
+        full = Image.new("L", ((w + 2 * ART_BORDER) * ART_PPS, (h + 2 * ART_BORDER) * ART_PPS), 0)
+        full.paste(m, (ART_BORDER * ART_PPS, ART_BORDER * ART_PPS))
+        if len(_ART_CELLS) > 200:
+            _ART_CELLS.clear()
+        _ART_CELLS[key] = full
+    return full
+
+
+def _cast(wall, x, y, inward, radius_px, full=False):
+    """Light as straight rays from (x, y) (art pixels): each ray runs until it hits a wall (the wall face is lit)
+    or reaches the radius. ``inward`` is the way the fixture faces; a ceiling light (``full``) shines all round."""
+    import math
+    W, H = wall.size
+    lit = Image.new("L", (W, H), 0)
+    lp, wp = lit.load(), wall.load()
+    base = math.atan2(inward[1], inward[0]) if inward else 0.0
+    span = math.pi if (full or not inward) else math.pi / 2
+    n = int(2 * span / math.radians(RAY_STEP_DEG))
+    for i in range(n + 1):
+        ang = base - span + 2 * span * i / n
+        dx, dy = math.cos(ang), math.sin(ang)
+        for s in range(1, radius_px + 1):
+            px, py = int(x + dx * s), int(y + dy * s)
+            if not (0 <= px < W and 0 <= py < H):
+                break
+            lp[px, py] = 255
+            if wp[px, py]:
+                break
+    return lit
+
+
+def _paste_l(dst, src, x, y):
+    sx0, sy0 = max(0, -x), max(0, -y)
+    sx1, sy1 = min(src.width, dst.width - x), min(src.height, dst.height - y)
+    if sx1 > sx0 and sy1 > sy0:
+        dst.paste(src.crop((sx0, sy0, sx1, sy1)), (x + sx0, y + sy0))
+
+
+def _lamp_light(spec, p, rows, art, W, H, pps):
+    """One lamp's light over the tile (0-255 at W x H): bright at the fixture, feathering out to its radius, stopped by walls
+    (read from the art, so a hallway fills right up to both walls), and kept to the floor it serves."""
+    radius_px = max(2, int(spec["radius"] * ART_PPS))
+    if art is not None and not p.tile.bbox:
+        wall = _wall_mask(art)
+        x, y = (spec["fx"] + ART_BORDER) * ART_PPS, (spec["fy"] + ART_BORDER) * ART_PPS
+        inward = {"N": (0, 1), "S": (0, -1), "W": (1, 0), "E": (-1, 0)}.get(spec["wall"])
+        if inward:
+            x, y = x + inward[0] * 2.0, y + inward[1] * 2.0
+        lit = _cast(wall, x, y, inward, radius_px, full=spec["wall"] is None)
+        lit = lit.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.GaussianBlur(1.2))
+        fall = Image.new("L", wall.size, 0)
+        _paste_l(fall, _light_sprite(2 * radius_px), int(x) - radius_px, int(y) - radius_px)
+        lit = ImageChops.multiply(lit, fall)
+        if rows is not None:                     # automatic lamps serve corridors and halls only; user lights go anywhere inside
+            chars = "c.r" if spec["user"] else walk_chars(rows)
+            lit = ImageChops.multiply(lit, _cells_to_art(rows, chars, p.w, p.h, grow_sq=0.8 if not spec["user"] else 0.3))
+        box = (ART_BORDER * ART_PPS, ART_BORDER * ART_PPS, (ART_BORDER + p.w) * ART_PPS, (ART_BORDER + p.h) * ART_PPS)
+        lit = lit.crop(box).resize((W, H), Image.BILINEAR)
+    elif rows is not None:                       # no art: line of sight over the floor-map cells instead
+        cx, cy = int(spec["fx"] * 2), int(spec["fy"] * 2)
+        cx, cy = min(max(cx, 0), len(rows[0]) - 1), min(max(cy, 0), len(rows) - 1)
+        r = int(pps * spec["radius"])
+        lit = Image.new("L", (W, H), 0)
+        _paste_l(lit, _light_sprite(2 * r), int(spec["fx"] * pps) - r, int(spec["fy"] * pps) - r)
+        walk = "c.r" if spec["user"] else walk_chars(rows)
+        lit = ImageChops.multiply(lit, _light_mask(rows, cx, cy, int(spec["radius"] * 2) + 1, W, H, walk))
+    else:
+        lit = Image.new("L", (W, H), 0)
+    s = spec["strength"]
+    return lit if s >= 0.999 else lit.point(lambda v: int(v * s))
+
+
+def lamp_specs(room, rows, art, pps) -> list:
+    """Every light shining in this room: the automatic emergency lamps (corridors and halls, when the power is
+    out or the room is locked down) and any lights the user placed. Positions are in squares inside the tile."""
+    p, states = room["tile"], room["states"]
+    light_c, fixture_c = room.get("colors") or (DEFAULT_LIGHT, DEFAULT_FIXTURE)
+    dark = "power_failure" in states
+    specs = []
+    if dark or "lockdown" in states:
+        for cx, cy, wall in _lamps(p, rows):
+            face = _wall_face_point(art, cx, cy, wall, p)
+            if face is None:
+                x0, y0 = cx / 2.0, cy / 2.0
+                face = {"N": (x0 + 0.25, y0), "S": (x0 + 0.25, y0 + 0.5), "W": (x0, y0 + 0.25), "E": (x0 + 0.5, y0 + 0.25)}[wall]
+            specs.append({"fx": face[0], "fy": face[1], "wall": wall, "radius": LIGHT_RADIUS if dark else 2.0,
+                          "strength": 1.0 if dark else 0.55, "color": light_c, "fixture": fixture_c, "user": False})
+    for L in room.get("lights") or ():
+        specs.append({"fx": L["x"] - p.x, "fy": L["y"] - p.y, "wall": (L.get("wall") or None) if L.get("kind", "wall") == "wall" else None,
+                      "radius": float(L.get("radius", 4.0)), "strength": float(L.get("strength", 1.0)),
+                      "color": L.get("color") or light_c, "fixture": L.get("fixture") or fixture_c, "user": True})
+    return specs
+
+
+def _light_map(p, rows, W, H, pps, radius_sq, art=None, room=None):
+    """Where the room's automatic lamps reach, 0-255, plus their fixtures: (light, specs). Used for the shadow
+    measure and by the tests; :func:`room_overlay` builds the picture from the same specs."""
+    room = room or {"tile": p, "states": ["power_failure"]}
+    specs = [dict(sp, radius=radius_sq) if not sp["user"] else sp for sp in lamp_specs(room, rows, art, pps)]
     light = Image.new("L", (W, H), 0)
-    spots = []
-    r = int(pps * radius_sq)
-    sprite = _light_sprite(2 * r)
-    dome = max(3, int(pps * 0.3))
-    for cx, cy, wall in lamps:
-        x0, y0 = cx * pps / 2.0, cy * pps / 2.0                     # the cell's top-left, in pixels
-        half = pps / 4.0
-        gx, gy = {"N": (x0 + half, y0), "S": (x0 + half, y0 + pps / 2.0),
-                  "W": (x0, y0 + half), "E": (x0 + pps / 2.0, y0 + half)}[wall]   # the cell edge beside the wall
-        face = _wall_face_point(art, cx, cy, wall, p)                 # ... or the wall itself, read from the art
-        if face is not None:
-            if wall in "NS":
-                gy = face[1] * pps
-            else:
-                gx = face[0] * pps
-        local = Image.new("L", (W, H), 0)
-        sx, sy = int(gx) - r, int(gy) - r
-        sx0, sy0 = max(0, -sx), max(0, -sy)
-        sx1, sy1 = min(2 * r, W - sx), min(2 * r, H - sy)
-        if sx1 > sx0 and sy1 > sy0:
-            local.paste(sprite.crop((sx0, sy0, sx1, sy1)), (sx + sx0, sy + sy0))
-        if rows is not None:
-            vis = _light_mask(rows, cx, cy, int(radius_sq * 2) + 1, W, H)
-            local = ImageChops.multiply(local, vis)
-        light = ImageChops.lighter(light, local)
-        spots.append((gx, gy, wall, dome))
-    return light, spots
+    for sp in specs:
+        light = ImageChops.lighter(light, _lamp_light(sp, p, rows, art, W, H, pps))
+    return light, specs
 
 
 def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Image | None:
     """The overlay for one room. ``part``: "public" (what anyone sees), "gm" (shutters only) or "all".
 
-    Everything public is confined to the building inside the tile (the floor map says where the walls and
-    the outside are). With the power out the room is dark except where an emergency lamp reaches: lit pools
-    are easy to read, and whatever a lamp cannot see (behind walls and furniture, far corners) stays in shadow."""
+    Everything is confined to the building inside the tile. With the power out the room is dark except where a lamp
+    reaches: each pool is brightest at its fixture and feathers out, filling a hallway wall to wall, and whatever no
+    lamp can see (rooms, far ends) stays in shadow. Lights placed by the user shine the same way, in any colour."""
     p, states = room["tile"], room["states"]
     W, H = int(p.w * pps), int(p.h * pps)
     rows = _floor(p)
+    key = (p.tile.id, p.o.rot, p.o.mirror, p.w, p.h, pps, part, tuple(states), tuple(room.get("colors") or ()),
+           tuple(sorted((tuple(sorted(L.items())) for L in room.get("lights") or ()), key=str)), art is not None)
+    cached = _CACHE.get(key)
+    if cached is not None:
+        return cached.copy()
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     if part in ("all", "public"):
         mask = _room_mask(rows, W, H)
         dark = "power_failure" in states
-        lit = dark or "lockdown" in states
-        light, spots = _light_map(p, rows, W, H, pps, LIGHT_RADIUS if dark else 2.0, art) if lit else (None, [])
+        specs = lamp_specs(room, rows, art, pps)
+        masks = [_lamp_light(sp, p, rows, art, W, H, pps) for sp in specs]
         body = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         if dark:
-            shade = Image.new("L", (W, H), 168)                       # full darkness ...
-            shade = ImageChops.subtract(shade, light.point(lambda v: int(v * 168 * 0.88 / 255)))   # ... lifted by lamp light
+            light = Image.new("L", (W, H), 0)
+            for m in masks:
+                light = ImageChops.lighter(light, m)
+            shade = ImageChops.subtract(Image.new("L", (W, H), 168), light.point(lambda v: int(v * 168 * 0.9 / 255)))
             layer = Image.new("RGBA", (W, H), (4, 6, 14, 0))
             layer.putalpha(shade)
             body.alpha_composite(layer)
@@ -304,20 +440,25 @@ def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Ima
             pad = Image.new("L", (W + 2 * band, H + 2 * band), 0)      # border follows the building outline
             pad.paste(mask, (band, band))
             inner = pad.filter(ImageFilter.MinFilter(2 * band + 1)).crop((band, band, band + W, band + H))
-            edge = ImageChops.subtract(mask, inner)
-            stripes.putalpha(ImageChops.multiply(stripes.getchannel("A"), edge))
+            stripes.putalpha(ImageChops.multiply(stripes.getchannel("A"), ImageChops.subtract(mask, inner)))
             body.alpha_composite(stripes)
-        if light is not None:                                          # the red wash of the lamps themselves
-            wash = Image.new("RGBA", (W, H), (255, 40, 30, 0))
-            wash.putalpha(light.point(lambda v: int(v * (62 if dark else 40) / 255)))
+        for sp, m in zip(specs, masks):                                # each lamp's coloured wash, strongest at the fixture
+            wash = Image.new("RGBA", (W, H), _rgb(sp["color"]) + (0,))
+            wash.putalpha(m.point(lambda v: int(v * WASH_PEAK / 255)))
             body.alpha_composite(wash)
         body.putalpha(ImageChops.multiply(body.getchannel("A"), mask))
         img.alpha_composite(body)
         d = ImageDraw.Draw(img)
-        for gx, gy, wall, rr in spots:                                 # round lamps: half-discs, flat side on the wall
+        rr = max(3, int(pps * 0.3))
+        for sp in specs:                                               # the fixtures: half-discs on the wall, discs overhead
+            gx, gy = sp["fx"] * pps, sp["fy"] * pps
+            fill, edge = _rgb(sp["fixture"], DEFAULT_FIXTURE) + (255,), _darker(_rgb(sp["fixture"], DEFAULT_FIXTURE)) + (255,)
             box = (gx - rr, gy - rr, gx + rr, gy + rr)
-            start, end = {"N": (0, 180), "S": (180, 360), "W": (-90, 90), "E": (90, 270)}[wall]
-            d.pieslice(box, start, end, fill=(255, 150, 130, 255), outline=(120, 20, 16, 255))
+            if sp["wall"] is None:
+                d.ellipse(box, fill=fill, outline=edge)
+            else:
+                start, end = {"N": (0, 180), "S": (180, 360), "W": (-90, 90), "E": (90, 270)}[sp["wall"]]
+                d.pieslice(box, start, end, fill=fill, outline=edge)
     if part in ("all", "gm") and "lockdown" in states:
         d = ImageDraw.Draw(img)
         t = max(3, int(pps * 0.3))
@@ -330,7 +471,10 @@ def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Ima
             else:
                 x0 = 0 if side == "W" else W - t
                 d.rectangle((x0, cy - half, x0 + t, cy + half), fill=(255, 60, 50, 240))
-    return img
+    if len(_CACHE) > 400:
+        _CACHE.clear()
+    _CACHE[key] = img
+    return img.copy()
 
 
 def shadow_fraction(room: dict, pps: int = 10) -> float | None:
@@ -340,7 +484,7 @@ def shadow_fraction(room: dict, pps: int = 10) -> float | None:
     if rows is None or "power_failure" not in room["states"]:
         return None
     W, H = int(p.w * pps), int(p.h * pps)
-    light, _spots = _light_map(p, rows, W, H, pps, LIGHT_RADIUS)
+    light, _specs = _light_map(p, rows, W, H, pps, LIGHT_RADIUS, None, dict(room, lights=()))
     px = light.load()
     inside = unlit = 0
     walk = walk_chars(rows)
@@ -351,6 +495,48 @@ def shadow_fraction(room: dict, pps: int = 10) -> float | None:
                 if px[int((cx + 0.5) * pps / 2), int((cy + 0.5) * pps / 2)] < LIT_AT:
                     unlit += 1
     return unlit / inside if inside else None
+
+
+def snap_light(res, g, x, y, images=None, kind="wall", radius=4.0, strength=1.0, color=None, fixture=None):
+    """A user light for the click (x, y) (squares on level ``g``), or None when nothing sensible is there.
+
+    A wall light snaps to the nearest wall face within about two squares (read from the tile art when there is some);
+    a ceiling light goes exactly where it was clicked, as long as that is inside a building."""
+    from . import render
+    tile = next((p for p in g.placed if p.x <= x < p.x + p.w and p.y <= y < p.y + p.h and p.tile.type != "wing"), None)
+    if tile is None:
+        return None
+    rows = _floor(tile)
+    light_c, fixture_c = colors(res)
+    base = {"level": g.index, "kind": kind, "radius": float(radius), "strength": float(strength),
+            "color": color or light_c, "fixture": fixture or fixture_c}
+    if rows is None:
+        return None
+    rx, ry = x - tile.x, y - tile.y
+    cx, cy = min(int(rx * 2), len(rows[0]) - 1), min(int(ry * 2), len(rows) - 1)
+    if kind != "wall":
+        if rows[cy][cx] == "o":
+            return None
+        return dict(base, x=round(x, 3), y=round(y, 3), wall="")
+    art = render.oriented_thumb(images, tile) if images is not None else None
+    best = None
+    for yy in range(max(0, cy - 4), min(len(rows), cy + 5)):
+        for xx in range(max(0, cx - 4), min(len(rows[0]), cx + 5)):
+            if rows[yy][xx] == "#" or rows[yy][xx] == "o":
+                continue
+            for d in "NSWE":
+                if _wall_face(rows, xx, yy, d, "c.r", 1):
+                    dist = (xx + 0.5 - rx * 2) ** 2 + (yy + 0.5 - ry * 2) ** 2
+                    if best is None or dist < best[0]:
+                        best = (dist, xx, yy, d)
+    if best is None:
+        return None
+    _dist, xx, yy, d = best
+    face = _wall_face_point(art, xx, yy, d, tile)
+    if face is None:
+        x0, y0 = xx / 2.0, yy / 2.0
+        face = {"N": (x0 + 0.25, y0), "S": (x0 + 0.25, y0 + 0.5), "W": (x0, y0 + 0.25), "E": (x0 + 0.5, y0 + 0.25)}[d]
+    return dict(base, x=round(tile.x + face[0], 3), y=round(tile.y + face[1], 3), wall=d)
 
 
 def paint(res, g, layer: Image.Image, x0, y0, pps, gm=True, images=None):

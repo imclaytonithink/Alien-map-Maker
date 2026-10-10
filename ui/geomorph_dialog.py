@@ -127,11 +127,11 @@ class _BestOfDialog(QDialog):
 
 class _ClickLabel(QLabel):
     """Preview label that reports where it was clicked."""
-    clicked = pyqtSignal(int, int)
+    clicked = pyqtSignal(int, int, int)          # x, y, button (1 left, 2 right)
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(int(e.position().x()), int(e.position().y()))
+        if e.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+            self.clicked.emit(int(e.position().x()), int(e.position().y()), int(e.button().value))
         super().mousePressEvent(e)
 
 
@@ -429,6 +429,57 @@ class GeomorphDialog(QDialog):
         v.addLayout(row)
         left.addWidget(box)
 
+        from geomorph import atmosphere as _atmo
+        self.light_color, self.fixture_color = _atmo.DEFAULT_LIGHT, _atmo.DEFAULT_FIXTURE
+        self.my_light_color, self.my_fixture_color = "#ffd27a", "#fff1c9"
+        box = QGroupBox("Lights")
+        v = QVBoxLayout(box)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Emergency lamps"))
+        self.btn_light_color = self._color_button("light_color", "Colour of the emergency light")
+        self.btn_fixture_color = self._color_button("fixture_color", "Colour of the emergency fixtures")
+        b_reset = QPushButton("Red")
+        b_reset.setToolTip("Back to the standard red emergency lamps.")
+        b_reset.clicked.connect(self._reset_lamp_colors)
+        for wdg in (QLabel("light"), self.btn_light_color, QLabel("fixture"), self.btn_fixture_color, b_reset):
+            row.addWidget(wdg)
+        row.addStretch(1)
+        v.addLayout(row)
+        row = QHBoxLayout()
+        self.btn_place_light = QPushButton("Place lights")
+        self.btn_place_light.setCheckable(True)
+        self.btn_place_light.setToolTip("Click the map preview to add a light of your own: wall lights snap to the nearest wall, "
+                                        "ceiling lights go where you click. Right-click a light to remove it.")
+        self.btn_place_light.toggled.connect(self._place_mode_changed)
+        self.cb_light_kind = QComboBox()
+        self.cb_light_kind.addItem("Wall light", "wall")
+        self.cb_light_kind.addItem("Ceiling light", "ceiling")
+        self.sp_light_radius = QSpinBox()
+        self.sp_light_radius.setRange(1, 12)
+        self.sp_light_radius.setValue(4)
+        self.sp_light_radius.setSuffix(" sq")
+        self.sp_light_radius.setToolTip("How far the light reaches, in grid squares.")
+        self.sp_light_strength = QSpinBox()
+        self.sp_light_strength.setRange(10, 100)
+        self.sp_light_strength.setValue(100)
+        self.sp_light_strength.setSuffix(" %")
+        self.sp_light_strength.setToolTip("How bright the light is.")
+        for wdg in (self.btn_place_light, self.cb_light_kind, QLabel("reach"), self.sp_light_radius,
+                    QLabel("bright"), self.sp_light_strength):
+            row.addWidget(wdg)
+        v.addLayout(row)
+        row = QHBoxLayout()
+        self.btn_my_light_color = self._color_button("my_light_color", "Colour of the lights you place")
+        self.btn_my_fixture_color = self._color_button("my_fixture_color", "Colour of the fixtures you place")
+        self.btn_clear_lights = QPushButton("Clear my lights")
+        self.btn_clear_lights.clicked.connect(self._clear_lights)
+        for wdg in (QLabel("My lights: light"), self.btn_my_light_color, QLabel("fixture"), self.btn_my_fixture_color,
+                    self.btn_clear_lights):
+            row.addWidget(wdg)
+        row.addStretch(1)
+        v.addLayout(row)
+        left.addWidget(box)
+
         box = QGroupBox("Seed")
         row = QHBoxLayout(box)
         self.ed_seed = QLineEdit(new_seed())
@@ -596,7 +647,8 @@ class GeomorphDialog(QDialog):
 
     def _enable(self, has):
         for b in (self.btn_place, self.btn_export, self.btn_save, self.btn_reroll, self.ck_lock,
-                  self.btn_reroll_level, self.btn_reroll_all, self.btn_like, self.btn_dislike):
+                  self.btn_reroll_level, self.btn_reroll_all, self.btn_like, self.btn_dislike,
+                  self.btn_place_light, self.btn_clear_lights):
             b.setEnabled(has)
 
     # ---- presets & scenarios ------------------------------------------
@@ -692,6 +744,11 @@ class GeomorphDialog(QDialog):
                     _set_combo(cb, o[key] or "")
             if "name" in o:
                 self.ed_name.setText(o["name"])
+            a = o.get("atmosphere") or {}
+            if a.get("light"):
+                self._set_color("light_color", a["light"])
+            if a.get("fixture"):
+                self._set_color("fixture_color", a["fixture"])
             if "mixed_conditions" in o:
                 self.ck_mixed.setChecked(bool(o["mixed_conditions"]))
             if "peculiarities" in o:
@@ -744,7 +801,7 @@ class GeomorphDialog(QDialog):
         self._live_timer.setSingleShot(True)
         self._live_timer.setInterval(600)
         self._live_timer.timeout.connect(self._live_fire)
-        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo, self.ck_learn, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
+        skip = {self.cb_level, self.ck_gm, self.ck_show_decor, self.ck_atmo, self.ck_learn, self.btn_place_light, self.cb_light_kind, self.sp_light_radius, self.sp_light_strength, self.cb_zone, self.ed_tiles, self.cb_preset, self.ck_live, self.ck_lock}
         for w in self.findChildren(QWidget):
             if w in skip or w.parent() is None:
                 continue
@@ -772,7 +829,87 @@ class GeomorphDialog(QDialog):
         self.generate()
 
     # ---- selecting, locking, re-rolling ------------------------------------
-    def _preview_clicked(self, px, py):
+    def _color_button(self, attr, tip):
+        b = QPushButton("")
+        b.setFixedSize(46, 22)
+        b.setToolTip(tip)
+        b.clicked.connect(lambda _c=False, a=attr, btn=b: self._pick_color(a, btn))
+        self._paint_swatch(b, getattr(self, attr))
+        return b
+
+    @staticmethod
+    def _paint_swatch(btn, color):
+        btn.setStyleSheet(f"background-color: {color}; border: 1px solid #8fa3ad;")
+
+    def _pick_color(self, attr, btn):
+        from ui.color_picker import choose_color
+        color = choose_color(getattr(self, attr), self, None, "Choose a colour")
+        if color is not None and color.isValid():
+            self._set_color(attr, color.name())
+
+    def _set_color(self, attr, value):
+        setattr(self, attr, value)
+        btn = {"light_color": self.btn_light_color, "fixture_color": self.btn_fixture_color,
+               "my_light_color": self.btn_my_light_color, "my_fixture_color": self.btn_my_fixture_color}[attr]
+        self._paint_swatch(btn, value)
+        if attr in ("light_color", "fixture_color") and self.result is not None:
+            self.result.options["atmosphere"] = {"light": self.light_color, "fixture": self.fixture_color}
+            self._redraw()
+
+    def _reset_lamp_colors(self):
+        from geomorph import atmosphere as A
+        self._set_color("light_color", A.DEFAULT_LIGHT)
+        self._set_color("fixture_color", A.DEFAULT_FIXTURE)
+
+    def _redraw(self):
+        """Lights changed: drop the cached previews and draw again."""
+        if self.result is not None:
+            self.result._previews = {}
+            self._show_level()
+
+    def _place_mode_changed(self, on):
+        self.lbl_status.setText("Click the map to place a light (right-click a light to remove it)." if on else "")
+
+    def _clear_lights(self):
+        from geomorph import pipeline
+        res = self.result
+        if res is None or not getattr(res, "lights", None):
+            return
+        self._push_undo(("snap", pipeline.snapshot(res), "Clear lights"))
+        n = len(res.lights)
+        res.lights = []
+        self._redraw()
+        self.lbl_changes.setText(f"Removed {n} light(s).")
+
+    def _light_click(self, gx, gy, button):
+        """Place mode: left-click adds a light where there is a wall (or ceiling), right-click removes the nearest one."""
+        from geomorph import atmosphere, pipeline
+        res = self.result
+        g = res.grids[self.level_index]
+        if button == 2:
+            mine = [L for L in getattr(res, "lights", []) if L.get("level") == g.index]
+            near = min(mine, key=lambda L: (L["x"] - gx) ** 2 + (L["y"] - gy) ** 2, default=None)
+            if near is None or (near["x"] - gx) ** 2 + (near["y"] - gy) ** 2 > 2.5 ** 2:
+                return
+            self._push_undo(("snap", pipeline.snapshot(res), "Remove light"))
+            res.lights.remove(near)
+            self._redraw()
+            self.lbl_changes.setText(f"Removed a light ({len(res.lights)} placed).")
+            return
+        light = atmosphere.snap_light(res, g, gx, gy, self.images, self.cb_light_kind.currentData(),
+                                      self.sp_light_radius.value(), self.sp_light_strength.value() / 100.0,
+                                      self.my_light_color, self.my_fixture_color)
+        if light is None:
+            self.lbl_status.setText("No wall there: click beside a wall (or use a ceiling light inside a building).")
+            return
+        self._push_undo(("snap", pipeline.snapshot(res), "Place light"))
+        if not hasattr(res, "lights") or res.lights is None:
+            res.lights = []
+        res.lights.append(light)
+        self._redraw()
+        self.lbl_changes.setText(f"Placed a {light['kind']} light ({len(res.lights)} placed).")
+
+    def _preview_clicked(self, px, py, button=1):
         res = self.result
         if res is None:
             return
@@ -780,6 +917,9 @@ class GeomorphDialog(QDialog):
         x0, y0, _x1, _y1 = render.shared_bounds(res)
         pps, head = 8, 3 * 8
         gx, gy = px / pps + x0, (py - head) / pps + y0
+        if self.btn_place_light.isChecked():
+            self._light_click(gx, gy, button)
+            return
         for p in res.grids[self.level_index].placed:
             if p.zone and p.x <= gx < p.x + p.w and p.y <= gy < p.y + p.h:
                 _set_combo(self.cb_zone, p.zone)
@@ -846,6 +986,7 @@ class GeomorphDialog(QDialog):
         pipeline.refresh_dressing(res)
         after = pipeline.snapshot(res)
         changes = pipeline.tile_changes(before, after, res)
+        dropped = pipeline.drop_lights_on_changed(res, before, after)
         self._push_undo(("snap", before, label))
         self._prerender(res)
         self._update_quality()
@@ -856,7 +997,8 @@ class GeomorphDialog(QDialog):
         where = f" on {levels[0]}" if len(levels) == 1 else f" on {len(levels)} levels" if levels else ""
         head = f"{len(changes)} tile(s) changed{where}" + (f" ({shown})" if shown else "")
         diff = quality.compare(before["quality"], res.quality)
-        self.lbl_changes.setText(f"{label}: {head}. {diff}.")
+        self.lbl_changes.setText(f"{label}: {head}. {diff}." + (f" {dropped} of your lights were on replaced tiles and were removed."
+                                                                 if dropped else ""))
         self.lbl_status.setText(f"{label}. {len(changes)} tile(s) changed; locked tiles kept." if changes else
                                 f"{label}: 0 tile(s) changed, nothing else fits here.")
 
@@ -1020,6 +1162,7 @@ class GeomorphDialog(QDialog):
         o = {"kind": kind, "seed": seed, "theme": self.cb_theme.currentData(), "name": self.ed_name.text().strip(),
              "condition": self.cb_cond.currentData() or None, "mixed_conditions": self.ck_mixed.isChecked(),
              "learn": self.ck_learn.isChecked(),
+             "atmosphere": {"light": self.light_color, "fixture": self.fixture_color},
              "peculiarities": self.sp_pec.value(), "grouping": self.sl_group.value() / 100.0, "intensity": self.sl_int.value() / 100.0,
              "overlays": [k for k, c in self.overlay_checks.items() if c.isChecked()]}
         if self.ck_decor.isChecked() or self.ck_outdoor.isChecked():

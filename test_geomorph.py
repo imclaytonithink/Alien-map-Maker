@@ -1259,15 +1259,15 @@ def check_atmosphere():
             ink = m.resize((len(rows[0]) * 15 // 2 + 1, len(rows) * 15 // 2 + 1), _Image.NEAREST).crop((0, 0, tp.w * 15, tp.h * 15))
             ink = ink.filter(_Filter.MinFilter(5))                     # walls two pixels thinner on each side
             art = _Image.new("RGBA", ((tp.w + 4) * 15, (tp.h + 4) * 15), (0, 0, 0, 0))
-            art.paste(_Image.new("RGBA", ink.size, (120, 220, 230, 255)), (30, 30), ink)
-            _lm, spots = atmosphere._light_map(tp, rows, int(tp.w * 30), int(tp.h * 30), 30, atmosphere.LIGHT_RADIUS, art)
+            art.paste(_Image.new("RGBA", ink.size, (20, 30, 40, 255)), (30, 30), ink)        # dark, solid walls
+            _lm, specs = atmosphere._light_map(tp, rows, int(tp.w * 30), int(tp.h * 30), 30, atmosphere.LIGHT_RADIUS, art)
             a = art.getchannel("A").load()
-            for gx, gy, wall, _rr in spots:
-                ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
-                fx, fy = gx / 30 * 15 + 30, gy / 30 * 15 + 30             # the lamp's wall point in art pixels
+            for sp in specs:
+                ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[sp["wall"]]
+                fx, fy = sp["fx"] * 15 + 30, sp["fy"] * 15 + 30             # the lamp's wall point in art pixels
                 beyond = a[int(fx + ux * 1.5), int(fy + uy * 1.5)]
                 before = a[int(fx - ux * 1.5), int(fy - uy * 1.5)]
-                assert beyond >= atmosphere.INK and before < atmosphere.INK, ("the lamp touches the drawn wall", wall, beyond, before)
+                assert beyond >= atmosphere.INK and before < atmosphere.INK, ("the lamp touches the drawn wall", sp["wall"], beyond, before)
             checked_art += 1
     assert checked_art >= 1
     # light does not pass through a wall: a lamp's visible cells never include a cell behind a wall in a straight line
@@ -1435,6 +1435,116 @@ def check_learning():
     print("learning ok")
 
 
+def check_lighting():
+    """Pools fill a hallway wall to wall (brightest at the fixture, feathering out, stopped by the walls), the light and
+    fixture colours are choosable, and users can place, save and remove their own lights."""
+    import tempfile
+    from types import SimpleNamespace
+    from PIL import Image as I
+    from geomorph import atmosphere as A, canvas_export, exporter, render
+    # ---- a synthetic hallway: a 6-square-wide corridor between two solid dark walls -------------------------------
+    tile = SimpleNamespace(w=20, h=20, tile=SimpleNamespace(bbox=[], id="synthetic"))
+    rows = ["#" * 40 if not (14 <= y <= 25) else "c" * 40 for y in range(40)]
+    art = I.new("RGBA", (360, 360), (20, 30, 40, 255))                            # solid dark everywhere ...
+    art.paste(I.new("RGBA", (360, 90), (0, 0, 0, 0)), (0, 30 + 105))              # ... except the hallway floor
+    spec = {"fx": 10.0, "fy": 7.0, "wall": "N", "radius": 8.0, "strength": 1.0, "color": "#ff0000", "fixture": "#ffffff",
+            "user": False}
+    lit = A._lamp_light(spec, tile, rows, art, 300, 300, 15).load()               # 15 px per square: 1 px = 1 art px
+    at = lambda xs, ys: lit[int(xs * 15), int(ys * 15)]
+    assert at(10, 7.3) > 200, "brightest at the fixture"
+    across = [at(10, y) for y in (7.3, 8.5, 9.5, 10.5, 11.5, 12.5, 12.9)]
+    assert all(v > 0 for v in across), ("the pool reaches the far wall", across)
+    assert all(b <= a + 6 for a, b in zip(across, across[1:])), ("fading away from the fixture", across)
+    along = [at(x, 8.0) for x in (10, 12, 14, 16, 17.8)]
+    assert all(b <= a + 6 for a, b in zip(along, along[1:])) and along[0] > along[-1] > 0, ("feathers out along the hall", along)
+    assert at(10, 5.0) == 0 and at(10, 6.0) == 0 and at(10, 14.2) == 0 and at(10, 16.0) == 0, "nothing lit beyond the walls"
+    # a hallway wider than the radius: still lit all the way to both walls in the lamp's own reach
+    spec_far = dict(spec, radius=3.0)
+    far = A._lamp_light(spec_far, tile, rows, art, 300, 300, 15).load()
+    assert far[int(10 * 15), int(9.5 * 15)] > 0 and far[int(10 * 15), int(11.5 * 15)] == 0, "the radius still limits how far"
+
+    # ---- colours -------------------------------------------------------------------------------------------------
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="site", seed="light1", archetype="Research facility", scale="medium",
+                                      overlays=["power_failure"], intensity=1.0))
+    g = next(g for g in res.grids if A.affected(res, g))
+    room = next(r for r in A.affected(res, g) if "power_failure" in r["states"] and A._floor(r["tile"]) is not None)
+    def mix(rm):
+        im = A.room_overlay(rm, 12, "public")
+        px = [c for c in im.getdata() if c[3] > 60]
+        return (sum(c[0] for c in px) / len(px), sum(c[2] for c in px) / len(px), im)
+    r_mean, b_mean, _im = mix(room)
+    assert r_mean > b_mean, "red emergency light by default"
+    res.options["atmosphere"] = {"light": "#2040ff", "fixture": "#00ff00"}
+    room_blue = next(r for r in A.affected(res, g) if r["tile"] is room["tile"])
+    r2, b2, im2 = mix(room_blue)
+    assert b2 > r2, "a blue light colours the pools blue"
+    assert sum(1 for c in im2.getdata() if c[1] > 200 and c[0] < 60 and c[2] < 60 and c[3] == 255) > 0, "green fixtures"
+    del res.options["atmosphere"]
+
+    # ---- user lights ----------------------------------------------------------------------------------------------
+    tp = room["tile"]
+    rows_t = A._floor(tp)
+    cx, cy, wall = A._lamps(tp, rows_t)[0]
+    click = (tp.x + (cx + 0.5) / 2.0, tp.y + (cy + 0.5) / 2.0)
+    wl = A.snap_light(res, g, click[0], click[1], None, "wall", 5.0, 0.8, "#ffd27a", "#fff1c9")
+    assert wl and wl["wall"] in "NSWE" and wl["kind"] == "wall" and wl["radius"] == 5.0 and wl["color"] == "#ffd27a"
+    assert tp.x <= wl["x"] <= tp.x + tp.w and tp.y <= wl["y"] <= tp.y + tp.h
+    cl = A.snap_light(res, g, click[0], click[1], None, "ceiling")
+    assert cl and cl["wall"] == "" and abs(cl["x"] - click[0]) < 1e-6
+    outside = next(((tp.x + (x + 0.5) / 2.0, tp.y + (y + 0.5) / 2.0) for y, r_ in enumerate(rows_t)
+                    for x, ch in enumerate(r_) if ch == "o"), None)
+    assert outside is None or A.snap_light(res, g, outside[0], outside[1], None, "ceiling") is None, "not outside the building"
+    # a light in a tile that is not dark adds its own wash and fixture
+    quiet = next(p_ for p_ in g.placed if p_.zone not in {z for z in sum((res.overlays or {}).values(), [])}
+                 and A._floor(p_) is not None and p_.tile.type == "standard")
+    assert all(r_["tile"] is not quiet for r_ in A.affected(res, g))
+    qrows = A._floor(quiet)
+    qcx, qcy, qwall = A._lamps(quiet, qrows)[0]
+    mine = A.snap_light(res, g, quiet.x + (qcx + 0.5) / 2.0, quiet.y + (qcy + 0.5) / 2.0, None, "wall", 4.0, 1.0, "#33ff66", "#ffffff")
+    assert mine
+    res.lights = [mine]
+    room_q = next(r_ for r_ in A.affected(res, g) if r_["tile"] is quiet)
+    assert room_q["states"] == [] and room_q["lights"] == [mine], "a tile with only your light is picked up"
+    imq = A.room_overlay(room_q, 12, "public")
+    greens = [c for c in imq.getdata() if c[3] > 40]
+    assert greens and sum(c[1] for c in greens) / len(greens) > sum(c[0] for c in greens) / len(greens), "your light's colour"
+    assert imq.getchannel("A").getbbox() is not None and not any(c[3] > 150 and c[:3] == (4, 6, 14) for c in imq.getdata()), \
+        "a lone light does not darken the room"
+    # in a dark room it lifts the darkness around it
+    res.lights = [wl]
+    room_d = next(r_ for r_ in A.affected(res, g) if r_["tile"] is tp)
+    base_alpha = A.room_overlay(dict(room_d, lights=[]), 12, "public").getchannel("A").load()
+    lit_alpha = A.room_overlay(room_d, 12, "public").getchannel("A").load()
+    lx, ly = int((wl["x"] - tp.x) * 12), int((wl["y"] - tp.y) * 12)
+    probes = [(min(max(lx + dx, 0), tp.w * 12 - 1), min(max(ly + dy, 0), tp.h * 12 - 1)) for dx in (-24, 0, 24) for dy in (-24, 0, 24)]
+    assert sum(lit_alpha[q] for q in probes) != sum(base_alpha[q] for q in probes), "the light changes the room around it"
+
+    # ---- saving, undo and re-rolls ---------------------------------------------------------------------------------
+    res.lights = [wl, mine]
+    pkg = exporter.to_package(res, gm=False)
+    assert len(pkg["lights"]) == 2, "lights are part of every export (players can see them)"
+    back = exporter.load_layout(exporter.to_package(res), reg)
+    assert back.lights == res.lights
+    snap = pipeline.snapshot(res)
+    res.lights = []
+    pipeline.restore(res, snap)
+    assert res.lights == [wl, mine], "undo brings the lights back"
+    before = pipeline.snapshot(res)
+    lvl = g.index
+    pipeline.reroll_level(res, lvl, seed=5)
+    after = pipeline.snapshot(res)
+    dropped = pipeline.drop_lights_on_changed(res, before, after)
+    assert dropped + len(res.lights) == 2, (dropped, len(res.lights))
+    pipeline.restore(res, before)
+    # ---- canvas: your lights and the atmosphere go on their own layer ----------------------------------------------
+    res.lights = [mine]
+    out = canvas_export.to_canvas(res, 70.0, None, render.TileImages(None), tempfile.mkdtemp(prefix="lights-"), gm=False)
+    pieces = [p_ for lv in out["levels"] for p_ in lv["pieces"] if p_.get("layer_name") == canvas_export.LAYER_ATMO]
+    assert any("embedded" in p_ and p_["level"] == g.index for p_ in pieces), "the placed light is on the canvas"
+    print("lighting ok")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1461,6 +1571,7 @@ def main():
     check_quality()
     check_overlooks()
     check_atmosphere()
+    check_lighting()
     check_reroll_refresh_and_undo()
     check_spread()
     check_learning()
