@@ -1087,8 +1087,8 @@ class MainWindow(QMainWindow):
             self.flourish_actions[attr] = action
 
         t = mb.addMenu("&Tools")
-        t.addAction("Generate Map…", self._open_generator)
-        t.addAction("Geomorph Generator (ships && sites)…", self._open_geomorph)
+        t.addAction("Generate Map (ships && sites)…", self._open_geomorph)
+        t.addAction("Generate from your own tiles…", self._open_own_tiles_generator)
         t.addAction("Ruler / measure", self._start_ruler_tool)
         t.addAction("Add static scale bar", self._start_scale_tool)
         t.addAction("Add connection / transition marker", self._start_connector_tool)
@@ -1168,7 +1168,7 @@ class MainWindow(QMainWindow):
             ("group_rotate", "Group Rot", self._toggle_group_rotate,
              "Rotate a multi-node selection around its center."),
             ("generate", "Generate", self._open_generator,
-             "Build a map from the assets selected in the library."),
+             "Generate a map: ships and sites from presets, or your own tiles (second tab)."),
             ("import", "Import", self.library._import_folder,
              "Import an asset folder into the library."),
         ]
@@ -1877,21 +1877,29 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Bundle export failed", str(exc))
 
     # ------------------------------------------------------------------
-    def _open_generator(self, _checked=False, paths=None):
-        """Open the map generator for the assets selected in the library.
+    def _open_generator(self, _checked=False, paths=None, tab=None):
+        """Open the Generate window: Geomorph ships and sites first, your own tiles
+        on the second tab (picked from the library).
 
         ``paths`` overrides that selection with an explicit list of asset
         paths (the library's right-click menu uses it, so the entry works even
         when the list has since been filtered to another folder).
         """
+        from ui.generate_window import GEOMORPH, OWN, GenerateWindow
         selection = None
         if paths:
             wanted = set(paths)
             selection = [asset for asset in self.library.library.assets
                          if asset.path in wanted]
-        dlg = GeneratorDialog(self.project, self.library, self.canvas,
-                              self._run_generator, self, selection=selection)
+        if tab is None:
+            tab = OWN if paths else GEOMORPH
+        dlg = GenerateWindow(self, tab=tab, selection=selection)
+        self._geomorph_dialog = dlg.geomorph
         dlg.exec()
+
+    def _open_own_tiles_generator(self, _checked=False):
+        from ui.generate_window import OWN
+        self._open_generator(tab=OWN)
 
     # ---- symbol legend (Geomorphs 'Symbols & Abbreviations') ----
     def _sync_legend(self, warn=False):
@@ -1918,10 +1926,8 @@ class MainWindow(QMainWindow):
 
     def _open_geomorph(self, _checked=False):
         """Ships and sites built from the Starship Geomorphs tiles."""
-        from ui.geomorph_dialog import GeomorphDialog
-        dlg = GeomorphDialog(self, self)
-        self._geomorph_dialog = dlg
-        dlg.exec()
+        from ui.generate_window import GEOMORPH
+        self._open_generator(tab=GEOMORPH)
 
     def _place_geomorph(self, res, registry, images, replace_prev=True):
         """Add a generated ship/site to the map: one new level per deck.

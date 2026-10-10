@@ -88,10 +88,10 @@ class MenuOverlay(QWidget):
              "Check the terminals you placed and get the code for the MU/TH/UR terminal in Tabletop Simulator"),
             ("▣  Export project bundle / PNG pack…", self.main._export_bundle,
              "Package the project, its referenced assets, and PNG level renders"),
-            ("#  Generate Map…", self.main._open_generator,
-             "Build a map from the assets you selected in the library"),
-            ("★  Geomorph Generator…", self.main._open_geomorph,
-             "Build a ship or a site (colony, mine, lab, prison, station…) from the Starship Geomorphs tiles"),
+            ("★  Generate Map…", self.main._open_geomorph,
+             "Build a ship or a site (colony, mine, lab, prison, station…) from presets and the Geomorph tiles"),
+            ("#  Generate from your own tiles…", self.main._open_own_tiles_generator,
+             "Lay out the pictures you pick from the library's folders"),
             ("×  Quit", self.main.close, "Exit the application"),
         ]:
             b = QPushButton(label)

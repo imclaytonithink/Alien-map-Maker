@@ -58,12 +58,17 @@ set "ICON=ui\icons\SceneBoard.ico"
 if not exist "%ICON%" python make_icon.py
 if errorlevel 1 goto build_error
 
+REM Data files the program reads at run time: the Geomorph tile list, archetypes,
+REM scenarios and symbol kits, and the MU/TH/UR room catalog. Without them the
+REM Geomorph Generator and the terminal export cannot start.
+set "APP_DATA=--add-data "geomorph\data;geomorph\data" --add-data "core\muthur_catalog.json;core""
+
 if /i "%BUILD_MODE%"=="onefile" goto build_onefile
 
 REM Folder build: the image-only packs sit next to the program, so nothing has
 REM to be unpacked when it starts.
 if exist "dist\SceneBoard.exe" del /q "dist\SceneBoard.exe"
-pyinstaller --noconsole --onedir --clean --noconfirm --name "SceneBoard" --icon "%ICON%" --add-data "%FILTERED_PACK_DIR%;asset_packs" main.py
+pyinstaller --noconsole --onedir --clean --noconfirm --name "SceneBoard" --icon "%ICON%" --add-data "%FILTERED_PACK_DIR%;asset_packs" %APP_DATA% main.py
 if errorlevel 1 goto build_error
 call :make_zip
 if errorlevel 1 (
@@ -82,7 +87,7 @@ goto finish
 REM One-file build: everything, packs included, inside a single EXE.
 if exist "dist\SceneBoard-Windows.zip" del /q "dist\SceneBoard-Windows.zip"
 if exist "dist\SceneBoard\" rmdir /s /q "dist\SceneBoard"
-pyinstaller --noconsole --onefile --clean --noconfirm --name "SceneBoard" --icon "%ICON%" --add-data "%FILTERED_PACK_DIR%;asset_packs" main.py
+pyinstaller --noconsole --onefile --clean --noconfirm --name "SceneBoard" --icon "%ICON%" --add-data "%FILTERED_PACK_DIR%;asset_packs" %APP_DATA% main.py
 if errorlevel 1 goto build_error
 
 echo.
