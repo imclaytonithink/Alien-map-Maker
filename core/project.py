@@ -163,6 +163,10 @@ class Piece:
     # ``clone_home`` is the crop that shows exactly what lies under the patch
     # (so a new source can be picked later); [] for ordinary nodes.
     clone_home: list = field(default_factory=list)
+    # MU/TH/UR terminal marker (core/muthur.py): hand-placed in a room that has a terminal.
+    is_terminal: bool = False
+    # The room a placed Geomorph tile belongs to (core.muthur.room_record), {} otherwise.
+    room: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -212,6 +216,9 @@ class Piece:
         piece.cutouts = clean_polygons(piece.cutouts)
         piece.clip_shapes = clean_polygons(piece.clip_shapes)
         piece.clone_home = clean_crop(piece.clone_home) or []
+        piece.is_terminal = bool(piece.is_terminal)
+        if not isinstance(piece.room, dict):
+            piece.room = {}
         return piece
 
     @property

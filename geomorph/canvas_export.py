@@ -53,6 +53,26 @@ def _text_piece(text, cx, cy, cell, layer, size=0.9, color="#e8fafa", bg="#0c161
             "text_auto_size": False, "text_halign": "center", "text_valign": "center", "level": level}
 
 
+def room_record(res, placed, cell: float, rotation: float) -> dict:
+    """The room a placed tile belongs to, kept on its canvas node for the MU/TH/UR terminal export."""
+    zone = (res.zones or {}).get(placed.zone)
+    states = [k for k in ("lockdown", "quarantine", "power_failure")
+              if placed.zone and placed.zone in (res.overlays or {}).get(k, [])]
+    t = placed.tile
+    if res.kind == "ship":
+        arch, base, name, access = "Ship", placed.zone, t.title, "staff"
+        tags = [placed.zone] + [g for g in t.tags if g != placed.zone]
+    else:
+        arch = res.meta.get("archetype", "")
+        base = zone.base if zone is not None else str(placed.zone).split("#")[0]
+        name = zone.name if zone is not None else t.title
+        tags = list(zone.tags) if zone is not None else list(t.tags)
+        access = zone.access if zone is not None else "staff"
+    return {"arch": arch, "zone": placed.zone, "base": base, "name": name, "tags": list(tags),
+            "access": access, "states": states, "fw": placed.w * cell, "fh": placed.h * cell,
+            "rot": float(rotation)}
+
+
 MARKER_GLYPH = {"threat": ("!", "#ff6b5e"), "secret": ("S", "#d9a6ff"), "breach": ("B", "#ffa040"),
                 "damage": ("X", "#ff7a5a"), "salvage": ("-", "#a0a0b0"), "entrance": ("E", "#f0aa3c"),
                 "shaft": ("U", "#7fe8ee")}
@@ -91,9 +111,13 @@ def to_canvas(res, cell: float, resolver=None, tile_images=None, filler_dir=None
                 px_w = px_w or (t.w + 2 * BORDER_SQUARES) * PX_PER_SQUARE
                 px_h = px_h or (t.h + 2 * BORDER_SQUARES) * PX_PER_SQUARE
             d = tile_piece(p, cell, LAYER_TILES, asset_path=path)
+            d["room"] = room_record(res, p, cell, d.get("rotation", 0))
             if t.bbox:
                 if emb:
                     d["embedded"], d["asset_path"] = emb, ""
+                # the plan box is off-centre in a wing image: remember where it sits
+                d["room"]["ox"] = (p.x + p.w / 2.0) * cell - (d["x"] + d["w"] * d["scale"] / 2.0)
+                d["room"]["oy"] = (p.y + p.h / 2.0) * cell - (d["y"] + d["h"] * d["scale"] / 2.0)
                 pieces.append(d)
                 n_tiles += 1
                 continue
