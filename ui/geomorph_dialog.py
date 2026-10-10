@@ -1008,14 +1008,8 @@ class GeomorphDialog(QDialog):
         self.txt_key = QPlainTextEdit()
         self.txt_report = QPlainTextEdit()
         for t, name in ((self.txt_main, "Description && hooks"), (self.txt_key, "Key")):
+            t.setReadOnly(True)
             self.info_tabs.addTab(t, name)
-        self.txt_main.setToolTip("Edit freely: the title on the first line, then the description, the NOTES (one "
-                                 "per line) and the ADVENTURE HOOKS ([kind] text, one per line). Saved with the map, "
-                                 "used by Export and kept when you make the map again with other options.")
-        self.txt_key.setToolTip("Edit a room's name or text: keep the 'number. name (level n) — text' shape of each "
-                                "line. The same text shows in Room notes.")
-        self.txt_main.textChanged.connect(self._main_edited)
-        self.txt_key.textChanged.connect(self._key_edited)
         w = QWidget()
         h = QHBoxLayout(w)
         self.lst_notes = QListWidget()
@@ -1443,90 +1437,13 @@ class GeomorphDialog(QDialog):
         row = self.lst_notes.currentRow()
         if self.result is not None and 0 <= row < len(self.result.key):
             self.result.key[row][field] = editor.toPlainText()
-            self.result.key[row]["edited"] = True
             if field == "text":
                 self._rebuild_key_text()
 
     def _rebuild_key_text(self):
         res = self.result
-        self.txt_key.blockSignals(True)
         self.txt_key.setPlainText("\n".join(f"{e['n']}. {e['title']} (level {e['level'] + 1}) — {e.get('text', '')}"
                                             for e in res.key))
-        self.txt_key.blockSignals(False)
-
-    def _main_edited(self):
-        """The description tab was edited: read the title, description, notes and hooks back from it."""
-        import re
-        res = self.result
-        if res is None:
-            return
-        lines = self.txt_main.toPlainText().split("\n")
-        heads = {ln.strip().upper(): i for i, ln in enumerate(lines)}
-        i_notes = heads.get("NOTES", len(lines))
-        i_hooks = heads.get("ADVENTURE HOOKS", len(lines))
-        title = lines[0].strip() if lines else ""
-        desc = "\n".join(lines[1:min(i_notes, i_hooks)]).strip()
-        notes = [ln.strip().lstrip("•").strip() for ln in lines[i_notes + 1:i_hooks] if ln.strip()] \
-            if i_notes < len(lines) else []
-        hooks = []
-        for ln in (lines[i_hooks + 1:] if i_hooks < len(lines) else []):
-            ln = ln.strip()
-            if not ln:
-                continue
-            m = re.match(r"^\[([^\]]+)\]\s*(.*)$", ln)
-            hooks.append({"type": m.group(1), "text": m.group(2)} if m else {"type": "note", "text": ln})
-        res.text.update(title=title, description=desc, notes=notes, hooks=hooks)
-        res.text_edited = True
-
-    def _key_edited(self):
-        """The key tab was edited: each 'n. name (level x) — text' line updates that room."""
-        import re
-        res = self.result
-        if res is None:
-            return
-        by_n = {str(e.get("n")): e for e in res.key}
-        for ln in self.txt_key.toPlainText().split("\n"):
-            m = re.match(r"^\s*(\d+)\.\s*(.*?)\s*\(level \d+\)\s*[—-]\s*(.*)$", ln)
-            e = by_n.get(m.group(1)) if m else None
-            if e is None:
-                continue
-            if e.get("title") != m.group(2) or e.get("text", "") != m.group(3):
-                e["title"], e["text"], e["edited"] = m.group(2), m.group(3), True
-        row = self.lst_notes.currentRow()            # keep Room notes showing the same words
-        if 0 <= row < len(res.key):
-            item = self.lst_notes.item(row)
-            if item is not None:
-                item.setText(f"{res.key[row]['n']}. {res.key[row]['title']}")
-            self.ed_note_gm.blockSignals(True)
-            if self.ed_note_gm.toPlainText() != res.key[row].get("text", ""):
-                self.ed_note_gm.setPlainText(res.key[row].get("text", ""))
-            self.ed_note_gm.blockSignals(False)
-
-    def _carry_edits(self, prev, res) -> int:
-        """Making the map again (other options, same kind of place) keeps what you wrote: the notes of rooms
-        that are still there (same room, same tile) and an edited description. Returns the rooms kept."""
-        if prev is None or prev is res:
-            return 0
-        kept = 0
-        old = {(e.get("zone"), e.get("tile")): e for e in prev.key if e.get("edited") and e.get("zone")}
-        for e in res.key:
-            was = old.get((e.get("zone"), e.get("tile")))
-            if was is not None:
-                for k in ("title", "text", "player"):
-                    if k in was:
-                        e[k] = was[k]
-                e["edited"] = True
-                kept += 1
-        po, ro = prev.options or {}, res.options or {}
-        same_place = (po.get("kind") == ro.get("kind") and po.get("archetype") == ro.get("archetype")
-                      and po.get("ship_type") == ro.get("ship_type"))
-        if getattr(prev, "text_edited", False) and same_place:
-            for k in ("title", "description", "notes", "hooks"):
-                if k in prev.text:
-                    res.text[k] = prev.text[k]
-            res.text_edited = True
-            kept += 1
-        return kept
 
     def _zone_changed(self, *_a):
         self.selected_zone = self.cb_zone.currentData()
@@ -1922,7 +1839,6 @@ class GeomorphDialog(QDialog):
         elif push:
             self.lbl_changes.setText("")
         self._last_seed = (res.options or {}).get("seed", "")
-        carried = self._carry_edits(prev, res) if push else 0
         self.result = res
         self.cb_level.blockSignals(True)
         self.cb_level.clear()
@@ -1947,8 +1863,7 @@ class GeomorphDialog(QDialog):
             self.lbl_gaps.hide()
         n = sum(len(g.placed) for g in res.grids)
         self.lbl_status.setText(f"{res.meta['name']}: {n} tiles on {len(res.grids)} level(s). "
-                                + (f"{len(res.issues)} issue(s) — see Checks." if res.issues else "All checks passed.")
-                                + (" Your edits were kept." if carried else ""))
+                                + (f"{len(res.issues)} issue(s) — see Checks." if res.issues else "All checks passed."))
 
     def _regenerate(self):
         self.ed_seed.setText(new_seed())
@@ -2004,10 +1919,9 @@ class GeomorphDialog(QDialog):
         lines += [f"  • {n}" for n in t.get("notes", [])]
         lines += ["", "ADVENTURE HOOKS"]
         lines += [f"  [{h['type']}] {h['text']}" for h in t.get("hooks", [])]
-        self.txt_main.blockSignals(True)
         self.txt_main.setPlainText("\n".join(lines))
-        self.txt_main.blockSignals(False)
-        self._rebuild_key_text()
+        self.txt_key.setPlainText("\n".join(f"{e['n']}. {e['title']} (level {e['level'] + 1}) — {e.get('text', '')}"
+                                            for e in res.key))
         self._fill_notes()
         from geomorph import reports
         rep = ["Issues:"] + ([f"  - {i}" for i in res.issues] or ["  none"])
