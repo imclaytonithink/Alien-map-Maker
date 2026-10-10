@@ -72,7 +72,7 @@ def room_record(res, placed, cell: float, rotation: float) -> dict:
         access = zone.access if zone is not None else "staff"
     return {"arch": arch, "zone": placed.zone, "base": base, "name": name, "tags": list(tags),
             "access": access, "states": states, "fw": placed.w * cell, "fh": placed.h * cell,
-            "rot": float(rotation)}
+            "rot": float(rotation), "tile": t.id, "mirror": bool(placed.o.mirror)}
 
 
 MARKER_GLYPH = {"threat": ("!", "#ff6b5e"), "secret": ("S", "#d9a6ff"), "breach": ("B", "#ffa040"),
@@ -186,25 +186,31 @@ def to_canvas(res, cell: float, resolver=None, tile_images=None, filler_dir=None
                 d["embedded"] = _embed(png)
                 d["asset_path"] = ""
                 pieces.insert(0 if f["kind"] in ("ground", "rock", "road", "water") else len(pieces), d)
-        if filler_dir is not None:                    # dim rooms, emergency lamps, shutters (GM layer), hazard borders
+        if filler_dir is not None:                    # dim rooms, lamps, caution tape: one editable lighting node a tile
             from . import atmosphere as A
+            from . import canvas_lights as CL
+            from . import render as _render
             for room in A.affected(res, g):
                 p = room["tile"]
-                for part, layer_name in (("public", LAYER_ATMO), ("gm", LAYER_GM)):
-                    if part == "gm" and not gm:
-                        continue
-                    from . import render as _render
-                    art = _render.oriented_thumb(tile_images, p) if tile_images is not None else None
-                    im = A.room_overlay(room, 30, part, art)
-                    if im is None or im.getbbox() is None:
-                        continue
-                    png = Path(filler_dir) / f"atmosphere_{g.index}_{p.x}_{p.y}_{part}.png"
-                    png.parent.mkdir(parents=True, exist_ok=True)
-                    im.save(png)
-                    pieces.append({"asset_path": "", "embedded": _embed(png), "name": f"{layer_name} {p.zone}",
-                                   "x": p.x * cell, "y": p.y * cell, "w": im.width, "h": im.height,
-                                   "scale": cell * p.w / im.width, "rotation": 0, "flip_h": False, "flip_v": False,
-                                   "layer_name": layer_name, "snap": False, "opacity": 1.0, "level": g.index})
+                art = _render.oriented_thumb(tile_images, p) if tile_images is not None else None
+                lamps = A.auto_lights(room, None, art) + [dict(L, auto=False) for L in room["lights"]]
+                lighting = {"host": "", "tile": p.tile.id, "rot": p.o.rot, "mirror": p.o.mirror,
+                            "states": list(room["states"]), "colors": list(room["colors"]),
+                            "lights": [{k: (round(v - (p.x if k == "x" else p.y), 3) if k in ("x", "y") else v)
+                                        for k, v in L.items() if k != "level"} for L in lamps]}
+                from .placement import Placed
+                local = Placed(tile=p.tile, x=0, y=0, o=p.o, zone=p.zone, level=p.level)
+                im = A.room_overlay(CL._room(lighting, local), CL.PPS, "public", art)
+                if im is None or im.getbbox() is None:
+                    continue
+                png = Path(filler_dir) / f"atmosphere_{g.index}_{p.x}_{p.y}.png"
+                png.parent.mkdir(parents=True, exist_ok=True)
+                im.save(png)
+                pieces.append({"asset_path": "", "embedded": _embed(png), "name": f"{LAYER_ATMO} {p.zone}",
+                               "x": p.x * cell, "y": p.y * cell, "w": im.width, "h": im.height,
+                               "scale": cell * p.w / im.width, "rotation": 0, "flip_h": False, "flip_v": False,
+                               "layer_name": LAYER_ATMO, "snap": False, "opacity": 1.0, "level": g.index,
+                               "lighting": lighting})
         n_decor, no_art = 0, set()
         for it in getattr(res, "decor", []) or []:
             sym = (getattr(res, "symbols", None) or {}).get(it["sym"])

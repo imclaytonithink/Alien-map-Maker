@@ -258,13 +258,15 @@ def level_states(res, g) -> list:
     return [k for k in ORDER if k in have]
 
 
-def legend_spot(res, g, bounds=None):
+def legend_spot(res, g, bounds=None, ratio=1.0):
     """Top-left (x, y) in squares for level ``g``'s legend, in an empty part of the map: a free corner inside the
-    map's bounds if there is one, else just right of the map."""
+    map's bounds if there is one, else just right of the map. ``ratio``: the legend's pixels per square over the
+    map's (a small render draws the legend a little larger so its text stays readable)."""
     sts = level_states(res, g)
     if not sts:
         return None
     w, h = legend_size_sq(sts)
+    w, h = math.ceil(w * ratio), math.ceil(h * ratio)
     boxes = [(p.x, p.y, p.x + p.w, p.y + p.h) for p in g.placed]
     boxes += [(f["x"], f["y"], f["x"] + f["w"], f["y"] + f["h"]) for f in g.filler if f["kind"] not in _OPEN_KINDS]
     if bounds is None:

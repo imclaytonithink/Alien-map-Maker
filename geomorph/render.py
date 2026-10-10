@@ -270,9 +270,10 @@ def render_level(res, level_index, images: TileImages, pps=16, gm=True, numbers=
         for st, sx, sy in _states.placements(res, g):
             icon = _states.symbol(st, max(8, int(pps * _states.SYMBOL_SQ)))
             _paste_clipped(layer, icon, int((sx - x0) * pps - icon.width / 2), int((sy - y0) * pps - icon.height / 2))
-        spot = _states.legend_spot(res, g, (x0, y0, x1, y1))
+        lpx = max(10, int(pps))
+        spot = _states.legend_spot(res, g, (x0, y0, x1, y1), ratio=lpx / pps)
         if spot is not None:
-            panel = _states.legend(_states.level_states(res, g), max(10, int(pps)))
+            panel = _states.legend(_states.level_states(res, g), lpx)
             lx, ly0 = int((spot[0] - x0) * pps), int((spot[1] - y0) * pps)
             if lx + panel.width <= layer.width and ly0 + panel.height <= layer.height:
                 layer.alpha_composite(panel, (max(0, lx), max(0, ly0)))

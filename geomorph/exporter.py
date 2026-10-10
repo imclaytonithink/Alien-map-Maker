@@ -102,7 +102,7 @@ def load_layout(path_or_dict, registry: Registry) -> Result:
 # ---------------------------------------------------------------------------
 # PNG
 # ---------------------------------------------------------------------------
-def export_png(res: Result, out_dir, images: render.TileImages, pps=16, gm=True, prefix=None):
+def export_png(res: Result, out_dir, images: render.TileImages, pps=16, gm=True, prefix=None, legend=True):
     """One PNG per level plus the building section. Returns the file paths."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -112,7 +112,7 @@ def export_png(res: Result, out_dir, images: render.TileImages, pps=16, gm=True,
         if not g.placed and not any(f["kind"] not in ("ground", "rock") for f in g.filler) and len(res.grids) > 1 \
                 and res.layout is not None and g.name == "Surface" and not g.filler:
             continue
-        im = render.render_level(res, g.index, images, pps=pps, gm=gm)
+        im = render.render_level(res, g.index, images, pps=pps, gm=gm, legend=legend)
         p = out_dir / f"{prefix}_level{g.index + 1}_{'gm' if gm else 'player'}.png"
         im.convert("RGB").save(p)
         paths.append(str(p))
@@ -175,7 +175,7 @@ class _Page:
         self.d.text((PAGE[0] - MARGIN - 40, PAGE[1] - MARGIN + 8), str(n), fill=(90, 90, 90), font=f)
 
 
-def build_pdf_pages(res: Result, images: render.TileImages, gm=True, pps=14):
+def build_pdf_pages(res: Result, images: render.TileImages, gm=True, pps=14, legend=True):
     pages = []
     p = _Page()
     p.heading(res.text.get("title") or res.meta.get("name", ""), 54)
@@ -202,7 +202,7 @@ def build_pdf_pages(res: Result, images: render.TileImages, gm=True, pps=14):
         if res.layout is not None and not g.placed and not any(f["kind"] in ("building", "pad", "pit") for f in g.filler) \
                 and g.name == "Surface" and len(res.grids) > 1:
             continue
-        im = render.render_level(res, g.index, images, pps=pps, gm=gm)
+        im = render.render_level(res, g.index, images, pps=pps, gm=gm, legend=legend)
         pg = _Page()
         scale = min((PAGE[0] - 2 * MARGIN) / im.width, (PAGE[1] - 2 * MARGIN - 80) / im.height)
         im2 = im.convert("RGB").resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
@@ -238,22 +238,23 @@ def build_pdf_pages(res: Result, images: render.TileImages, gm=True, pps=14):
     return pages
 
 
-def export_pdf(res: Result, path, images: render.TileImages, gm=True, pps=14):
-    pages = build_pdf_pages(res, images, gm, pps)
+def export_pdf(res: Result, path, images: render.TileImages, gm=True, pps=14, legend=True):
+    pages = build_pdf_pages(res, images, gm, pps, legend)
     ims = [p.im for p in pages]
     ims[0].save(path, "PDF", save_all=True, append_images=ims[1:], resolution=150.0)
     return str(path), len(ims)
 
 
-def export_all(res: Result, out_dir, images: render.TileImages, pps=16, gm_and_player=True):
-    """PNG per level + PDF package + JSON, for GM and player versions."""
+def export_all(res: Result, out_dir, images: render.TileImages, pps=16, gm_and_player=True, legend=True):
+    """PNG per level + PDF package + JSON, for GM and player versions (``legend``: the room-state symbols and
+    the legend that explains them)."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = _slug(res.meta.get("name", "map"))
     files = []
     for gm in ((True, False) if gm_and_player else (True,)):
-        files += export_png(res, out_dir, images, pps=pps, gm=gm, prefix=prefix)
-        path, _n = export_pdf(res, out_dir / f"{prefix}_{'gm' if gm else 'player'}.pdf", images, gm=gm, pps=max(10, pps - 2))
+        files += export_png(res, out_dir, images, pps=pps, gm=gm, prefix=prefix, legend=legend)
+        path, _n = export_pdf(res, out_dir / f"{prefix}_{'gm' if gm else 'player'}.pdf", images, gm=gm, pps=max(10, pps - 2), legend=legend)
         files.append(path)
         jp = out_dir / f"{prefix}_{'gm' if gm else 'player'}.json"
         save_layout(res, jp, gm=gm)

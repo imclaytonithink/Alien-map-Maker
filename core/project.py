@@ -167,6 +167,9 @@ class Piece:
     is_terminal: bool = False
     # The room a placed Geomorph tile belongs to (core.muthur.room_record), {} otherwise.
     room: dict = field(default_factory=dict)
+    # A Geomorph tile's room lighting (geomorph.canvas_lights): its state and lamps, so the Lights tool can
+    # move, add and remove lamps and re-draw the node. {} for ordinary nodes.
+    lighting: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)

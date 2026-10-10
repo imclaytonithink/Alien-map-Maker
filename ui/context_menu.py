@@ -102,6 +102,11 @@ def build_canvas_menu(main, hit_piece, world_pos=None) -> QMenu:
             if len(sel) == 1 and clones:
                 add(menu, "Pick a new clone source…", main._repick_clone_source)
             main._fill_swap_menu(menu.addMenu("Swap image"))
+            if any(piece.room or piece.lighting for piece in sel):
+                lights = menu.addMenu("Lights")
+                add(lights, "Place and move lamps…", main._start_lights_tool)
+                add(lights, "Auto-light the selected tiles", lambda: main._lights_now("auto"))
+                add(lights, "Remove their lamps", lambda: main._lights_now("clear"))
             menu.addSeparator()
         arrange = menu.addMenu("Arrange")
         add(arrange, "Bring to front", canvas.bring_to_front)

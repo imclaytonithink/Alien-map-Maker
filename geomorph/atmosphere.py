@@ -568,27 +568,59 @@ def _lamp_light(spec, p, rows, art, W, H, pps):
     return lit if s >= 0.999 else lit.point(lambda v: int(v * s))
 
 
-def lamp_specs(room, rows, art, pps) -> list:
-    """Every light shining in this room: the automatic emergency lamps (corridors and halls, when the power is
-    out or the room is locked down) and any lights the user placed. Positions are in squares inside the tile."""
+WORK_LIGHT = "#fff0c8"      # ordinary working lights (the power is on, nothing wrong): warm white
+WORK_FIXTURE = "#fff7e2"
+WORK_STRENGTH = 0.7
+
+
+def auto_lights(room, rows=None, art=None, working=False) -> list:
+    """The lamps a room gets on its own, as light records like the ones the user places ({"x", "y"} in level
+    squares, "kind", "wall", "radius", "strength", "color", "fixture", "auto": True), so they can be moved and
+    deleted like any other light. Only corridors and big open spaces get one, never small rooms.
+
+    Power out: red emergency lamps. Lockdown (power on): amber alarm beacons. ``working`` also lights a room in
+    no bad state with ordinary warm-white lamps (the canvas Lights tool)."""
     p, states = room["tile"], room["states"]
-    light_c, fixture_c = room.get("colors") or (DEFAULT_LIGHT, DEFAULT_FIXTURE)
+    rows = rows if rows is not None else _floor(p)
+    if rows is None:
+        return []
     dark = "power_failure" in states
     alarm = "lockdown" in states and not dark          # a lockdown keeps its power: the lamps are alarm beacons
+    light_c, fixture_c = room.get("colors") or (DEFAULT_LIGHT, DEFAULT_FIXTURE)
+    if dark:
+        look = (LIGHT_RADIUS, 1.0, light_c, fixture_c)
+    elif alarm:
+        look = (ALARM_RADIUS, 0.8, ALARM_LIGHT, ALARM_FIXTURE)
+    elif working:
+        look = (LIGHT_RADIUS, WORK_STRENGTH, WORK_LIGHT, WORK_FIXTURE)
+    else:
+        return []
+    out = []
+    for cx, cy, wall in _lamps(p, rows, art):
+        face = wall_anchor(art, cx, cy, wall, p)
+        if face is None:
+            x0, y0 = cx / 2.0, cy / 2.0
+            face = {"N": (x0 + 0.25, y0), "S": (x0 + 0.25, y0 + 0.5), "W": (x0, y0 + 0.25), "E": (x0 + 0.5, y0 + 0.25)}[wall]
+        out.append({"level": getattr(p, "level", 0), "kind": "wall", "wall": wall, "x": p.x + face[0], "y": p.y + face[1],
+                    "radius": look[0], "strength": look[1], "color": look[2], "fixture": look[3], "auto": True})
+    return out
+
+
+def lamp_specs(room, rows, art, pps) -> list:
+    """Every light shining in this room: the automatic emergency lamps (corridors and halls, when the power is
+    out or the room is locked down) and any lights the user placed. Positions are in squares inside the tile.
+    A room with ``"auto": False`` lists all its lamps itself (the canvas keeps them as editable lights)."""
+    p = room["tile"]
+    light_c, fixture_c = room.get("colors") or (DEFAULT_LIGHT, DEFAULT_FIXTURE)
+    lights = list(room.get("lights") or ())
+    if room.get("auto", True):
+        lights = auto_lights(room, rows, art) + lights
     specs = []
-    if dark or alarm:
-        for cx, cy, wall in _lamps(p, rows, art):
-            face = wall_anchor(art, cx, cy, wall, p)
-            if face is None:
-                x0, y0 = cx / 2.0, cy / 2.0
-                face = {"N": (x0 + 0.25, y0), "S": (x0 + 0.25, y0 + 0.5), "W": (x0, y0 + 0.25), "E": (x0 + 0.5, y0 + 0.25)}[wall]
-            specs.append({"fx": face[0], "fy": face[1], "wall": wall, "radius": LIGHT_RADIUS if dark else ALARM_RADIUS,
-                          "strength": 1.0 if dark else 0.8, "color": light_c if dark else ALARM_LIGHT,
-                          "fixture": fixture_c if dark else ALARM_FIXTURE, "user": False})
-    for L in room.get("lights") or ():
+    for L in lights:
         specs.append({"fx": L["x"] - p.x, "fy": L["y"] - p.y, "wall": (L.get("wall") or None) if L.get("kind", "wall") == "wall" else None,
                       "radius": float(L.get("radius", 4.0)), "strength": float(L.get("strength", 1.0)),
-                      "color": L.get("color") or light_c, "fixture": L.get("fixture") or fixture_c, "user": True})
+                      "color": L.get("color") or light_c, "fixture": L.get("fixture") or fixture_c,
+                      "user": not L.get("auto")})
     return specs
 
 
@@ -715,28 +747,19 @@ def shadow_fraction(room: dict, pps: int = 10) -> float | None:
     return unlit / inside if inside else None
 
 
-def snap_light(res, g, x, y, images=None, kind="wall", radius=4.0, strength=1.0, color=None, fixture=None):
-    """A user light for the click (x, y) (squares on level ``g``), or None when nothing sensible is there.
-
-    A wall light snaps to the nearest wall face within about two squares (read from the tile art when there is some);
-    a ceiling light goes exactly where it was clicked, as long as that is inside a building."""
-    from . import render
-    tile = next((p for p in g.placed if p.x <= x < p.x + p.w and p.y <= y < p.y + p.h and p.tile.type != "wing"), None)
-    if tile is None:
-        return None
+def snap_in_tile(tile, x, y, kind="wall", art=None):
+    """Where a light clicked at (x, y) (squares, the tile's own coordinates) goes on placed tile ``tile``:
+    (x, y, wall) or None. A wall light snaps to the nearest wall face within about two squares (read from the
+    tile art when there is some); a ceiling light goes exactly where it was clicked, as long as that is inside."""
     rows = _floor(tile)
-    light_c, fixture_c = colors(res)
-    base = {"level": g.index, "kind": kind, "radius": float(radius), "strength": float(strength),
-            "color": color or light_c, "fixture": fixture or fixture_c}
     if rows is None:
         return None
     rx, ry = x - tile.x, y - tile.y
-    cx, cy = min(int(rx * 2), len(rows[0]) - 1), min(int(ry * 2), len(rows) - 1)
+    cx, cy = min(max(int(rx * 2), 0), len(rows[0]) - 1), min(max(int(ry * 2), 0), len(rows) - 1)
     if kind != "wall":
-        if rows[cy][cx] == "o":
+        if rows[cy][cx] in "o#":
             return None
-        return dict(base, x=round(x, 3), y=round(y, 3), wall="")
-    art = render.oriented_thumb(images, tile) if images is not None else None
+        return (round(x, 3), round(y, 3), "")
     best = None
     for yy in range(max(0, cy - 4), min(len(rows), cy + 5)):
         for xx in range(max(0, cx - 4), min(len(rows[0]), cx + 5)):
@@ -758,7 +781,23 @@ def snap_light(res, g, x, y, images=None, kind="wall", radius=4.0, strength=1.0,
     if face is None:
         x0, y0 = xx / 2.0, yy / 2.0
         face = {"N": (x0 + 0.25, y0), "S": (x0 + 0.25, y0 + 0.5), "W": (x0, y0 + 0.25), "E": (x0 + 0.5, y0 + 0.25)}[d]
-    return dict(base, x=round(tile.x + face[0], 3), y=round(tile.y + face[1], 3), wall=d)
+    return (round(tile.x + face[0], 3), round(tile.y + face[1], 3), d)
+
+
+def snap_light(res, g, x, y, images=None, kind="wall", radius=4.0, strength=1.0, color=None, fixture=None):
+    """A user light for the click (x, y) (squares on level ``g``), or None when nothing sensible is there
+    (see :func:`snap_in_tile`)."""
+    from . import render
+    tile = next((p for p in g.placed if p.x <= x < p.x + p.w and p.y <= y < p.y + p.h and p.tile.type != "wing"), None)
+    if tile is None or _floor(tile) is None:
+        return None
+    light_c, fixture_c = colors(res)
+    art = render.oriented_thumb(images, tile) if images is not None and kind == "wall" else None
+    spot = snap_in_tile(tile, x, y, kind, art)
+    if spot is None:
+        return None
+    return {"level": g.index, "kind": kind, "radius": float(radius), "strength": float(strength),
+            "color": color or light_c, "fixture": fixture or fixture_c, "x": spot[0], "y": spot[1], "wall": spot[2]}
 
 
 def paint(res, g, layer: Image.Image, x0, y0, pps, gm=True, images=None):
