@@ -149,10 +149,15 @@ class GeneratorDialog(QDialog):
     def _build_selection_section(self):
         layout, self.selection_box = self._section(
             "1 · The assets to use",
-            "These are the assets ticked in the library — individual pictures "
-            "or whole folders (tick a folder's checkbox to take everything in "
-            "it). Tick more, or change the tick, and press “Refresh from the "
-            "library” to bring them in.")
+            "Open a folder to see its pictures and tick the ones to use, or tick "
+            "a whole folder to take everything in it. Ticks are shared with the "
+            "library. The list below the browser is exactly what will be used.")
+        self.picker = None
+        if self.panel is not None:
+            from ui.asset_picker import AssetPicker
+            self.picker = AssetPicker(self.panel, colors=self.colors)
+            self.picker.setMinimumHeight(460)
+            layout.addWidget(self.picker)
         self.selection_list = QListWidget()
         self.selection_list.setIconSize(QSize(44, 44))
         self.selection_list.setMinimumHeight(132)

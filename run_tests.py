@@ -35,6 +35,7 @@ GUI_TESTS = [
     "test_library_functions.py",
     "test_headless.py",
     "test_gui_muthur.py",
+    "test_gui_generate_window.py",
 ]
 
 

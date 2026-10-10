@@ -364,6 +364,28 @@ def check_embedded(report: Report, exe: str, filtered_dir: str,
                "offscreen" in name.lower() for name in reader.toc)
 
 
+# Data files the program reads at run time; a build without them cannot open the
+# Geomorph Generator or the MU/TH/UR terminal export.
+APP_DATA_FILES = ("geomorph/data/tile_manifest.json", "geomorph/data/common.json",
+                  "geomorph/data/scenarios.json", "geomorph/data/tags.json",
+                  "geomorph/data/archetypes/frontier_colony_outpost.json",
+                  "core/muthur_catalog.json")
+
+
+def check_app_data(report: Report, exe: str) -> None:
+    layout = app_layout(exe)
+    if layout["kind"] == "folder":
+        root = layout["root"]
+        for rel in APP_DATA_FILES:
+            report.check(os.path.isfile(os.path.join(root, *rel.split("/"))),
+                         f"Build carries {rel}")
+        return
+    from PyInstaller.archive.readers import CArchiveReader
+    names = {name.replace("\\", "/") for name in CArchiveReader(exe).toc}
+    for rel in APP_DATA_FILES:
+        report.check(rel in names, f"EXE carries {rel}")
+
+
 # ---------------------------------------------------------------------------
 # 3. executable -> persistent asset store
 # ---------------------------------------------------------------------------
@@ -721,6 +743,7 @@ def main() -> int:
         check_filtering(report, args.source_dir, args.filtered_dir, entries_by_pack)
 
     offscreen_bundled = check_embedded(report, args.exe, args.filtered_dir, entries_by_pack)
+    check_app_data(report, args.exe)
     if args.zip_path:
         check_zip(report, args.zip_path, args.exe, app_layout(args.exe),
                   entries_by_pack, args.filtered_dir)

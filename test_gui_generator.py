@@ -201,14 +201,16 @@ print("area fill ok")
 panel.group_tree.setCurrentItem(panel._tree_items["folder:Pack/50x50 Core"])
 assert panel.list.count() == 2
 opened = []
-real_exec = GeneratorDialog.exec
-GeneratorDialog.exec = lambda self: (opened.append(self), 1)[1]
+from ui.generate_window import OWN, GenerateWindow
+real_exec = GenerateWindow.exec
+GenerateWindow.exec = lambda self: (opened.append(self), 1)[1]
 try:
     win._generate_from_paths([a.path for a in stations])
 finally:
-    GeneratorDialog.exec = real_exec
+    GenerateWindow.exec = real_exec
 assert len(opened) == 1
-assert [a.path for a in opened[0].assets] == [a.path for a in stations]
+assert opened[0].tabs.currentIndex() == OWN, "right-click opens the 'Your own tiles' tab"
+assert [a.path for a in opened[0].own.assets] == [a.path for a in stations]
 print("right-click generate ok")
 
 dlg.close()
