@@ -1224,6 +1224,11 @@ def check_atmosphere():
                     "a lamp sits on corridor or hall floor against a wall"
                 if any(ch in "cr" for r_ in rows for ch in r_):
                     assert rows[cy][cx] != ".", "never inside an enclosed room"
+                # fixed to a wall: the wall cell behind it is solid right along its plate, and the plate is drawn
+                ax, ay = (1, 0) if wall in "NS" else (0, 1)
+                solid = sum(1 for k in (-1, 0, 1) if 0 <= cy + dy + ay * k < len(rows) and 0 <= cx + dx + ax * k < len(rows[0])
+                            and rows[cy + dy + ay * k][cx + dx + ax * k] == "#")
+                assert solid >= 2, "a lamp is mounted on a wall, not on a lone block"
                 lamps_seen += 1
             if any(ch in "cr" for r_ in rows for ch in r_) and "power_failure" in rm["states"]:
                 lm, _sp = atmosphere._light_map(tp, rows, int(tp.w * 10), int(tp.h * 10), 10, atmosphere.LIGHT_RADIUS)

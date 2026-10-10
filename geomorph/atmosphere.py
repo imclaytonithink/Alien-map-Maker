@@ -12,6 +12,7 @@ from __future__ import annotations
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 MAX_LAMPS = 14
+WALL_RUN = 2                # a lamp needs a straight wall this many cells (half squares) either side of it
 TARGET_LIT = 0.6            # add lamps until about this share of the open floor is lit
 LIT_CELLS = 5               # cells (half squares) a lamp lights well
 LIGHT_RADIUS = 3.8          # squares a lamp reaches (walls and furniture block it)
@@ -109,6 +110,23 @@ def _room_mask(rows, W, H) -> Image.Image:
     return m.resize((W, H), Image.NEAREST)
 
 
+def _wall_face(rows, x, y, d, walk, run=None) -> bool:
+    """True when the floor cell (x, y) sits against a long, straight wall on side ``d`` (not a console or a machine):
+    the wall cell is solid and so are its neighbours two cells either way, while the floor in front of it is open."""
+    H, W = len(rows), len(rows[0])
+    dx, dy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[d]
+    ax, ay = (1, 0) if d in "NS" else (0, 1)                      # along the wall
+    run = WALL_RUN if run is None else run
+    for k in range(-run, run + 1):
+        fx, fy = x + ax * k, y + ay * k
+        wx, wy = fx + dx, fy + dy
+        if not (0 <= fx < W and 0 <= fy < H and 0 <= wx < W and 0 <= wy < H):
+            return False
+        if rows[wy][wx] != "#" or rows[fy][fx] not in walk:
+            return False
+    return True
+
+
 def _lamps(p, rows):
     """Emergency lamp spots as (cell_x, cell_y, wall_dir): floor cells next to a wall, near each doorway
     (or near the corners when the room has none). The lamp sits flush against that wall."""
@@ -117,14 +135,16 @@ def _lamps(p, rows):
     walk = walk_chars(rows) if rows is not None else "c.r"
     if rows is not None:
         H, W = len(rows), len(rows[0])
-        for y in range(H):
-            for x in range(W):
-                if rows[y][x] in walk:
-                    for d, (dx, dy) in {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}.items():
-                        nx, ny = x + dx, y + dy
-                        if 0 <= nx < W and 0 <= ny < H and rows[ny][nx] == "#":
-                            cand.append((x, y, d))
-                            break
+        for run in (WALL_RUN, 1, 0):                      # prefer long straight walls; shorter ones only if the tile has none
+            for y in range(H):
+                for x in range(W):
+                    if rows[y][x] in walk:
+                        for d in "NSWE":
+                            if _wall_face(rows, x, y, d, walk, run):
+                                cand.append((x, y, d))
+                                break
+            if cand:
+                break
     doors = door_points(p)
     SUBW, SUBH = p.w * SUB, p.h * SUB
     corners = [(3, 3), (SUBW - 4, 3), (3, SUBH - 4), (SUBW - 4, SUBH - 4)]
@@ -253,7 +273,18 @@ def room_overlay(room: dict, pps: int, part: str = "all") -> Image.Image | None:
         body.putalpha(ImageChops.multiply(body.getchannel("A"), mask))
         img.alpha_composite(body)
         d = ImageDraw.Draw(img)
-        for gx, gy, wall, rr in spots:                                 # round lamps: half-discs flat against the wall
+        plate = max(3, int(pps * 0.5))                                 # wall cell depth: the plate runs right into the wall
+        for gx, gy, wall, rr in spots:                                 # round lamps: half-discs on a plate fixed to the wall
+            pw = max(2, int(rr * 0.8))
+            if wall == "N":
+                back = (gx - pw, gy - plate, gx + pw, gy)
+            elif wall == "S":
+                back = (gx - pw, gy, gx + pw, gy + plate)
+            elif wall == "W":
+                back = (gx - plate, gy - pw, gx, gy + pw)
+            else:
+                back = (gx, gy - pw, gx + plate, gy + pw)
+            d.rectangle(back, fill=(120, 24, 20, 255))
             box = (gx - rr, gy - rr, gx + rr, gy + rr)
             start, end = {"N": (0, 180), "S": (180, 360), "W": (-90, 90), "E": (90, 270)}[wall]
             d.pieslice(box, start, end, fill=(255, 150, 130, 255), outline=(120, 20, 16, 255))
