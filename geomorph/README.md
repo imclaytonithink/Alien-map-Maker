@@ -95,3 +95,18 @@ back to a single tile with a railed, dimmed overlook above it. Three-storey room
   tile art), a *ceiling light* goes where you click. Set the reach, brightness and colours first; right-click a light to
   remove it, or turn "Place lights" off and drag a light to move it (it re-snaps to the wall; Undo puts it back). They work in any tile (even one that is not dark), light only what they can see, are part of the saved layout,
   undo and the canvas, and are removed if a re-roll replaces the tile they were on.
+
+## Tile art from every pack, and tiles that are never generated
+
+* The preview, the lights and canvas placement read tile art from **every** installed pack folder (the Geomorphs and
+  the Custom Tiles packs share folder names such as `100x100 Core` but hold different tiles, so one folder alone misses
+  about half of them). The fullest pack is used as the tile folder; the others are searched too.
+* `data/tile_misfits.json` lists tiles whose image does not match their recorded size (art much bigger than the plan
+  box). Placed in their slot they would hang over the neighbours and leave gaps, so the generator leaves them out;
+  layouts saved before still open (`Registry.lookup`). Rebuild with `registry.find_misfits(reg, pack_dirs)`.
+* Upper floors of tall rooms ("... - Upper", "Upper Deck", "(Level 2 ...") are mostly open space above the room
+  below, so they are only placed on top of their own lower floor, never as an ordinary room.
+* Wings and nose transitions have floor maps too (`floors.build_missing`), so they get emergency lamps, light pools,
+  incident marks and key numbers on their floor. Breaches sit on the hull, not in the empty corner of a nose or wing.
+* Campus sites use the grid that leaves the fewest gaps (9 buildings = 3 x 3) with a part-filled row centred, so no
+  building stands alone at the end of a long walkway.

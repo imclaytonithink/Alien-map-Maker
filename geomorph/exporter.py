@@ -73,7 +73,7 @@ def load_layout(path_or_dict, registry: Registry) -> Result:
     for lv in pkg["levels"]:
         g = LevelGrid(lv["index"], lv["name"], lv["cols"], lv["rows"])
         for t in lv["tiles"]:
-            tile = registry.tiles[t["tile"]]
+            tile = registry.lookup(t["tile"]) if hasattr(registry, "lookup") else registry.tiles[t["tile"]]
             o = orientation_for(tile, t["rot"], t["mirror"])
             p = g.place(tile, t["x"], t["y"], o, zone=t.get("zone", ""))
             p.key = t.get("key", 0)

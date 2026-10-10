@@ -23,7 +23,11 @@ def fake_exec(self):
 
 ls.LaunchScreen.exec = fake_exec
 
-from ui.geomorph_dialog import ArchetypeEditor, GeomorphDialog, find_tiles_dir
+from ui.geomorph_dialog import ArchetypeEditor, GeomorphDialog, find_tiles_dir, user_data_dir
+
+import shutil
+# this test caches synthetic tile thumbnails later on; a rerun must not find them at the start
+shutil.rmtree(user_data_dir() / "thumbs", ignore_errors=True)
 from ui.geomorph_edge_editor import EdgeEditor, _Strip
 from ui.main_window import MainWindow
 

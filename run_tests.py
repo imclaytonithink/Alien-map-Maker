@@ -14,7 +14,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent
 PURE_TESTS = [f"test_batch{number}.py" for number in range(1, 18)] + ["test_geomorph.py", "test_geomorph_golden.py",
-                                                                      "test_muthur.py"]
+                                                                      "test_muthur.py", "test_geomorph_fixes.py"]
 GUI_TESTS = [
     "test_generator.py",
     "test_gui2.py",

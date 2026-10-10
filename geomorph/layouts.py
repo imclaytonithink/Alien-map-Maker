@@ -162,18 +162,38 @@ def stacked(rng, p, env, need, ctx):
 # ---------------------------------------------------------------------------
 # Campus: buildings on a surface map joined by walkways
 # ---------------------------------------------------------------------------
+def _campus_grid(n):
+    """Columns and rows for ``n`` buildings: as few empty places as possible, a little wider than tall
+    (9 -> 3 x 3, 10 -> 4 x 3 with the last two centred), never a lone building on a row of its own, and no
+    long single strips (5 -> 3 + 2, not 5 in a row)."""
+    best = None
+    for ncol in range(2, n + 1):
+        nrow = math.ceil(n / ncol)
+        empty = ncol * nrow - n
+        lonely = 1 if (nrow > 1 and n - ncol * (nrow - 1) == 1) else 0
+        shape = abs(ncol - 1.3 * nrow)
+        key = (lonely, empty + 1.2 * shape)
+        if best is None or key < best[0]:
+            best = (key, ncol, nrow)
+        if ncol > 2 * math.sqrt(n) + 1:
+            break
+    return best[1], best[2]
+
+
 def campus(rng, p, env, need, ctx):
     lo, hi = p["buildings"]
     count = max(lo, need)
     count = min(max(count, lo), max(hi, need))
     nlev = max(1, p.get("levels", 1))
     n = count
-    ncol = max(2, math.ceil(math.sqrt(n * 1.3)))
-    nrow = math.ceil(n / ncol)
+    ncol, nrow = _campus_grid(n)
     lay = Layout(levels=1, level_names=["Surface"], slots=[], topology="campus")
     pitch = T + GAP
     base = max(PAD, ctx.get("ground_margin", PAD))      # room for the ground around (farmland needs more)
-    order = [(i, j) for j in range(nrow) for i in range(ncol)][:n]
+    order = [(i, j) for j in range(nrow - 1) for i in range(ncol)]
+    last = n - len(order)                               # a part-filled last row sits in the middle, not in a corner
+    start = (ncol - last) // 2
+    order += [(start + i, nrow - 1) for i in range(last)]
     pos = {}
     for k, (i, j) in enumerate(order):
         s = _slot(lay, 0, base + i * pitch, base + j * pitch)

@@ -16,6 +16,8 @@ WALL_RUN = 2                # a lamp needs a straight wall this many cells (half
 TARGET_LIT = 0.8            # add lamps until about this share of the open floor is lit
 LIT_CELLS = 7               # cells (half squares) a lamp lights well
 LIGHT_RADIUS = 3.8          # squares a lamp reaches (walls and furniture block it)
+FIXTURE_MIN_PX = 5            # smallest fixture radius drawn, in pixels
+POOL_FALLOFF = 1.6           # how quickly a lamp's light fades with distance (1 = almost flat, 2 = a soft pool)
 LIT_AT = 48                 # light level (of 255) from which a spot counts as lit rather than in shadow
 DOOR = 1                    # edge class value for a door square (geomorph.edges.DOOR)
 _GLOW = {}
@@ -33,8 +35,8 @@ def affected(res, g) -> list:
     col = colors(res)
     out = []
     for p in g.placed:
-        if p.tile.type == "wing":
-            continue
+        if p.tile.type == "wing" and _floor(p) is None:
+            continue                     # wings are lit from their floor map (their art has no standard border)
         mine = [L for L in lights if p.x <= L["x"] < p.x + p.w and p.y <= L["y"] < p.y + p.h]
         if p.zone in states or mine:
             out.append({"tile": p, "states": states.get(p.zone, []), "colors": col, "lights": mine})
@@ -78,7 +80,8 @@ def _light_sprite(diameter: int) -> Image.Image:
     """Radial light, 255 at the lamp falling smoothly to 0 at the radius (kept bright for most of the way)."""
     if diameter not in _LIGHT:
         g = Image.radial_gradient("L").resize((diameter, diameter), Image.BILINEAR)
-        _LIGHT[diameter] = g.point(lambda v: int(255 * max(0.0, 1 - v / 255.0) ** 1.1))
+        # bright by the fixture, then a long smooth fade: a pool, not a flat patch of light
+        _LIGHT[diameter] = g.point(lambda v: int(255 * max(0.0, 1 - v / 255.0) ** POOL_FALLOFF))
     return _LIGHT[diameter]
 
 
@@ -268,7 +271,7 @@ RAY_STEP_DEG = 0.5
 SOFTEN_PX = 7.0             # extra blur (art pixels) so no pool has a hard edge
 DEFAULT_LIGHT = "#ff241c"
 DEFAULT_FIXTURE = "#e8261c"
-WASH_PEAK = 95             # how strongly a lamp tints the floor next to it (0-255)
+WASH_PEAK = 135            # how strongly a lamp tints the floor next to it (0-255)
 _CACHE = {}
 
 
@@ -502,7 +505,11 @@ def _lamp_light(spec, p, rows, art, W, H, pps):
         lit = ImageChops.multiply(lit, fall)
         if rows is not None:                     # automatic lamps serve corridors and halls only; user lights go anywhere inside
             chars = "c.r" if spec["user"] else walk_chars(rows)
-            lit = ImageChops.multiply(lit, _cells_to_art(rows, chars, p.w, p.h, grow_sq=0.8 if not spec["user"] else 0.3))
+            keep = _cells_to_art(rows, chars, p.w, p.h, grow_sq=0.8 if not spec["user"] else 0.3)
+            # feathered inside the lit floor, so a pool fades out at the end of a corridor instead of stopping in a
+            # straight line; never brighter than the floor mask itself, so no light crosses a wall
+            soft = ImageChops.darker(keep.filter(ImageFilter.GaussianBlur(ART_PPS * 0.45)), keep)
+            lit = ImageChops.multiply(lit, soft)
         box = (ART_BORDER * ART_PPS, ART_BORDER * ART_PPS, (ART_BORDER + p.w) * ART_PPS, (ART_BORDER + p.h) * ART_PPS)
         lit = lit.crop(box).resize((W, H), Image.BILINEAR)
     elif rows is not None:                       # no art: line of sight over the floor-map cells instead
@@ -577,7 +584,7 @@ def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Ima
             light = Image.new("L", (W, H), 0)
             for m in masks:
                 light = ImageChops.lighter(light, m)
-            shade = ImageChops.subtract(Image.new("L", (W, H), 168), light.point(lambda v: int(v * 168 * 0.9 / 255)))
+            shade = ImageChops.subtract(Image.new("L", (W, H), 168), light.point(lambda v: int(v * 168 / 255)))
             layer = Image.new("RGBA", (W, H), (4, 6, 14, 0))
             layer.putalpha(shade)
             body.alpha_composite(layer)
@@ -602,7 +609,9 @@ def room_overlay(room: dict, pps: int, part: str = "all", art=None) -> Image.Ima
         body.putalpha(ImageChops.multiply(body.getchannel("A"), mask))
         img.alpha_composite(body)
         d = ImageDraw.Draw(img)
-        rr = max(3, int(pps * 0.3))
+        # never smaller than a few pixels: zoomed out (the generator preview is 8 px a square) a smaller half-disc
+        # shrinks into a little bar and reads as a rectangle
+        rr = max(3, int(pps * 0.3)) if pps >= 10 else max(FIXTURE_MIN_PX, int(round(pps * 0.3)))
         for sp in specs:                                               # the fixtures: half-discs on the wall, discs overhead
             gx, gy = sp["fx"] * pps, sp["fy"] * pps
             fill, edge = _rgb(sp["fixture"], DEFAULT_FIXTURE) + (255,), _darker(_rgb(sp["fixture"], DEFAULT_FIXTURE)) + (255,)

@@ -1,26 +1,26 @@
 {
  "ship liner random": {
   "decor": 0,
-  "filler": 146,
-  "hash": "a0323b5fdd41d1dc",
+  "filler": 40,
+  "hash": "266cdc16f8f57b95",
   "issues": 0,
   "key": 28,
   "levels": 1,
   "tiles": 28
  },
  "ship merchant 1000": {
-  "decor": 2,
-  "filler": 19,
-  "hash": "16de56a16a6492d7",
+  "decor": 35,
+  "filler": 5,
+  "hash": "e40ea88c8e4f4600",
   "issues": 0,
   "key": 9,
   "levels": 1,
   "tiles": 9
  },
  "ship military parts": {
-  "decor": 66,
-  "filler": 31,
-  "hash": "e56b7d2557852825",
+  "decor": 38,
+  "filler": 29,
+  "hash": "1d08dfb11e123339",
   "issues": 0,
   "key": 21,
   "levels": 1,
@@ -29,16 +29,16 @@
  "ship movie": {
   "decor": 0,
   "filler": 0,
-  "hash": "7009e61c2df36049",
+  "hash": "8094ad85d79a3f51",
   "issues": 0,
-  "key": 10,
+  "key": 6,
   "levels": 1,
-  "tiles": 10
+  "tiles": 6
  },
  "ship research selective": {
   "decor": 0,
-  "filler": 15,
-  "hash": "b6e9df7cdef6ff06",
+  "filler": 8,
+  "hash": "e22f2591c7338edf",
   "issues": 0,
   "key": 13,
   "levels": 1,
@@ -54,45 +54,45 @@
   "tiles": 7
  },
  "site colony": {
-  "decor": 118,
-  "filler": 34,
-  "hash": "6c85f2e217273934",
+  "decor": 91,
+  "filler": 24,
+  "hash": "1b4e00a381d615a4",
   "issues": 0,
   "key": 9,
   "levels": 1,
   "tiles": 8
  },
  "site farm": {
-  "decor": 92,
-  "filler": 25,
-  "hash": "e71c93ee4107720c",
+  "decor": 65,
+  "filler": 16,
+  "hash": "c554463e97e1cead",
   "issues": 0,
   "key": 6,
   "levels": 1,
   "tiles": 6
  },
  "site lab": {
-  "decor": 55,
-  "filler": 82,
-  "hash": "2d669f0abbb1c8db",
+  "decor": 40,
+  "filler": 5,
+  "hash": "236755d139bf033d",
   "issues": 0,
   "key": 14,
   "levels": 2,
   "tiles": 12
  },
  "site mine": {
-  "decor": 95,
-  "filler": 18,
-  "hash": "f4a6e164de51b3d6",
+  "decor": 62,
+  "filler": 14,
+  "hash": "4b718fe8f26336e2",
   "issues": 0,
   "key": 10,
   "levels": 4,
   "tiles": 9
  },
  "site prison": {
-  "decor": 150,
-  "filler": 254,
-  "hash": "5a5fa834e2fa1f01",
+  "decor": 99,
+  "filler": 201,
+  "hash": "1cf59ab583e083d1",
   "issues": 0,
   "key": 38,
   "levels": 4,
@@ -100,8 +100,8 @@
  },
  "site station": {
   "decor": 0,
-  "filler": 25,
-  "hash": "76d1ad2acb3194e2",
+  "filler": 11,
+  "hash": "f1ab0f264cfb9f75",
   "issues": 0,
   "key": 10,
   "levels": 1,
