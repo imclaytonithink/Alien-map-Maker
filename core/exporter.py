@@ -340,8 +340,9 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
                  include_centerlines: bool = False,
                  include_guides: bool = False,
                  include_coordinates: bool = False,
-                 opaque: bool = False) -> QImage:
-    """Render one level. Editor aids (canvas centerlines, placed guides and a
+                 opaque: bool = False, region: tuple | None = None) -> QImage:
+    """Render one level. ``region`` (x0, y0, x1, y1 in output pixels) renders only that part, so a very
+    large map can be written in sections without ever building the whole image. Editor aids (canvas centerlines, placed guides and a
     grid-coordinate border) are only drawn when explicitly requested.
 
     ``transparent`` leaves the level's backdrop out. A level whose backdrop is
@@ -349,10 +350,11 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
     image (Tabletop Simulator boards), which then uses the level's color."""
     w = max(1, int(project.canvas_w * scale))
     h = max(1, int(project.canvas_h * scale))
+    rx0, ry0, rx1, ry1 = (0, 0, w, h) if region is None else (int(v) for v in region)
     see_through = (transparent or backdrop_is_transparent(level)) and not opaque
     image_format = (QImage.Format.Format_ARGB32 if see_through
                     else QImage.Format.Format_RGB32)
-    img = QImage(w, h, image_format)
+    img = QImage(max(1, rx1 - rx0), max(1, ry1 - ry0), image_format)
     cache: dict = PixmapCache()
     if see_through:
         img.fill(QColor(0, 0, 0, 0))
@@ -362,9 +364,12 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
     painter = QPainter(img)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    painter.translate(-rx0, -ry0)                       # a section is the same drawing, shifted
     if not see_through and not transparent:
         draw_backdrop(painter, project, level, QRectF(0, 0, w, h), scale, cache)
     for p in level.paint_order():
+        if region is not None and not _piece_in_region(p, scale, rx0, ry0, rx1, ry1):
+            continue
         lyr = level.layer_by_id(p.layer)
         if lyr is not None and not getattr(lyr, "export", True):
             continue        # "Don't export" layers stay on the canvas only
@@ -403,13 +408,88 @@ def render_level(project: Project, level: Level, include_grid: bool = True,
         _draw_guides(painter, project, level, scale)
     try:
         from core import legend
-        legend.draw_export(painter, img.width(), img.height())
+        legend.draw_export(painter, w, h)
     except Exception:                         # a missing/broken legend must never break an export
         pass
     painter.end()
-    if include_coordinates:
+    if include_coordinates and region is None:
         img = _with_coordinate_border(img, project, level, scale, see_through)
     return img
+
+
+def _piece_in_region(p, scale, x0, y0, x1, y1) -> bool:
+    """Cheap test whether a node can touch a pixel region (generous for rotated nodes)."""
+    cx = (p.x + p.w * p.scale / 2.0) * scale
+    cy = (p.y + p.h * p.scale / 2.0) * scale
+    r = 0.5 * math.hypot(p.w, p.h) * p.scale * scale + 2
+    return not (cx + r < x0 or cx - r > x1 or cy + r < y0 or cy - r > y1)
+
+
+def section_plan(project: Project, scale: float, max_side: int = 4096) -> dict:
+    """Split the exported image into sections no bigger than ``max_side`` pixels, cut on grid-square lines.
+
+    Returns {"cols", "rows", "boxes": [{"row", "col", "name", "box": (x0, y0, x1, y1)}], "size": (W, H)};
+    one section means the map already fits."""
+    W = max(1, int(project.canvas_w * scale))
+    H = max(1, int(project.canvas_h * scale))
+    cell = max(1.0, project.cell_size * scale)
+
+    def cuts(total_px):
+        if total_px <= max_side:
+            return [0, total_px]
+        squares = total_px / cell
+        per = int(max_side // cell)
+        if per < 1:                                  # a single square is bigger than the limit: plain cuts
+            n = math.ceil(total_px / max_side)
+            return [round(i * total_px / n) for i in range(n)] + [total_px]
+        n = math.ceil(squares / per)
+        inner = []
+        for i in range(1, n):                         # whole squares, evenly spread
+            sq = max(1, round(i * squares / n))
+            if not inner or sq > inner[-1]:
+                inner.append(sq)
+        return [0] + [min(total_px, round(sq * cell)) for sq in inner] + [total_px]
+    xs, ys = cuts(W), cuts(H)
+    boxes = []
+    for r in range(len(ys) - 1):
+        for c in range(len(xs) - 1):
+            boxes.append({"row": r + 1, "col": c + 1, "name": f"{_row_letters(r)}{c + 1}",
+                          "box": (xs[c], ys[r], xs[c + 1], ys[r + 1])})
+    return {"cols": len(xs) - 1, "rows": len(ys) - 1, "boxes": boxes, "size": (W, H)}
+
+
+def _row_letters(i: int) -> str:
+    out = ""
+    i += 1
+    while i:
+        i, rem = divmod(i - 1, 26)
+        out = chr(65 + rem) + out
+    return out
+
+
+def export_level_sections(project, level, out_dir, base, scale=1.0, max_side=4096, **render_kwargs) -> list:
+    """Write one level as grid-aligned PNG sections (A1, A2, B1...) plus a sections.txt that says how they fit.
+    Returns the file paths; a map that already fits is written as a single ``<base>.png``."""
+    plan = section_plan(project, scale, max_side)
+    os.makedirs(out_dir, exist_ok=True)
+    if len(plan["boxes"]) == 1:
+        path = os.path.join(out_dir, f"{base}.png")
+        render_level(project, level, scale=scale, **render_kwargs).save(path, "PNG")
+        return [path]
+    files = []
+    cell = max(1.0, project.cell_size * scale)
+    lines = [f"{base}: {plan['size'][0]} x {plan['size'][1]} px in {plan['rows']} row(s) x {plan['cols']} column(s).",
+             "Rows are letters (A = top), columns are numbers (1 = left). Place the boards edge to edge.",
+             f"One grid square is {cell:.0f} px. Cuts are on grid lines, so no square is split.", ""]
+    for sec in plan["boxes"]:
+        x0, y0, x1, y1 = sec["box"]
+        path = os.path.join(out_dir, f"{base}_{sec['name']}.png")
+        render_level(project, level, scale=scale, region=sec["box"], **render_kwargs).save(path, "PNG")
+        files.append(path)
+        lines.append(f"{os.path.basename(path)}: {x1 - x0} x {y1 - y0} px = {(x1 - x0) / cell:.1f} x {(y1 - y0) / cell:.1f} squares")
+    with open(os.path.join(out_dir, f"{base}_sections.txt"), "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return files
 
 
 def _draw_centerlines(painter, project, scale):
@@ -595,6 +675,7 @@ PRESETS = {
     "Tabletop Sim (1024px)": None,
     "Tabletop Sim (2048px)": None,
     "Tabletop Sim (3072px high-res)": None,
+    "Tabletop Sim (sharp 100px/sq, in sections)": None,
 }
 
 
@@ -605,6 +686,8 @@ def preset_scale(project: Project, name: str) -> float:
         return 140.0 / max(1, project.cell_size)
     if name.startswith("Roll20"):
         return 70.0 / max(1, project.cell_size)
+    if name.startswith("Tabletop Sim (sharp"):
+        return 100.0 / max(1, project.cell_size)
     if name.startswith("Tabletop"):
         match = re.search(r"(1024|2048|3072)", name)
         target = int(match.group(1)) if match else 1024

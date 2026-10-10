@@ -18,6 +18,7 @@ from .registry import BORDER_SQUARES, PX_PER_SQUARE
 LAYER_TILES, LAYER_FILLER, LAYER_KEY, LAYER_GM = "Geomorph tiles", "Geomorph filler", "Geomorph key", "Geomorph GM only"
 LAYER_CRAFT = "Geomorph craft"
 LAYER_DECOR = "Geomorph decor"
+LAYER_ATMO = "Geomorph atmosphere"
 
 
 def library_resolver(assets):
@@ -127,6 +128,25 @@ def to_canvas(res, cell: float, resolver=None, tile_images=None, filler_dir=None
                 d["embedded"] = _embed(png)
                 d["asset_path"] = ""
                 pieces.insert(0 if f["kind"] in ("ground", "rock", "road", "water") else len(pieces), d)
+        if filler_dir is not None:                    # dim rooms, emergency lamps, shutters (GM layer), hazard borders
+            from . import atmosphere as A
+            for room in A.affected(res, g):
+                p = room["tile"]
+                for part, layer_name in (("public", LAYER_ATMO), ("gm", LAYER_GM)):
+                    if part == "gm" and not gm:
+                        continue
+                    from . import render as _render
+                    art = _render.oriented_thumb(tile_images, p) if tile_images is not None else None
+                    im = A.room_overlay(room, 30, part, art)
+                    if im is None or im.getbbox() is None:
+                        continue
+                    png = Path(filler_dir) / f"atmosphere_{g.index}_{p.x}_{p.y}_{part}.png"
+                    png.parent.mkdir(parents=True, exist_ok=True)
+                    im.save(png)
+                    pieces.append({"asset_path": "", "embedded": _embed(png), "name": f"{layer_name} {p.zone}",
+                                   "x": p.x * cell, "y": p.y * cell, "w": im.width, "h": im.height,
+                                   "scale": cell * p.w / im.width, "rotation": 0, "flip_h": False, "flip_v": False,
+                                   "layer_name": layer_name, "snap": False, "opacity": 1.0, "level": g.index})
         n_decor, no_art = 0, set()
         for it in getattr(res, "decor", []) or []:
             sym = (getattr(res, "symbols", None) or {}).get(it["sym"])

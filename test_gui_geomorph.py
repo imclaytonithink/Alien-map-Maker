@@ -137,7 +137,7 @@ dlg.cb_incident.setCurrentIndex(dlg.cb_incident.findData("overrun"))
 dlg.cb_where.setCurrentIndex(dlg.cb_where.findData("all"))
 dlg.sl_decor.setValue(90)
 opts = dlg.options()
-assert opts["decor"] == {"enabled": True, "density": 0.9, "incident": "overrun", "where": "all", "exterior": True}
+assert opts["decor"] == {"enabled": True, "density": 0.9, "incident": "overrun", "where": "all", "exterior": True, "origin": "random", "reach": "medium"}
 dlg.ck_outdoor.setChecked(False)
 assert dlg.options()["decor"]["exterior"] is False
 dlg.ck_outdoor.setChecked(True)
@@ -242,6 +242,9 @@ assert dlg.cb_preset.findData("user:Mine") < 0
 dlg.cb_preset.setCurrentIndex(dlg.cb_preset.findText("Scenario: Derelict with a nest"))
 dlg._apply_preset()
 assert dlg.tabs.currentIndex() == 0 and dlg.cb_cond.currentData() == "Derelict" and dlg.sp_tonnage.value() == 2000
+assert dlg.cb_where.currentData() == "spread" and dlg.options()["decor"]["origin"] == "cargo" \
+    and dlg.options()["decor"]["reach"] == "medium", "the nest scenario spreads from a cargo hold"
+assert "origin" in dlg.result.meta["decor"] and dlg.result.meta["decor"]["origin"] in dlg.result.zones
 # live preview regenerates after an option changes
 before_result = dlg.result
 dlg.ck_live.setChecked(True)
@@ -292,6 +295,122 @@ assert dlg.lbl_score.text().isdigit()
 dlg.ck_show_decor.setChecked(False)
 assert not dlg.preview.pixmap().isNull()
 dlg.ck_show_decor.setChecked(True)
+dlg.ck_atmo.setChecked(False)                       # the atmosphere effect can be switched off in the preview
+assert not dlg.preview.pixmap().isNull()
+dlg.ck_atmo.setChecked(True)
+# what changed + undo: a re-roll says what moved and can be undone exactly; a new map can be undone too
+ids_now = lambda r: [[(p.tile.id, p.x, p.y) for p in g.placed] for g in r.grids]
+dlg.locked.clear()
+ids_before = ids_now(dlg.result)
+dlg.undo_stack.clear()
+dlg._reroll_level()
+assert "Re-roll level" in dlg.lbl_changes.text() and "tile(s) changed" in dlg.lbl_changes.text(), dlg.lbl_changes.text()
+assert dlg.btn_undo.isEnabled() and len(dlg.undo_stack) == 1
+if ids_now(dlg.result) != ids_before:
+    dlg._undo()
+    assert ids_now(dlg.result) == ids_before, "undo restores the layout"
+    assert dlg.lbl_changes.text().startswith("Undid: Re-roll level")
+    assert not dlg.btn_undo.isEnabled()
+before_result, before_seed = dlg.result, dlg.ed_seed.text()
+dlg._regenerate()
+assert dlg.result is not before_result and dlg.lbl_changes.text().startswith("New map:") and dlg.btn_undo.isEnabled()
+dlg._undo()
+assert dlg.result is before_result and dlg.ed_seed.text() == before_seed, "undo brings back the previous map and seed"
+assert dlg.cb_zone.count() == len(before_result.zones)
+# ratings teach the generator; best of 6 ranks candidates; learning can be switched off and reset
+from geomorph import learning as _learning
+dlg.ck_learn.setChecked(True)
+dlg._forget()
+assert "Nothing learned" in dlg.lbl_learn.text()
+dlg._rate(+1)
+assert "1 vote" in dlg.lbl_learn.text() and "1 liked" in dlg.lbl_learn.text(), dlg.lbl_learn.text()
+assert (dlg.user_dir / "preferences.json").exists() and _learning.net_by_tile()
+dlg._rate(-1)
+assert "2 vote" in dlg.lbl_learn.text() and "1 not" in dlg.lbl_learn.text()
+dlg.ck_learn.setChecked(False)
+dlg._rate(+1)                                              # off: nothing is recorded
+assert dlg.lbl_learn.text() == "Learning is off." and _learning.PATH is None
+dlg.ck_learn.setChecked(True)
+dlg._update_learn_label()
+assert "2 vote" in dlg.lbl_learn.text()
+dlg.ed_seed.setText("bo-gui")
+before_best = dlg.result
+dlg._best_of()
+assert len(dlg.candidates) == 6 and dlg.result is dlg.candidates[0], "the top-ranked candidate is taken in tests"
+scores = [c.quality["score"] for c in dlg.candidates]
+assert dlg.ed_seed.text() == dlg.candidates[0].options["seed"] and dlg.lbl_changes.text().startswith("Picked candidate 1 of 6")
+assert dlg.btn_undo.isEnabled()
+dlg._undo()
+assert dlg.result is before_best, "a picked candidate can be undone"
+from ui.geomorph_dialog import _BestOfDialog
+box = _BestOfDialog(dlg, dlg.candidates)
+assert box.chosen is None
+box._pick(3)
+assert box.chosen == 3
+dlg._forget()
+assert "Nothing learned" in dlg.lbl_learn.text() and not _learning.net_by_tile()
+# a placed or exported map votes softly by its score
+dlg.result.quality = dict(dlg.result.quality, score=96)
+dlg._soft_vote()
+assert _learning.summary()["maps"] == 1 and "1 vote" in dlg.lbl_learn.text()
+dlg._forget()
+# lights: colours for the emergency lamps and fixtures, and the user's own lights
+from geomorph import atmosphere as _A, render as _render
+dlg.ck_live.setChecked(False)
+dlg.cb_where.setCurrentIndex(0)
+dlg.generate()
+assert dlg.options()["atmosphere"] == {"light": _A.DEFAULT_LIGHT, "fixture": _A.DEFAULT_FIXTURE}
+dlg._set_color("light_color", "#2060ff")
+dlg._set_color("fixture_color", "#00ff00")
+assert dlg.options()["atmosphere"] == {"light": "#2060ff", "fixture": "#00ff00"}
+assert dlg.result.options["atmosphere"] == {"light": "#2060ff", "fixture": "#00ff00"}, "a colour change applies to the map on screen"
+assert not dlg.preview.pixmap().isNull()
+dlg._reset_lamp_colors()
+assert dlg.light_color == _A.DEFAULT_LIGHT
+dlg.apply_options(dict(dlg.options(), atmosphere={"light": "#ff8800", "fixture": "#ffffff"}))
+assert dlg.light_color == "#ff8800" and dlg.fixture_color == "#ffffff"
+dlg._reset_lamp_colors()
+# placing: left-click adds a light beside a wall, right-click removes the nearest one, undo and clear work
+res = dlg.result
+g0 = res.grids[dlg.level_index]
+res.lights = []
+tp = next(p for p in g0.placed if _A._floor(p) is not None and p.tile.type == "standard" and _A._lamps(p, _A._floor(p)))
+cx, cy, wall = _A._lamps(tp, _A._floor(tp))[0]
+bx0, by0, _a, _b = _render.shared_bounds(res)
+click_px = (int((tp.x + (cx + 0.5) / 2 - bx0) * 8), int(24 + (tp.y + (cy + 0.5) / 2 - by0) * 8))
+dlg.undo_stack.clear()
+dlg._preview_clicked(*click_px)                               # not in place mode: this only selects a room
+assert not res.lights
+dlg.btn_place_light.setChecked(True)
+dlg.sp_light_radius.setValue(5)
+dlg._set_color("my_light_color", "#33ff99")
+dlg._preview_clicked(*click_px, 1)
+assert len(res.lights) == 1 and res.lights[0]["color"] == "#33ff99" and res.lights[0]["radius"] == 5.0
+assert dlg.btn_undo.isEnabled() and "Placed a wall light" in dlg.lbl_changes.text()
+dlg.cb_light_kind.setCurrentIndex(1)
+dlg._preview_clicked(*click_px, 1)
+assert len(res.lights) == 2 and res.lights[1]["kind"] == "ceiling" and res.lights[1]["wall"] == ""
+assert not dlg.preview.pixmap().isNull()
+dlg._preview_clicked(*click_px, 2)                            # right-click removes the nearest
+assert len(res.lights) == 1
+dlg._undo()
+assert len(dlg.result.lights) == 2, "undo brings a removed light back"
+dlg._preview_clicked(0, 0, 1)                                 # nowhere near a building: told why, nothing added
+n_now = len(dlg.result.lights)
+assert n_now == 2
+dlg._clear_lights()
+assert dlg.result.lights == [] and "Removed 2 light(s)" in dlg.lbl_changes.text()
+dlg._undo()
+assert len(dlg.result.lights) == 2
+# a re-roll that replaces the tile a light is on removes that light, and says so
+dlg.locked.clear()
+dlg.result.lights = [dict(dlg.result.lights[0])]
+for _ in range(6):
+    dlg._reroll_all()
+    if not dlg.result.lights:
+        assert "were on replaced tiles" in dlg.lbl_changes.text() or "removed" in dlg.lbl_changes.text()
+        break
+dlg.btn_place_light.setChecked(False)
 # gap warning label follows the result
 res.gaps = {"Test zone": "no tile"}
 dlg._generated(res, None)

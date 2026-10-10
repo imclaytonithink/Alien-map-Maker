@@ -139,3 +139,21 @@ def summary(q: dict) -> str:
     if q["outdoor"]:
         parts.append(f"{q['outdoor']} outdoor feature{'s' if q['outdoor'] != 1 else ''}")
     return f"{q['label']} ({q['score']}): " + ", ".join(parts) + "."
+
+
+def compare(before: dict | None, after: dict | None) -> str:
+    """What changed between two reports, in a plain line: 'Score 88 -> 93, dead ends 2 -> 1, furnished 61% -> 74%'."""
+    if not before or not after:
+        return ""
+    parts = []
+    if before["score"] != after["score"]:
+        parts.append(f"Score {before['score']} \u2192 {after['score']}")
+    for label, a, b in (("dead ends", len(before["dead_ends"]), len(after["dead_ends"])),
+                        ("unreachable rooms", len(before["unreachable"]), len(after["unreachable"]))):
+        if a != b:
+            parts.append(f"{label} {a} \u2192 {b}")
+    if before["furnished_pct"] != after["furnished_pct"] and None not in (before["furnished_pct"], after["furnished_pct"]):
+        parts.append(f"furnished {before['furnished_pct']}% \u2192 {after['furnished_pct']}%")
+    if before["variety_pct"] != after["variety_pct"]:
+        parts.append(f"variety {before['variety_pct']}% \u2192 {after['variety_pct']}%")
+    return ", ".join(parts) if parts else f"Score unchanged at {after['score']}"

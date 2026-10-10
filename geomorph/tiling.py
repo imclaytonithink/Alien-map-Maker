@@ -1,6 +1,7 @@
 """Tile choice: map zones onto tiles with rotation, mirroring and edge fit."""
 from __future__ import annotations
 
+from .learning import STRENGTH
 from .placement import LevelGrid, Orientation, orientations
 
 
@@ -80,6 +81,9 @@ class TilePicker:
             if best is None:
                 continue
             total = ts * 3.0 + best[0] - reuse_penalty * self.used.get(tile.id, 0)
+            taste = getattr(self.reg, "taste", None)
+            if taste:                                   # learned preference: a small bonus or penalty, never a rule
+                total += STRENGTH * taste.get(tile.id, 0.0)
             scored.append((total, tile, best[1], best[2]))
         if not scored:
             return None

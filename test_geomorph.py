@@ -1129,6 +1129,445 @@ def check_hall_decor():
     print("hall decor ok:", hall_items, "items")
 
 
+def check_atmosphere():
+    """Rooms with the power out go dark with red lamps over their doors; lockdown shutters are GM-only; quarantine gets
+    a hazard border; the same overlay goes onto the canvas on its own layers."""
+    import tempfile
+    from geomorph import atmosphere, canvas_export, render
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="site", seed="atmo", archetype="Research facility", scale="medium",
+                                      overlays=["lockdown", "power_failure", "quarantine"], intensity=1.0))
+    ov = res.overlays
+    assert ov["power_failure"] and ov["lockdown"] and ov["quarantine"]
+    from PIL import Image
+    images = render.TileImages(None, loader=lambda t: Image.new(
+        "RGBA", ((t.w + 4) * render.THUMB_PPS, (t.h + 4) * render.THUMB_PPS), (200, 200, 200, 255)))   # pale tiles
+    def level_with(state):
+        return next(g.index for g in res.grids if any(state in r["states"] for r in atmosphere.affected(res, g)))
+
+    def look(lvl, gm_view, states=True):
+        saved = res.overlays
+        if not states:
+            res.overlays = {}
+        try:
+            return render.render_level(res, lvl, images, pps=10, gm=gm_view, title=False)
+        finally:
+            res.overlays = saved
+    x0, y0, _x1, _y1 = render.shared_bounds(res)
+
+    def median(im, p):
+        box = (int((p.x - x0) * 10) + 4, int((p.y - y0) * 10) + 4, int((p.x + p.w - x0) * 10) - 4, int((p.y + p.h - y0) * 10) - 4)
+        px = sorted(sum(c) / 3 for c in im.convert("RGB").crop(box).getdata())
+        return px[len(px) // 2]                              # median: the red lamps do not skew it
+    dlvl = level_with("power_failure")
+    gm, plain = look(dlvl, True), look(dlvl, True, states=False)
+    dark = [r for r in atmosphere.affected(res, res.grids[dlvl]) if "power_failure" in r["states"]]
+    for room in dark:
+        assert median(gm, room["tile"]) < median(plain, room["tile"]) * 0.9 or atmosphere.shadow_fraction(room) is None, \
+            "dark rooms are dimmer overall"
+    # lamps light what they can see, and leave real shadow: lit pools are bright, the rest stays dark
+    lit_lum = shade_lum = n_lit = n_shade = 0
+    shadows = []
+    for g2 in res.grids:
+        for rm in atmosphere.affected(res, g2):
+            if "power_failure" not in rm["states"]:
+                continue
+            tp = rm["tile"]
+            rows = atmosphere._floor(tp)
+            sf = atmosphere.shadow_fraction(rm)
+            if rows is None or sf is None:
+                continue
+            shadows.append(sf)
+            W_, H_ = int(tp.w * 10), int(tp.h * 10)
+            light, _spots = atmosphere._light_map(tp, rows, W_, H_, 10, atmosphere.LIGHT_RADIUS)
+            lp = light.load()
+            img = look(g2.index, True).convert("L").load()
+            for cy, row in enumerate(rows):
+                for cx, ch in enumerate(row):
+                    if ch not in "c.r":
+                        continue
+                    sx, sy = cx * 5 + 2, cy * 5 + 2
+                    lum = img[int((tp.x - x0) * 10) + sx, int((tp.y - y0) * 10) + sy]
+                    if lp[sx, sy] >= 150:
+                        lit_lum += lum
+                        n_lit += 1
+                    elif lp[sx, sy] <= 5:
+                        shade_lum += lum
+                        n_shade += 1
+    assert shadows and n_lit and n_shade, (len(shadows), n_lit, n_shade)
+    assert lit_lum / n_lit > 1.6 * shade_lum / n_shade, ("lit pools are much brighter than the shadows", lit_lum / n_lit, shade_lum / n_shade, n_lit, n_shade)
+    assert all(0.03 <= f <= 0.9 for f in shadows), ("some light and some shadow in every dark room", sorted(shadows)[:3], sorted(shadows)[-3:])
+    assert 0.1 < sum(shadows) / len(shadows) < 0.7, "corridors and halls keep some shadow, rooms stay dark"
+    llvl = level_with("lockdown")
+    red = lambda im: sum(1 for (r, g_, b, a) in im.getdata() if r > 235 and 40 < g_ < 90 and 30 < b < 80)
+    gm_l, pl_l = look(llvl, True), look(llvl, False)
+    assert red(gm_l) > red(pl_l) + 20, "lockdown shutters show in the GM view only"
+    assert gm_l.tobytes() != look(llvl, True, states=False).tobytes()
+    # the overlay itself: lamps over real doors; shutters only in the GM part
+    room = next(r for r in atmosphere.affected(res, res.grids[llvl]) if "lockdown" in r["states"])
+    pub, gmo = atmosphere.room_overlay(room, 20, "public"), atmosphere.room_overlay(room, 20, "gm")
+    assert pub.getbbox() is not None
+    if atmosphere.door_points(room["tile"]):
+        assert gmo.getbbox() is not None
+    assert all(a < 200 or not (r > 240 and g_ < 80) for (r, g_, b, a) in pub.getdata()), "no shutters in the public part"
+    # lamps touch a wall, and nothing is drawn outside the building or through a wall
+    checked = lamps_seen = 0
+    for g2 in res.grids:
+        for rm in atmosphere.affected(res, g2):
+            tp = rm["tile"]
+            rows = atmosphere._floor(tp)
+            if rows is None:
+                continue
+            for cx, cy, wall in atmosphere._lamps(tp, rows):
+                dx, dy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[wall]
+                assert rows[cy][cx] in atmosphere.walk_chars(rows) and rows[cy + dy][cx + dx] == "#", \
+                    "a lamp sits on corridor or hall floor against a wall"
+                if any(ch in "cr" for r_ in rows for ch in r_):
+                    assert rows[cy][cx] != ".", "never inside an enclosed room"
+                # fixed to a wall: the wall cell behind it is solid right along its plate, and the plate is drawn
+                ax, ay = (1, 0) if wall in "NS" else (0, 1)
+                solid = sum(1 for k in (-1, 0, 1) if 0 <= cy + dy + ay * k < len(rows) and 0 <= cx + dx + ax * k < len(rows[0])
+                            and rows[cy + dy + ay * k][cx + dx + ax * k] == "#")
+                assert solid >= 2, "a lamp is mounted on a wall, not on a lone block"
+                lamps_seen += 1
+            if any(ch in "cr" for r_ in rows for ch in r_) and "power_failure" in rm["states"]:
+                lm, _sp = atmosphere._light_map(tp, rows, int(tp.w * 10), int(tp.h * 10), 10, atmosphere.LIGHT_RADIUS)
+                lp2 = lm.load()
+                for cy2, row2 in enumerate(rows):
+                    for cx2, ch2 in enumerate(row2):
+                        if ch2 == ".":
+                            assert lp2[cx2 * 5 + 2, cy2 * 5 + 2] == 0, "enclosed rooms are not lit by the corridor lamps"
+            im = atmosphere.room_overlay(rm, 10, "public")
+            al = im.getchannel("A").load()
+            for cy, row in enumerate(rows):
+                for cx, ch in enumerate(row):
+                    if ch == "o":
+                        assert al[cx * 5 + 2, cy * 5 + 2] == 0, "the effect stays inside the building"
+            checked += 1
+    assert checked >= 3 and lamps_seen >= 3, (checked, lamps_seen)
+    # lamps sit on the wall as drawn: with art whose walls are thinner than a floor-map cell, the lamp still touches the ink
+    from PIL import Image as _Image, ImageFilter as _Filter
+    checked_art = 0
+    for g2 in res.grids:
+        for rm in atmosphere.affected(res, g2):
+            tp = rm["tile"]
+            rows = atmosphere._floor(tp)
+            if rows is None or "power_failure" not in rm["states"] or checked_art >= 3:
+                continue
+            m = _Image.new("L", (len(rows[0]), len(rows)))
+            m.putdata([255 if ch == "#" else 0 for r_ in rows for ch in r_])
+            ink = m.resize((len(rows[0]) * 15 // 2 + 1, len(rows) * 15 // 2 + 1), _Image.NEAREST).crop((0, 0, tp.w * 15, tp.h * 15))
+            ink = ink.filter(_Filter.MinFilter(5))                     # walls two pixels thinner on each side
+            art = _Image.new("RGBA", ((tp.w + 4) * 15, (tp.h + 4) * 15), (0, 0, 0, 0))
+            art.paste(_Image.new("RGBA", ink.size, (20, 30, 40, 255)), (30, 30), ink)        # dark, solid walls
+            _lm, specs = atmosphere._light_map(tp, rows, int(tp.w * 30), int(tp.h * 30), 30, atmosphere.LIGHT_RADIUS, art)
+            a = art.getchannel("A").load()
+            for sp in specs:
+                ux, uy = {"N": (0, -1), "S": (0, 1), "W": (-1, 0), "E": (1, 0)}[sp["wall"]]
+                fx, fy = sp["fx"] * 15 + 30, sp["fy"] * 15 + 30             # the lamp's wall point in art pixels
+                beyond = a[int(fx + ux * 1.5), int(fy + uy * 1.5)]
+                before = a[int(fx - ux * 6), int(fy - uy * 6)]            # the fixture sits in the band, the room floor is clear a little inward
+                assert beyond >= atmosphere.INK and before < atmosphere.INK, ("the lamp touches the drawn wall", sp["wall"], beyond, before)
+            checked_art += 1
+    assert checked_art >= 1
+    # light does not pass through a wall: a lamp's visible cells never include a cell behind a wall in a straight line
+    for g2 in res.grids:
+        for rm in atmosphere.affected(res, g2):
+            tp = rm["tile"]
+            rows = atmosphere._floor(tp)
+            if rows is None or "power_failure" not in rm["states"]:
+                continue
+            for cx, cy, wall in atmosphere._lamps(tp, rows)[:2]:
+                vis = atmosphere._light_mask(rows, cx, cy, 5, len(rows[0]), len(rows)).load()
+                for ty in range(len(rows)):
+                    for tx in range(len(rows[0])):
+                        if vis[tx, ty] == 255 and max(abs(tx - cx), abs(ty - cy)) > 1:
+                            n = max(abs(tx - cx), abs(ty - cy))
+                            for k in range(1, n):
+                                assert rows[round(cy + (ty - cy) * k / n)][round(cx + (tx - cx) * k / n)] not in "#o"
+    # placing on the canvas: atmosphere on its own layer, shutters on the GM layer, none in a player build
+    cell = 70.0
+    out_gm = canvas_export.to_canvas(res, cell, None, images, tempfile.mkdtemp(prefix="atmo-"), gm=True)
+    out_pl = canvas_export.to_canvas(res, cell, None, images, tempfile.mkdtemp(prefix="atmo-"), gm=False)
+    names_gm = {p.get("layer_name") for lv in out_gm["levels"] for p in lv["pieces"]}
+    names_pl = {p.get("layer_name") for lv in out_pl["levels"] for p in lv["pieces"]}
+    assert canvas_export.LAYER_ATMO in names_gm and canvas_export.LAYER_ATMO in names_pl
+    gm_pieces = [p for lv in out_gm["levels"] for p in lv["pieces"] if p.get("layer_name") == canvas_export.LAYER_GM
+                 and p.get("name", "").startswith(canvas_export.LAYER_GM)]
+    assert gm_pieces and not [p for lv in out_pl["levels"] for p in lv["pieces"] if p.get("name", "").startswith(canvas_export.LAYER_GM)]
+    assert all(p.get("embedded") for p in gm_pieces)
+    print("atmosphere ok")
+
+
+def check_reroll_refresh_and_undo():
+    """After a re-roll nothing stands on an old tile, notes for unchanged rooms survive, and undo restores
+    the exact previous layout, furniture and key."""
+    from geomorph import quality
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="site", seed="rr1", archetype="Research facility", scale="large",
+                                      decor={"enabled": True, "exterior": True}))
+    res.key[0]["text"] = "GM NOTE THAT MUST SURVIVE"
+    keep = (res.key[0]["zone"], res.key[0]["tile"])
+    before = pipeline.snapshot(res)
+    n = pipeline.reroll_level(res, 1, seed=11)
+    assert n > 0
+    stale = lambda: [d for d in res.decor if d.get("kind") == "item"
+                     and not any((p.x, p.y, p.tile.id) == (d["tx"], d["ty"], d["tile"]) for g in res.grids for p in g.placed)]
+    assert stale(), "without a refresh the furniture would stay on the old tiles (this is the bug being fixed)"
+    pipeline.refresh_dressing(res, seed=2)
+    assert not stale(), "furniture follows the new tiles"
+    after = pipeline.snapshot(res)
+    changes = pipeline.tile_changes(before, after, res)
+    assert len(changes) >= 1 and all(old != new for _l, _r, old, new in changes)
+    still = next((e for e in res.key if (e["zone"], e["tile"]) == keep), None)
+    assert still is not None and still["text"] == "GM NOTE THAT MUST SURVIVE", "notes for unchanged rooms are kept"
+    assert res.quality["score"] == quality.assess(res)["score"]
+    assert "\u2192" in quality.compare(before["quality"], dict(res.quality, score=res.quality["score"] + 1))
+    assert quality.compare(res.quality, res.quality).startswith("Score unchanged")
+    pipeline.restore(res, before)
+    again = pipeline.snapshot(res)
+    ids = lambda sn: [[(t.id, x, y, z) for t, x, y, _o, z, _k in g["placed"]] for g in sn["grids"]]
+    assert ids(again) == ids(before) and again["decor"] == before["decor"] and again["key"] == before["key"]
+    assert not [i for i in validate.validate(res, ARCH["Research facility"]) if "overlap" in i]
+    print("re-roll refresh and undo ok")
+
+
+def check_spread():
+    """An outbreak starts in one room and thins out with every door away; barricades stand on the doors that
+    face the source; the GM is told where it started."""
+    import collections
+    reg = Registry.load()
+    opts = dict(kind="site", seed="sp1", archetype="Research facility", scale="large",
+                decor={"enabled": True, "incident": "overrun", "where": "spread", "origin": "lab", "reach": "medium"})
+    res = pipeline.generate(reg, opts)
+    dm = res.meta["decor"]
+    src, dist, reach = dm["origin"], dm["spread"], dm["reach"]
+    assert "lab" in res.zones[src].tags and dist[src] == 0 and reach == 3
+    assert any(m.get("label") == "Source of the outbreak" and m["zone"] == src and m.get("gm_only") for m in res.markers)
+    assert pipeline.generate(reg, opts).meta["decor"]["origin"] == src, "same seed, same starting room"
+    where = {}
+    for g in res.grids:
+        for p in g.placed:
+            where[(g.index, p.x, p.y)] = p.zone
+    marks, severe = collections.Counter(), collections.Counter()
+    for g in res.grids:
+        for f in g.filler:
+            if f.get("decor"):
+                z = next((where.get((g.index, p.x, p.y)) for p in g.placed if p.x <= f["x"] < p.x + p.w and p.y <= f["y"] < p.y + p.h), None)
+                marks[dist.get(z)] += 1
+                if f["kind"] in ("resin", "scorch", "drag"):
+                    severe[dist.get(z)] += 1
+    assert severe[0] >= 1 and any(f["kind"] == "resin" for g in res.grids for f in g.filler if f.get("decor")), "a nest at the source"
+    assert not [k for k, v in severe.items() if v and (k is None or k > reach // 2)], \
+        "resin, burns and drag marks only near the source; further out it is just a struggle"
+    assert sum(v for k, v in marks.items() if k is not None and reach // 2 < k <= reach) > 0, "a struggle further out"
+    assert not [k for k, v in marks.items() if v and (k is None or k > reach)], "nothing beyond the reach"
+    bars = [d for d in res.decor if d.get("kind") == "barricade"]
+    assert bars, "barricades on the doors facing the source"
+    for b in bars:
+        zone = where[(b["level"], b["tx"], b["ty"])]
+        assert 0 < dist[zone] <= reach, "barricades only in the rooms between the source and the quiet"
+    # the key tells the GM how far each room is
+    texts = {e["zone"]: e["text"] for e in res.key if e.get("zone")}
+    near = next(z for z, d in dist.items() if d == 1 and z in texts)
+    assert "from the source" in texts[near] and "THREAT: Source of the outbreak" in texts[src]
+    # a ship works too, and the entrance can be the source; other modes are untouched
+    ship = pipeline.generate(reg, dict(kind="ship", seed="sp2", tonnage=2000,
+                                       decor={"enabled": True, "incident": "overrun", "where": "spread", "origin": "random"}))
+    assert ship.meta["decor"]["origin"] in ship.zones
+    ent = pipeline.generate(reg, dict(opts, decor=dict(opts["decor"], origin="entrance")))
+    assert ent.meta["decor"]["origin"] == pipeline.validate.entrance_zone_id(ent)
+    plain = pipeline.generate(reg, dict(opts, decor=dict(opts["decor"], where="all")))
+    assert "origin" not in plain.meta["decor"]
+    print("outbreak spread ok")
+
+
+def check_learning():
+    """Votes nudge tile choice (never the rules), shrink toward neutral, can be reset, and rank 'best of N'."""
+    import tempfile
+    from geomorph import learning
+    reg = Registry.load()
+    base = dict(kind="site", seed="ln1", archetype="Research facility", scale="medium")
+    learning.use(None)
+    assert learning.net_by_tile() == {} and not learning.record(pipeline.generate(reg, base), rating=1), "off by default"
+    path = os.path.join(tempfile.mkdtemp(prefix="taste-"), "prefs.json")
+    learning.use(path)
+    cands = pipeline.generate_many(reg, base, 6)
+    assert [c.options["seed"] for c in cands] != [], "candidates have their own seeds"
+    assert [c.quality["score"] for c in cands] == sorted((c.quality["score"] for c in cands), reverse=True), "ranked by score"
+    again = pipeline.generate_many(reg, base, 6)
+    assert [c.options["seed"] for c in again] == [c.options["seed"] for c in cands], "same list for the same settings"
+    liked = cands[-1]
+    liked_ids = {p.tile.id for g in liked.grids for p in g.placed}
+    assert learning.record(liked, rating=1)
+    one = learning.net_by_tile()
+    assert one and all(0 < v < 0.3 for v in one.values()), "one vote barely moves anything"
+    for _ in range(5):
+        learning.record(liked, rating=1)
+    many = learning.net_by_tile()
+    assert all(many[t] > one[t] for t in liked_ids if t in one) and max(many.values()) < 1.0
+    sm = learning.summary()
+    assert sm["up"] == 6 and sm["down"] == 0 and sm["tiles"] == len(liked_ids)
+    # it changes later maps toward the liked tiles, and learn=False ignores it
+    ids = lambda r: [p.tile.id for g in r.grids for p in g.placed]
+    hits = lambda r: sum(1 for t in ids(r) if t in liked_ids)
+    plain = sum(hits(pipeline.generate(reg, dict(base, seed=f"x{i}", learn=False))) for i in range(6))
+    tasted = sum(hits(pipeline.generate(reg, dict(base, seed=f"x{i}"))) for i in range(6))
+    assert tasted > plain, ("liked tiles are used more", plain, tasted)
+    assert pipeline.generate(reg, dict(base, seed="x0", learn=False)).quality["score"] >= 0 and reg.taste == {}
+    # taste does not break rules: the maps are still sound
+    assert all(not [i for i in pipeline.generate(reg, dict(base, seed=f"x{i}")).issues if "overlap" in i] for i in range(3))
+    # disliking pulls the other way; a kept map votes by its score; reset forgets
+    bad = cands[0]
+    learning.record(bad, rating=-1)
+    assert any(v < 0 for v in learning.net_by_tile().values()) or set(ids(bad)) <= liked_ids
+    n_before = learning.summary()["maps"]
+    mid = pipeline.generate(reg, base)
+    mid.quality = dict(mid.quality, score=75)
+    assert not learning.record(mid, soft=True), "a middling map is no vote"
+    mid.quality = dict(mid.quality, score=95)
+    assert learning.record(mid, soft=True) and learning.summary()["maps"] == n_before + 1
+    learning.reset()
+    assert learning.net_by_tile() == {} and learning.summary()["maps"] == 0
+    learning.use(path)
+    assert learning.net_by_tile() == {}, "reset is saved"
+    learning.use(None)
+    print("learning ok")
+
+
+def check_lighting():
+    """Pools fill a hallway wall to wall (brightest at the fixture, feathering out, stopped by the walls), the light and
+    fixture colours are choosable, and users can place, save and remove their own lights."""
+    import tempfile
+    from types import SimpleNamespace
+    from PIL import Image as I
+    from geomorph import atmosphere as A, canvas_export, exporter, render
+    # ---- a synthetic hallway: a 6-square-wide corridor between two solid dark walls -------------------------------
+    tile = SimpleNamespace(w=20, h=20, tile=SimpleNamespace(bbox=[], id="synthetic"))
+    rows = ["#" * 40 if not (14 <= y <= 25) else "c" * 40 for y in range(40)]
+    art = I.new("RGBA", (360, 360), (20, 30, 40, 255))                            # solid dark everywhere ...
+    art.paste(I.new("RGBA", (360, 90), (0, 0, 0, 0)), (0, 30 + 105))              # ... except the hallway floor
+    spec = {"fx": 10.0, "fy": 7.0, "wall": "N", "radius": 8.0, "strength": 1.0, "color": "#ff0000", "fixture": "#ffffff",
+            "user": False}
+    lit = A._lamp_light(spec, tile, rows, art, 300, 300, 15).load()               # 15 px per square: 1 px = 1 art px
+    at = lambda xs, ys: lit[int(xs * 15), int(ys * 15)]
+    assert at(10, 7.3) > 170, ("brightest at the fixture", at(10, 7.3))
+    across = [at(10, y) for y in (7.3, 8.5, 9.5, 10.5, 11.5, 12.5, 12.9)]
+    assert all(v > 0 for v in across), ("the pool reaches the far wall", across)
+    assert all(b <= a + 12 for a, b in zip(across, across[1:])), ("fading away from the fixture", across)
+    along = [at(x, 8.0) for x in (10, 12, 14, 16, 17.8)]
+    assert all(b <= a + 6 for a, b in zip(along, along[1:])) and along[0] > along[-1] > 0, ("feathers out along the hall", along)
+    assert at(10, 5.0) == 0 and at(10, 6.0) == 0 and at(10, 14.2) == 0 and at(10, 16.0) == 0, "nothing lit beyond the walls"
+    # a hallway wider than the radius: still lit all the way to both walls in the lamp's own reach
+    spec_far = dict(spec, radius=3.0)
+    far = A._lamp_light(spec_far, tile, rows, art, 300, 300, 15).load()
+    assert far[int(10 * 15), int(9.5 * 15)] > 0 and far[int(10 * 15), int(11.5 * 15)] == 0, "the radius still limits how far"
+
+    # ---- doors: no fixture over a doorway ---------------------------------------------------------------------------
+    gap = art.copy()
+    gap.paste(I.new("RGBA", (30, 12), (0, 0, 0, 0)), (187, 30 + 105 - 12))        # a doorway cut into the north wall
+    assert A._wall_clear(art, (10.0, 7.0), "N") and not A._wall_clear(gap, (11.5, 7.0), "N"), "door gap detected"
+    line = I.new("RGBA", (360, 360), (0, 0, 0, 0))                                # thin bright wall line, with a door gap
+    line.paste(I.new("RGBA", (360, 2), (120, 230, 240, 255)), (0, 130))
+    cell_n = (10 * 2, 7 * 2)                                                      # floor cell just south of that line
+    fp = A.wall_anchor(line, cell_n[0], cell_n[1], "N")
+    assert fp is not None and abs(fp[1] - 6.75) < 0.15, ("fixture sits on the drawn wall line", fp)
+    line = line.copy()                                                            # (masks are cached per image)
+    line.paste(I.new("RGBA", (30, 2), (0, 0, 0, 0)), (180, 130))
+    assert A.wall_anchor(line, 20, 14, "N") is None, "no fixture where the line has a doorway"
+    dtile = SimpleNamespace(side_cls=lambda s: [1] if s == "N" else [0], w=1, h=1)
+    assert A.near_door(dtile, 0.5, 0.3) and not A.near_door(dtile, 0.5, 0.9 + 0.5)
+    reg0 = Registry.load()
+    for seed in ("door1", "door2", "door3"):
+        r0 = pipeline.generate(reg0, dict(kind="site", seed=seed, archetype="Research facility", scale="medium",
+                                          overlays=["power_failure"], intensity=1.0))
+        for g0 in r0.grids:
+            for rm in A.affected(r0, g0):
+                for sp in A.lamp_specs(rm, A._floor(rm["tile"]), None, 15) if A._floor(rm["tile"]) is not None else []:
+                    assert not A.near_door(rm["tile"], sp["fx"], sp["fy"]), ("fixture over a tile-edge door", seed)
+
+    # ---- colours -------------------------------------------------------------------------------------------------
+    reg = Registry.load()
+    res = pipeline.generate(reg, dict(kind="site", seed="light1", archetype="Research facility", scale="medium",
+                                      overlays=["power_failure"], intensity=1.0))
+    g = next(g for g in res.grids if A.affected(res, g))
+    room = next(r for r in A.affected(res, g) if "power_failure" in r["states"] and A._floor(r["tile"]) is not None)
+    def mix(rm):
+        im = A.room_overlay(rm, 12, "public")
+        px = [c for c in im.getdata() if c[3] > 60]
+        return (sum(c[0] for c in px) / len(px), sum(c[2] for c in px) / len(px), im)
+    r_mean, b_mean, _im = mix(room)
+    assert r_mean > b_mean, "red emergency light by default"
+    res.options["atmosphere"] = {"light": "#2040ff", "fixture": "#00ff00"}
+    room_blue = next(r for r in A.affected(res, g) if r["tile"] is room["tile"])
+    r2, b2, im2 = mix(room_blue)
+    assert b2 > r2, "a blue light colours the pools blue"
+    assert sum(1 for c in im2.getdata() if c[1] > 150 and c[0] < 100 and c[2] < 100 and c[3] >= 150) > 0, "green fixtures"
+    del res.options["atmosphere"]
+
+    # ---- user lights ----------------------------------------------------------------------------------------------
+    tp = room["tile"]
+    rows_t = A._floor(tp)
+    cx, cy, wall = A._lamps(tp, rows_t)[0]
+    click = (tp.x + (cx + 0.5) / 2.0, tp.y + (cy + 0.5) / 2.0)
+    wl = A.snap_light(res, g, click[0], click[1], None, "wall", 5.0, 0.8, "#ffd27a", "#fff1c9")
+    assert wl and wl["wall"] in "NSWE" and wl["kind"] == "wall" and wl["radius"] == 5.0 and wl["color"] == "#ffd27a"
+    assert tp.x <= wl["x"] <= tp.x + tp.w and tp.y <= wl["y"] <= tp.y + tp.h
+    cl = A.snap_light(res, g, click[0], click[1], None, "ceiling")
+    assert cl and cl["wall"] == "" and abs(cl["x"] - click[0]) < 1e-6
+    outside = next(((tp.x + (x + 0.5) / 2.0, tp.y + (y + 0.5) / 2.0) for y, r_ in enumerate(rows_t)
+                    for x, ch in enumerate(r_) if ch == "o"), None)
+    assert outside is None or A.snap_light(res, g, outside[0], outside[1], None, "ceiling") is None, "not outside the building"
+    # a light in a tile that is not dark adds its own wash and fixture
+    quiet = next(p_ for p_ in g.placed if p_.zone not in {z for z in sum((res.overlays or {}).values(), [])}
+                 and A._floor(p_) is not None and p_.tile.type == "standard")
+    assert all(r_["tile"] is not quiet for r_ in A.affected(res, g))
+    qrows = A._floor(quiet)
+    qcx, qcy, qwall = A._lamps(quiet, qrows)[0]
+    mine = A.snap_light(res, g, quiet.x + (qcx + 0.5) / 2.0, quiet.y + (qcy + 0.5) / 2.0, None, "wall", 4.0, 1.0, "#33ff66", "#ffffff")
+    assert mine
+    res.lights = [mine]
+    room_q = next(r_ for r_ in A.affected(res, g) if r_["tile"] is quiet)
+    assert room_q["states"] == [] and room_q["lights"] == [mine], "a tile with only your light is picked up"
+    imq = A.room_overlay(room_q, 12, "public")
+    greens = [c for c in imq.getdata() if c[3] > 40]
+    assert greens and sum(c[1] for c in greens) / len(greens) > sum(c[0] for c in greens) / len(greens), "your light's colour"
+    assert imq.getchannel("A").getbbox() is not None and not any(c[3] > 150 and c[:3] == (4, 6, 14) for c in imq.getdata()), \
+        "a lone light does not darken the room"
+    # in a dark room it lifts the darkness around it
+    res.lights = [wl]
+    room_d = next(r_ for r_ in A.affected(res, g) if r_["tile"] is tp)
+    base_alpha = A.room_overlay(dict(room_d, lights=[]), 12, "public").getchannel("A").load()
+    lit_alpha = A.room_overlay(room_d, 12, "public").getchannel("A").load()
+    lx, ly = int((wl["x"] - tp.x) * 12), int((wl["y"] - tp.y) * 12)
+    probes = [(min(max(lx + dx, 0), tp.w * 12 - 1), min(max(ly + dy, 0), tp.h * 12 - 1)) for dx in (-24, 0, 24) for dy in (-24, 0, 24)]
+    assert sum(lit_alpha[q] for q in probes) != sum(base_alpha[q] for q in probes), "the light changes the room around it"
+
+    # ---- saving, undo and re-rolls ---------------------------------------------------------------------------------
+    res.lights = [wl, mine]
+    pkg = exporter.to_package(res, gm=False)
+    assert len(pkg["lights"]) == 2, "lights are part of every export (players can see them)"
+    back = exporter.load_layout(exporter.to_package(res), reg)
+    assert back.lights == res.lights
+    snap = pipeline.snapshot(res)
+    res.lights = []
+    pipeline.restore(res, snap)
+    assert res.lights == [wl, mine], "undo brings the lights back"
+    before = pipeline.snapshot(res)
+    lvl = g.index
+    pipeline.reroll_level(res, lvl, seed=5)
+    after = pipeline.snapshot(res)
+    dropped = pipeline.drop_lights_on_changed(res, before, after)
+    assert dropped + len(res.lights) == 2, (dropped, len(res.lights))
+    pipeline.restore(res, before)
+    # ---- canvas: your lights and the atmosphere go on their own layer ----------------------------------------------
+    res.lights = [mine]
+    out = canvas_export.to_canvas(res, 70.0, None, render.TileImages(None), tempfile.mkdtemp(prefix="lights-"), gm=False)
+    pieces = [p_ for lv in out["levels"] for p_ in lv["pieces"] if p_.get("layer_name") == canvas_export.LAYER_ATMO]
+    assert any("embedded" in p_ and p_["level"] == g.index for p_ in pieces), "the placed light is on the canvas"
+    print("lighting ok")
+
+
 def main():
     check_parsing()
     check_orientation_matches_image_transforms()
@@ -1154,6 +1593,11 @@ def main():
     check_keyed_notes_and_rerolls()
     check_quality()
     check_overlooks()
+    check_atmosphere()
+    check_lighting()
+    check_reroll_refresh_and_undo()
+    check_spread()
+    check_learning()
     check_render_and_export()
     check_custom_tiles()
     print("ALL GEOMORPH CHECKS PASSED")

@@ -47,6 +47,7 @@ def to_package(res: Result, gm=True) -> dict:
                [{"n": e["n"], "level": e["level"], "title": e["title"], "text": e.get("player", "")} for e in res.key],
         "markers": markers, "overlays": res.overlays if gm else {k: v for k, v in res.overlays.items() if k != "lockdown"},
         "decor": getattr(res, "decor", []),
+        "lights": getattr(res, "lights", []),
         "links": res.links, "section": res.section, "issues": res.issues, "gaps": res.gaps,
         "entrance": (lay.entrance if lay is not None else {}),
         "credits": CREDITS, "gm": bool(gm),
@@ -91,6 +92,7 @@ def load_layout(path_or_dict, registry: Registry) -> Result:
                  text={"title": pkg.get("title", ""), "description": pkg.get("description", ""),
                        "notes": pkg.get("notes", []), "hooks": pkg.get("hooks", [])})
     res.decor = pkg.get("decor", [])
+    res.lights = pkg.get("lights", [])
     res.symbols = _symbols.load() if res.decor else {}
     return res
 

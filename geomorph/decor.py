@@ -112,7 +112,7 @@ class Decorator:
         return out
 
     # -- one room rectangle -------------------------------------------------
-    def furnish(self, tile, p, rect, level, zone, incident, prefer=(), messy=False):
+    def furnish(self, tile, p, rect, level, zone, incident, prefer=(), messy=False, toward=None, nest=False):
         """Place items in ``rect`` (cells of tile ``p``); returns decor dicts and filler pieces."""
         rng = self.rng
         entries = self.kit(tile, prefer)
@@ -280,10 +280,10 @@ class Decorator:
             ent = rng.choices(open_, weights=[e.get("w", 1) for e in open_])[0]
             place(ent)
         if incident != "none":
-            self._incident(placed, extra, incident, p, rect, level, used)
+            self._incident(placed, extra, incident, p, rect, level, used, toward, nest)
         return placed, extra
 
-    def _incident(self, placed, extra, kind, p, rect, level, used):
+    def _incident(self, placed, extra, kind, p, rect, level, used, toward=None, nest=False):
         rng = self.rng
         x, y, w, h = rect
         ox, oy = p.x + x / SUB, p.y + y / SUB
@@ -312,14 +312,20 @@ class Decorator:
                 s = rng.uniform(1.0, 2.2)
                 extra.append(F.piece("scorch", level, ox + rng.uniform(0, max(0.1, rw - s)),
                                      oy + rng.uniform(0, max(0.1, rh - s)), s, s, decor=True))
-            for _ in range(rng.randint(1, 2)):          # resin in the corners
-                s = rng.uniform(0.8, 1.6)
+            for _ in range(rng.randint(3, 5) if nest else rng.randint(1, 2)):   # resin in the corners (a nest: everywhere)
+                s = rng.uniform(1.2, 2.4) if nest else rng.uniform(0.8, 1.6)
                 cx = ox + (0.1 if rng.random() < 0.5 else max(0.1, rw - s - 0.1))
                 cy = oy + (0.1 if rng.random() < 0.5 else max(0.1, rh - s - 0.1))
                 extra.append(F.piece("resin", level, cx, cy, s, s, decor=True))
-            # a drag trail from the middle of the room toward a corner
-            if rw >= 3 and rh >= 3:
-                if rng.random() < 0.5:
+            # a drag trail from the middle of the room: toward the source when it is known, else toward a corner
+            if rw >= 3 and rh >= 3 and not nest:
+                if toward in ("E", "W"):
+                    xs = ox + rw / 2 if toward == "E" else ox
+                    extra.append(F.piece("drag", level, xs, oy + rh / 2 - 0.4, rw / 2, 0.8, decor=True))
+                elif toward in ("N", "S"):
+                    ys = oy + rh / 2 if toward == "S" else oy
+                    extra.append(F.piece("drag", level, ox + rw / 2 - 0.4, ys, 0.8, rh / 2, decor=True))
+                elif rng.random() < 0.5:
                     extra.append(F.piece("drag", level, ox + rw * 0.2, oy + rh / 2 - 0.4, rw * 0.6, 0.8, decor=True))
                 else:
                     extra.append(F.piece("drag", level, ox + rw / 2 - 0.4, oy + rh * 0.2, 0.8, rh * 0.6, decor=True))
@@ -327,7 +333,7 @@ class Decorator:
             extra.append(F.piece("scorch", level, ox + rng.uniform(0, max(0.1, rw - 1.2)), oy + rng.uniform(0, max(0.1, rh - 1.2)),
                                  1.2, 1.2, decor=True))
 
-    def barricade(self, p, level, zone, rect):
+    def barricade(self, p, level, zone, rect, sides=None, all_doors=False):
         """Stack lockers/crates across the door of a room (overrun rooms)."""
         pool = [s for c in symbol_map()["barricade"] for s in self.items.get(c, [])]
         if not pool:
@@ -335,6 +341,8 @@ class Decorator:
         x, y, w, h = rect
         out = []
         for side in "NESW":
+            if sides is not None and side not in sides:
+                continue
             cls = p.side_cls(side)
             for i, c in enumerate(cls):
                 if c != 1:
@@ -354,7 +362,8 @@ class Decorator:
                         out.append({"sym": sym.id, "level": level, "cx": round(cx + shiftx, 3), "cy": round(cy + shifty, 3),
                                     "rot": self.rng.choice((0, 90, 20, 340)), "flip": False, "zone": zone,
                                     "kind": "barricade", "cat": sym.cat, "disturbed": True})
-                    return out
+                    if not all_doors:
+                        return out
         return out
 
 
@@ -496,6 +505,61 @@ def apply_exterior(res, rng, symbols: dict, opts: dict):
     return res
 
 
+REACH = {"short": 2, "medium": 3, "far": 5}
+
+
+def spread_plan(res, rng, origin="random", reach="medium") -> dict | None:
+    """Pick the source room and how many doors away every room is: {"origin": zone id, "dist": {zone: steps}, "reach": n}."""
+    from . import validate
+    adj = validate.zone_graph(res)
+    rooms = [z for z in res.zones if z in adj and res.zones[z].base not in ("core",) and "vertical" not in res.zones[z].tags]
+    if not rooms:
+        return None
+    ent = validate.entrance_zone_id(res)
+    pool = []
+    if origin == "entrance" and ent in adj:
+        pool = [ent]
+    elif origin not in ("random", "entrance", "", None):
+        pool = [z for z in rooms if origin in res.zones[z].tags]
+    if not pool:
+        pool = [z for z in rooms if z != ent and len(adj[z]) >= 1] or rooms
+    src = rng.choice(sorted(pool))
+    dist = {src: 0}
+    queue = [src]
+    for z in queue:
+        for n in sorted(adj[z]):
+            if n not in dist:
+                dist[n] = dist[z] + 1
+                queue.append(n)
+    return {"origin": src, "dist": dist, "reach": REACH.get(reach, int(reach) if str(reach).isdigit() else 3)}
+
+
+def spread_kind(base: str, d: int | None, reach: int) -> str:
+    """How bad it is d doors from the source: the full incident near it, a struggle further out, nothing beyond."""
+    if d is None or d > reach or base == "none":
+        return "none"
+    if d <= reach // 2:
+        return base
+    return "struggle"
+
+
+def _facing_sides(res, g, p, dist) -> set:
+    """Sides of tile ``p`` whose doors open toward a room closer to the source."""
+    mine = dist.get(p.zone)
+    out = set()
+    if mine is None:
+        return out
+    for side in "NESW":
+        for i, c in enumerate(p.side_cls(side)):
+            if c != 1:
+                continue
+            cx, cy = {"N": (p.x + i, p.y - 1), "S": (p.x + i, p.y + p.h), "W": (p.x - 1, p.y + i), "E": (p.x + p.w, p.y + i)}[side]
+            other = g.occ.get((cx, cy))
+            if other is not None and other.zone in dist and dist[other.zone] < mine:
+                out.add(side)
+    return out
+
+
 def apply(res, rng, symbols: dict, opts: dict):
     """Furnish ``res`` (a generation Result). ``opts``: enabled, density, incident, where, cats."""
     if not opts or not opts.get("enabled") or not symbols:
@@ -508,6 +572,17 @@ def apply(res, rng, symbols: dict, opts: dict):
     hot = set(ov.get("lockdown", [])) | set(ov.get("quarantine", [])) | set(ov.get("power_failure", []))
     hot |= {m.get("zone") for m in res.markers if m.get("type") in ("threat", "breach", "damage")}
     out = []
+    plan = spread_plan(res, rng, opts.get("origin", "random"), opts.get("reach", "medium")) \
+        if dec.where == "spread" and dec.incident != "none" else None
+    res.markers = [m for m in res.markers if m.get("label") != "Source of the outbreak"]
+    if plan is not None:                                 # the GM can see where it all began
+        src = plan["origin"]
+        for g in res.grids:
+            for p in g.placed:
+                if p.zone == src:
+                    res.markers.append({"type": "threat", "level": g.index, "x": p.x + p.w / 2.0, "y": p.y + p.h / 2.0,
+                                        "gm_only": True, "label": "Source of the outbreak", "zone": src})
+                    break
     # streets and campuses are outdoors: furnish only enclosed rooms there, never open halls or yards behind a door
     outdoors = res.layout is not None and res.layout.topology in ("street", "campus")
     chars = (".",) if outdoors else (".", "r")
@@ -522,10 +597,24 @@ def apply(res, rng, symbols: dict, opts: dict):
             if not rects and not outdoors:
                 rects = hall_bands(grid)             # big open hall: line its walls, keep the middle clear
                 hall = bool(rects)
+            kind = dec.incident
+            toward, nest, facing = None, False, set()
+            if plan is not None:
+                d = plan["dist"].get(p.zone)
+                kind = spread_kind(dec.incident, d, plan["reach"])
+                nest = d == 0
+                facing = _facing_sides(res, g, p, plan["dist"])
+                toward = sorted(facing)[0] if facing else None
+                if not rects and kind != "none":          # a room with no free floor still shows it: mark its passages
+                    for rect in free_rects(grid, min_side=3, limit=2, chars=(".", "r", "c")):
+                        extra = []
+                        dec._incident([], extra, kind, p, rect, g.index, None, toward, nest)
+                        g.filler.extend(extra)
             if not rects:
                 continue
-            kind = dec.incident
-            if kind != "none":
+            if plan is not None:
+                pass
+            elif kind != "none":
                 if dec.where == "overlay" and p.zone not in hot:
                     kind = "none"
                 elif dec.where == "random" and rng.random() > 0.3:
@@ -538,7 +627,7 @@ def apply(res, rng, symbols: dict, opts: dict):
                 prefer = ([z.base] if z.base in kits else list(z.tags[:2])) if z is not None else []
                 cond = (res.meta.get("zone_conditions") or {}).get(p.zone) or res.meta.get("condition", "Average")
                 messy = kind != "none" or cond in ("Cluttered", "Scrap", "Derelict", "Disrepair")
-                items, extra = dec.furnish(p.tile, p, rect, g.index, p.zone, kind, prefer, messy)
+                items, extra = dec.furnish(p.tile, p, rect, g.index, p.zone, kind, prefer, messy, toward, nest)
                 for it in items:                      # trace each item to the tile it stands in
                     it["tile"], it["tx"], it["ty"] = p.tile.id, p.x, p.y
                     if hall:
@@ -546,10 +635,19 @@ def apply(res, rng, symbols: dict, opts: dict):
                 out.extend(items)
                 for f in extra:
                     g.filler.append(f)
-                if kind == "overrun":
+                if plan is not None:                       # barricades only on the doors that face the source
+                    if kind != "none" and not nest and facing:
+                        for b in dec.barricade(p, g.index, p.zone, rect, sides=facing, all_doors=True):
+                            b["tile"], b["tx"], b["ty"] = p.tile.id, p.x, p.y
+                            out.append(b)
+                elif kind == "overrun":
                     for b in dec.barricade(p, g.index, p.zone, rect):
                         b["tile"], b["tx"], b["ty"] = p.tile.id, p.x, p.y
                         out.append(b)
     res.decor = out
     res.meta["decor"] = {"items": len(out), "incident": dec.incident, "where": dec.where}
+    if plan is not None:
+        z = res.zones.get(plan["origin"])
+        res.meta["decor"].update(origin=plan["origin"], origin_name=z.name if z is not None else plan["origin"],
+                                 reach=plan["reach"], spread=dict(plan["dist"]))
     return res

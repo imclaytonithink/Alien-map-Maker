@@ -8,7 +8,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QRadioButton, QButtonGroup,
     QCheckBox, QPushButton, QFileDialog, QHBoxLayout,
-    QLabel, QMessageBox, QComboBox, QSlider,
+    QLabel, QMessageBox, QComboBox, QSlider, QWidget,
 )
 
 from core import exporter
@@ -61,6 +61,26 @@ class ExportDialog(QDialog):
             "Import the resulting PNG as a Custom Board in Tabletop Simulator.")
         self.cmb_preset.currentTextChanged.connect(self._preset_changed)
         form.addRow("Image / page size", self.cmb_preset)
+
+        self.chk_split = QCheckBox("Split into sections that fit Tabletop Simulator")
+        self.chk_split.setToolTip(
+            "A map bigger than the limit is written as several grid-aligned PNGs (A1, A2, B1...) with a "
+            "sections.txt that says how they fit. Each is cut on grid lines, so no square is split, and "
+            "is rendered on its own, so a huge map never has to fit in memory. A map that already fits "
+            "is written as one file.")
+        self.cmb_max = QComboBox()
+        for px in (2048, 3072, 4096):
+            self.cmb_max.addItem(f"{px} px", px)
+        self.cmb_max.setCurrentIndex(2)
+        self.cmb_max.setToolTip("Largest side of one section. Tabletop Simulator copes best at 4096 px or less.")
+        split_row = QHBoxLayout()
+        split_row.addWidget(self.chk_split, 1)
+        split_row.addWidget(self.cmb_max)
+        self.row_split = QWidget()
+        self.row_split.setLayout(split_row)
+        split_row.setContentsMargins(0, 0, 0, 0)
+        form.addRow(self.row_split)
+        self.row_split.setVisible(self.file_format == "png")
 
         self.chk_trans = QCheckBox("Leave out the backdrop (transparent)")
         self.chk_trans.setToolTip(self.TRANSPARENT_TIP)
@@ -174,6 +194,9 @@ class ExportDialog(QDialog):
 
     def _preset_changed(self, text):
         is_tts = text.startswith("Tabletop Sim")
+        self.row_split.setVisible(self.file_format == "png")
+        if is_tts and "sections" in text:
+            self.chk_split.setChecked(True)
         if is_tts and self.chk_trans.isChecked():
             self.chk_trans.setChecked(False)
         self.chk_trans.setEnabled(not is_tts)
@@ -315,6 +338,31 @@ class ExportDialog(QDialog):
                     include_node_borders=include_node_borders,
                     include_zones=include_zones, opaque=opaque, **extras)
                 self.status.setText(f"Saved PDF:\n{path}")
+            elif self.chk_split.isChecked() and self.file_format == "png":
+                files = []
+                limit = int(self.cmb_max.currentData() or 4096)
+                kw = dict(include_grid=include_grid, transparent=transparent, grid_color=grid_color,
+                          grid_opacity=grid_opacity, include_node_borders=include_node_borders,
+                          include_zones=include_zones, opaque=opaque,
+                          include_centerlines=extras["include_centerlines"], include_guides=extras["include_guides"])
+                if self.rb_all.isChecked():
+                    out_dir, targets = path, list(enumerate(self.project.levels, 1))
+                else:
+                    out_dir = os.path.dirname(os.path.abspath(path))
+                    targets = [(None, self.canvas.level)]
+                for i, level in targets:
+                    if level is None:
+                        QMessageBox.warning(self, "Export", "No level selected.")
+                        return
+                    if i is None:
+                        base = os.path.splitext(os.path.basename(path))[0]
+                    else:
+                        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in level.name)
+                        base = f"{self._defaults()[0]}_{i:02d}_{safe}"
+                    files += exporter.export_level_sections(self.project, level, out_dir, base, scale=scale,
+                                                            max_side=limit, **kw)
+                sections = sum(1 for f in files if not f.endswith("_sections.txt"))
+                self.status.setText(f"Exported {sections} PNG file(s) (sections that fit {limit} px) to:\n{out_dir}")
             elif self.rb_all.isChecked():
                 files = exporter.export_all_levels(
                     self.project, path, include_grid, scale, self._defaults()[0], transparent,

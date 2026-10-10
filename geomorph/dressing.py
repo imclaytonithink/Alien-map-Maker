@@ -161,6 +161,12 @@ def _room_detail(res, zone_id):
     threats = [m.get("label", "threat") for m in res.markers if m.get("type") == "threat" and m.get("zone") == zone_id]
     secrets = [m.get("label", "secret") for m in res.markers if m.get("type") == "secret" and m.get("zone") == zone_id]
     parts = [STATE_TEXT[k] for k in states]
+    dm = (res.meta.get("decor") or {})
+    steps = (dm.get("spread") or {}).get(zone_id)
+    if steps is not None and steps > 0 and steps <= dm.get("reach", 3):
+        parts.append(f"Outbreak: {steps} door{'s' if steps != 1 else ''} from the source ({dm.get('origin_name', '')}); "
+                     + ("the worst of the damage, barricades on the doors toward the source." if steps <= dm.get("reach", 3) // 2
+                        else "signs of a struggle, the trouble has not stayed here."))
     if contents:
         parts.append("Furnished with: " + ", ".join(contents) + ".")
     if threats:

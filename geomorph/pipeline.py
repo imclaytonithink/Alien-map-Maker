@@ -22,6 +22,7 @@ DEFAULTS = {
     "ship_type": "Merchant", "tonnage": 1000, "symmetric": True, "fins": True, "orientation": "N",
     "condition": None, "mixed_conditions": False, "zone_conditions": {}, "peculiarities": 2,
     "overlays": [], "intensity": 0.5, "parts": {}, "craft": None, "decor": None, "grouping": 0.6,
+    "learn": True,                     # let learned taste (see learning.py) nudge tile choice
 }
 
 
@@ -85,6 +86,8 @@ def generate(registry: Registry, options=None, archetypes=None) -> Result:
     o.update(options or {})
     rng = random.Random(coerce_seed(o["seed"]))
     theme = o["theme"]
+    from . import learning
+    registry.taste = learning.net_by_tile() if o.get("learn", True) else {}
     A = archetypes or archmod.load_all()
     arch = None
     if o["kind"] == "ship":
@@ -121,6 +124,7 @@ def generate(registry: Registry, options=None, archetypes=None) -> Result:
 
 
 def finish(res: Result, rng, o, arch, table, cond_default, theme) -> Result:
+    res.lights = []                         # lights placed by the user (see atmosphere.snap_light)
     res.meta["seed"] = o["seed"]
     res.meta["theme"] = theme
     res.meta["archetype"] = (arch or {}).get("name", o.get("ship_type", ""))
@@ -206,3 +210,103 @@ def reroll_level(res: Result, level_index: int, locked=(), seed=None) -> int:
     g = res.grids[level_index]
     ids = [p.zone for p in g.placed if p.zone and p.zone not in skip and p.tile.type == "standard"]
     return reroll_zones(res, ids, seed)
+
+
+# ---- undo and refresh around re-rolls -------------------------------------------------------
+
+def snapshot(res: Result) -> dict:
+    """Everything a re-roll can change, so it can be undone exactly (tiles, filler, furniture, key, markers)."""
+    return {
+        "grids": [{"index": g.index,
+                   "placed": [(p.tile, p.x, p.y, p.o, p.zone, p.key) for p in g.placed],
+                   "filler": [dict(f) for f in g.filler]} for g in res.grids],
+        "decor": [dict(d) for d in (getattr(res, "decor", None) or [])],
+        "lights": [dict(L) for L in (getattr(res, "lights", None) or [])],
+        "key": copy.deepcopy(res.key), "markers": [dict(m) for m in res.markers],
+        "issues": list(res.issues), "gaps": dict(res.gaps or {}),
+        "quality": copy.deepcopy(getattr(res, "quality", None)),
+    }
+
+
+def restore(res: Result, snap: dict) -> None:
+    for g, sg in zip(res.grids, snap["grids"]):
+        for p in list(g.placed):
+            g.remove(p)
+        for tile, x, y, o, zone, key in sg["placed"]:
+            g.place(tile, x, y, o, zone=zone).key = key
+        g.filler = [dict(f) for f in sg["filler"]]
+    res.decor = [dict(d) for d in snap["decor"]]
+    res.lights = [dict(L) for L in snap.get("lights", [])]
+    res.key = copy.deepcopy(snap["key"])
+    res.markers = [dict(m) for m in snap["markers"]]
+    res.issues = list(snap["issues"])
+    res.gaps = dict(snap["gaps"])
+    res.quality = copy.deepcopy(snap["quality"])
+
+
+def tile_changes(before: dict, after: dict, res: Result) -> list:
+    """[(level name, room name, old tile id, new tile id)] between two snapshots."""
+    out = []
+    for g, sb, sa in zip(res.grids, before["grids"], after["grids"]):
+        old = {(x, y): (t.id, z) for t, x, y, _o, z, _k in sb["placed"]}
+        for t, x, y, _o, z, _k in sa["placed"]:
+            was = old.get((x, y))
+            if was is not None and was[0] != t.id:
+                zone = res.zones.get(z)
+                out.append((g.name, zone.name if zone is not None else z, was[0], t.id))
+    return out
+
+
+def refresh_dressing(res: Result, seed=None) -> None:
+    """Redo what depends on the tiles after a re-roll: furniture and outdoor features (so nothing is left
+    standing on the old tile), the numbered key (keeping notes you wrote for rooms that did not change) and the score."""
+    from . import decor, dressing, quality
+    rng = random.Random(coerce_seed(seed if seed is not None else random.random()))
+    o = res.options or {}
+    for g in res.grids:                          # incident marks the decorator added to the old layout
+        g.filler = [f for f in g.filler if not f.get("decor")]
+    d = o.get("decor")
+    if d and (d.get("enabled") or d.get("exterior")) and getattr(res, "symbols", None):
+        res.decor = []
+        decor.apply(res, rng, res.symbols, d)
+        decor.apply_exterior(res, rng, res.symbols, d)
+    old_key = {(e.get("zone"), e.get("tile")): e for e in res.key if e.get("zone")}
+    res.markers = [m for m in res.markers if m.get("type") != "entrance"]
+    dressing.build_key(res, rng, None)
+    for e in res.key:                            # unchanged room: keep the text (and any edits) it had
+        was = old_key.get((e.get("zone"), e.get("tile")))
+        if was is not None:
+            e["text"], e["player"] = was.get("text", e["text"]), was.get("player", e.get("player", ""))
+    res.quality = quality.assess(res)
+
+
+def generate_many(registry: Registry, options=None, n=6, archetypes=None, taste_weight=12.0) -> list:
+    """``n`` candidate maps from seeds derived from the current one, best first.
+
+    Ranked by quality score plus the learned taste for the tiles used, so the first one is the one most
+    likely to be both sound and to your liking. Same seed, same options and same preferences = same list."""
+    from . import learning
+    base = dict(options or {})
+    seed = str(base.get("seed", "1"))
+    out = [generate(registry, dict(base, seed=f"{seed}-{i + 1}"), archetypes) for i in range(max(1, int(n)))]
+    out.sort(key=lambda r: -(r.quality["score"] + taste_weight * (learning.taste(r) if base.get("learn", True) else 0.0)))
+    return out
+
+
+def drop_lights_on_changed(res: Result, before: dict, after: dict) -> int:
+    """Remove the user's lights that sit on a tile a re-roll replaced (they would float on the new artwork)."""
+    changed = set()
+    for g, sb, sa in zip(res.grids, before["grids"], after["grids"]):
+        old = {(x, y): t.id for t, x, y, _o, _z, _k in sb["placed"]}
+        for t, x, y, o, _z, _k in sa["placed"]:
+            if old.get((x, y)) != t.id:
+                changed.add((g.index, x, y, o.w, o.h))
+    keep, dropped = [], 0
+    for L in getattr(res, "lights", None) or []:
+        on_changed = any(L["level"] == lvl and x <= L["x"] < x + w and y <= L["y"] < y + h for lvl, x, y, w, h in changed)
+        if on_changed:
+            dropped += 1
+        else:
+            keep.append(L)
+    res.lights = keep
+    return dropped
