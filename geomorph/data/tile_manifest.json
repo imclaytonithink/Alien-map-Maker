@@ -39624,8 +39624,7 @@
 ],
 "tags":{
 "hangar":0.6,
-"workshop":0.6,
-"vertical":1.0
+"workshop":0.6
 },
 "image":"100x50 Edge/331 [100x50] Flight Deck - Vertical (Rampart Fighters, Repair Shop, Flight Operations).png",
 "mirror_of":"",
@@ -110153,7 +110152,7 @@
 "security":0.6,
 "office":0.6,
 "workshop":0.6,
-"vertical":1.0
+"vertical":0.6
 },
 "image":"200x100 Megamorph/M006 [200x100] Flight Deck - Vertical (Rampart Fighters, Repair Shop, Medical, Office, Security, Lounge, Briefing, Elevator).png",
 "mirror_of":"",

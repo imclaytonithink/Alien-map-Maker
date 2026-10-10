@@ -170,6 +170,80 @@ def test_breach_and_damage_have_symbols_and_legend_rows():
     assert {"breach", "damage"} <= set(states.states_in(res))
 
 
+def test_levels_and_direction():
+    from geomorph import layouts
+    names = layouts.stack_plan(4, "up")[0]
+    assert names == ["Floor 4", "Floor 3", "Floor 2", "Ground floor"], names
+    assert layouts.stack_plan(2, "down")[0] == ["Surface", "Sublevel 1", "Sublevel 2"]
+    assert layouts.stack_plan(4, "both")[0] == ["Floor 2", "Ground floor", "Basement 1", "Basement 2"]
+    for d, n, ground in (("up", 5, "Ground floor"), ("down", 3, "Sublevel 1"), ("both", 4, "Ground floor")):
+        res = pipeline.generate(REG, {"kind": "site", "seed": "lv-t", "archetype": "Research facility",
+                                      "levels": n, "direction": d, "cargo_lift": True})
+        assert len(res.grids) == n + (1 if d == "down" else 0), (d, [g.name for g in res.grids])
+        assert res.grids[res.layout.entrance["level"]].name == ground, (d, res.layout.entrance)
+        cores = [v for v in res.layout.vertical if v["kind"] in ("core", "cargo_lift")]
+        assert {v["kind"] for v in cores} == {"core", "cargo_lift"}, cores
+        for v in cores:                                    # every building level, same spot
+            for lvl in v["levels"]:
+                assert any((p.x, p.y) == (v["x"], v["y"]) and p.tile.tags.get("vertical", 0) >= 0.9
+                           for p in res.grids[lvl].placed), (d, v["kind"], lvl)
+        cargo = next(v for v in cores if v["kind"] == "cargo_lift")
+        p = next(p for p in res.grids[cargo["levels"][0]].placed if (p.x, p.y) == (cargo["x"], cargo["y"]))
+        assert p.tile.tags.get("cargo", 0) >= 0.5, p.tile.title
+        assert not res.issues, (d, res.issues)
+    one = pipeline.generate(REG, {"kind": "site", "seed": "lv-t", "archetype": "Prison / penal colony", "levels": 1,
+                                  "direction": "up"})
+    assert len(one.grids) == 1 and not one.layout.vertical and not one.issues, one.issues
+    assert not any(t.tags.get("vertical", 0) >= 0.9 for t in REG.tiles.values() if "flight deck" in t.title.lower()
+                   and "elevator" not in t.image.lower())
+
+
+def test_set_room_state_by_hand():
+    from geomorph import dressing
+    res = pipeline.generate(REG, {"kind": "ship", "seed": "rs-1", "overlays": ["power_failure"], "intensity": 1.0})
+    dark = res.overlays["power_failure"][0]
+    before = pipeline.snapshot(res)
+    assert dressing.set_room_state(res, dark, "lockdown")
+    assert dressing.room_state(res, dark) == "lockdown" and dark not in res.overlays["power_failure"]
+    entry = next(e for e in res.key if e.get("zone") == dark)
+    assert "LOCKDOWN" in entry["text"] and "POWER OUT" not in entry["text"]
+    assert dressing.set_room_state(res, dark, "damage")
+    assert dressing.room_state(res, dark) == "damage" and dark not in res.overlays["lockdown"]
+    assert any(f.get("state_zone") == dark for g in res.grids for f in g.filler), "rubble with the damage"
+    assert dressing.set_room_state(res, dark, "normal")
+    assert dressing.room_state(res, dark) == "normal"
+    assert not any(f.get("state_zone") == dark for g in res.grids for f in g.filler), "and gone with it"
+    hull = [z for z in res.zones if dressing.set_room_state(res, z, "breach")]
+    assert hull, "rooms on the hull can be breached"
+    for z in hull:
+        assert sum(1 for m in res.markers if m.get("zone") == z and m["type"] == "breach") == 1
+    pipeline.restore(res, before)
+    assert dressing.room_state(res, dark) == "power_failure", "undo brings the old states back"
+    site = pipeline.generate(REG, {"kind": "site", "seed": "rs-2", "archetype": "Research facility"})
+    inner = [p.zone for g in site.grids for p in g.placed if p.zone and all(
+        (p.x + dx, p.y + dy) in g.occ for dx, dy in ((p.w // 2, -1), (p.w // 2, p.h), (-1, p.h // 2), (p.w, p.h // 2)))]
+    if inner:
+        assert not dressing.set_room_state(site, inner[0], "breach"), "no breach in a room deep inside"
+
+
+def test_legend_explains_the_marks():
+    from geomorph import states
+    dec = {"enabled": True, "density": 0.6, "incident": "overrun", "where": "all", "exterior": True,
+           "origin": "random", "reach": "medium"}
+    res = pipeline.generate(REG, {"kind": "site", "seed": "mk-1", "archetype": "Research facility", "decor": dec})
+    found = set()
+    for g in res.grids:
+        found |= set(states.marks_in(res, g))
+    assert {"entrance", "rubble"} <= found, found
+    g = next(g for g in res.grids if states.marks_in(res, g))
+    panel = states.legend(states.level_states(res, g), 20, states.marks_in(res, g))
+    assert panel is not None and panel.height >= 20 * 2 * len(states.marks_in(res, g)) // 2
+    assert states.legend_spot(res, g) is not None, "a level with only marks still gets a legend"
+    for m in states.MARKS:
+        assert states.MARK_LABEL[m] and states.MARK_ABOUT[m]
+        assert states._mark_sample(m, 60, 30).getbbox() is not None
+
+
 def main():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -47,6 +47,9 @@ class Slot:
     placed: object = None        # placement.Placed once a tile is chosen
     fixed_tile: object = None    # force a tile (vertical cores, the two floors of a tall room)
     pair: int = -1               # other floor of a tall room: slot index (lower <-> upper)
+    entry_level: int = -1        # level of the way in ("top" zones); -1 = the top-most building level
+    deep_level: int = -1         # the far end from it ("bottom" zones); -1 = the lowest level
+    cargo: bool = False          # a vertical core that has to be a cargo lift
 
     @property
     def cx(self): return self.x + self.w / 2

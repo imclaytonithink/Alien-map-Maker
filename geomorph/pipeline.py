@@ -223,6 +223,7 @@ def snapshot(res: Result) -> dict:
         "decor": [dict(d) for d in (getattr(res, "decor", None) or [])],
         "lights": [dict(L) for L in (getattr(res, "lights", None) or [])],
         "key": copy.deepcopy(res.key), "markers": [dict(m) for m in res.markers],
+        "overlays": copy.deepcopy(res.overlays or {}),
         "issues": list(res.issues), "gaps": dict(res.gaps or {}),
         "quality": copy.deepcopy(getattr(res, "quality", None)),
     }
@@ -239,6 +240,8 @@ def restore(res: Result, snap: dict) -> None:
     res.lights = [dict(L) for L in snap.get("lights", [])]
     res.key = copy.deepcopy(snap["key"])
     res.markers = [dict(m) for m in snap["markers"]]
+    if "overlays" in snap:
+        res.overlays = copy.deepcopy(snap["overlays"])
     res.issues = list(snap["issues"])
     res.gaps = dict(snap["gaps"])
     res.quality = copy.deepcopy(snap["quality"])

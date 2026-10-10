@@ -72,9 +72,9 @@
   "tiles": 6
  },
  "site lab": {
-  "decor": 40,
+  "decor": 43,
   "filler": 5,
-  "hash": "236755d139bf033d",
+  "hash": "19bee521093e9a44",
   "issues": 0,
   "key": 14,
   "levels": 2,
@@ -90,11 +90,11 @@
   "tiles": 9
  },
  "site prison": {
-  "decor": 99,
-  "filler": 201,
-  "hash": "1cf59ab583e083d1",
+  "decor": 116,
+  "filler": 235,
+  "hash": "afa0c93e6246b937",
   "issues": 0,
-  "key": 38,
+  "key": 39,
   "levels": 4,
   "tiles": 35
  },

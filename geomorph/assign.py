@@ -49,9 +49,15 @@ def building_levels(lay: Layout):
 
 
 def constraint_ok(z: ZoneInst, s, lo, hi, relax=False) -> bool:
-    if z.level == "top" and s.level != lo and not relax:
+    """``top`` zones (reception, the way in) go on the entry level and ``bottom`` zones (containment, the deep
+    end) on the far one: the top and bottom of an underground site, the ground and top floor of a tower."""
+    entry = s.entry_level if getattr(s, "entry_level", -1) >= 0 else lo
+    deep = s.deep_level if getattr(s, "deep_level", -1) >= 0 else hi
+    if z.height > 1 and deep == lo:          # a tall room at the top of a tower fills its top floors
+        deep = min(hi, lo + z.height - 1)
+    if z.level == "top" and s.level != entry and not relax:
         return False
-    if z.level == "bottom" and s.level != hi and not relax:
+    if z.level == "bottom" and s.level != deep and not relax:
         return False
     if isinstance(z.level, int) and s.level != z.level and not relax:
         return False
@@ -62,7 +68,8 @@ def constraint_ok(z: ZoneInst, s, lo, hi, relax=False) -> bool:
             return False
         if z.position == "corner" and s.pos != "corner":
             return False
-    if z.height > 1 and s.level - (z.height - 1) < lo:    # needs levels above for the void
+    if z.height > 1 and s.level - (z.height - 1) < lo and not (relax and hi - lo + 1 < z.height):
+        # needs levels above for the void (a building without enough floors gets an ordinary room)
         return False
     return True
 

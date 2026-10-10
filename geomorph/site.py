@@ -14,6 +14,17 @@ from .tiling import TilePicker
 
 VERTICAL_ZONE = {"id": "core", "name": "Stairs & lifts core", "tags": ["vertical"], "access": "staff",
                  "required": False}
+CARGO_ZONE = {"id": "cargo_lift", "name": "Cargo lift", "tags": ["vertical", "cargo"], "access": "staff",
+              "required": False}
+CARGO_KINDS = ("mine", "factory", "shipyard", "refinery", "depot", "terraform", "processor", "spaceport", "starport")
+
+
+def wants_cargo_lift(arch, scale, choice=None) -> bool:
+    """A freight lift as well as stairs and lifts: when asked, else on large sites and industrial ones."""
+    if choice is not None:
+        return bool(choice)
+    name = (arch.get("name") or "").lower()
+    return scale == "large" or any(k in name for k in CARGO_KINDS)
 
 
 def _dir_between(a, b):
@@ -84,7 +95,7 @@ def special_zones(arch, lay: Layout):
     for s in lay.slots:
         if s.role == "vertical" and s.zone is None:
             n += 1
-            z = zone_from_spec(VERTICAL_ZONE, n, "", None)
+            z = zone_from_spec(CARGO_ZONE if getattr(s, "cargo", False) else VERTICAL_ZONE, n, "", None)
             z.checkpoint = has_secure
             s.zone = z
 
@@ -122,6 +133,12 @@ def generate_site(registry, arch: dict, rng: random.Random, scale="medium", env=
     preset = arch["scales"][scale]
     ctx = {"shafts": (arch.get("vertical") or {}).get("shafts", []), "dome": arch.get("dome"),
            "ground_margin": arch.get("ground_margin", layouts.PAD)}
+    # how tall or deep: a number of levels, which way they go, and whether a cargo lift joins them
+    if options.get("levels"):
+        ctx["levels"] = max(1, min(8, int(options["levels"])))
+    if options.get("direction") in layouts.DIRECTIONS:
+        ctx["direction"] = options["direction"]
+    ctx["cargo_lift"] = wants_cargo_lift(arch, scale, options.get("cargo_lift"))
     need = required_count(arch)
     lay = None
     issues = []
@@ -247,6 +264,9 @@ def _place_slots(reg, arch, lay: Layout, grids, picker: TilePicker, rng, env, ga
                 allowed = (lambda t, oo, o=o: oo.rot == o.rot and oo.mirror == o.mirror)
             else:
                 tags = ["vertical"]
+            if getattr(s, "cargo", False) and key not in core_choice:     # a freight lift, not just stairs
+                allowed = None
+                tags = ["vertical", "cargo"]
         pool_ok = picker.pool("standard", s.w, s.h, tags if s.role != "vertical" else ["vertical"],
                               minimum=0.9 if s.role == "vertical" else 0.5)
         if not pool_ok and s.role != "vertical":
@@ -258,8 +278,10 @@ def _place_slots(reg, arch, lay: Layout, grids, picker: TilePicker, rng, env, ga
             from .ship import _selective_pick
             pick = _selective_pick(picker, g, {"x": s.x, "y": s.y, "w": s.w, "h": s.h}, tags, "standard", allowed, rng)
         else:
+            cargo_only = ((lambda t: t.tags.get("cargo", 0) < 0.5 or t.tags.get("vertical", 0) < 0.9)
+                          if getattr(s, "cargo", False) and fixed is None else None)
             pick = picker.choose(g, s.x, s.y, s.w, s.h, tags, "standard", prefer_open=prefer,
-                                 fixed=fixed, allowed_orients=allowed,
+                                 fixed=fixed, allowed_orients=allowed, reject=cargo_only,
                                  reuse_penalty=0.2 if s.role == "vertical" else 0.45)
         if pick is None:
             lay.notes.append(f"No tile fit slot {s.idx} ({z.name}); drawn as a plain room.")
@@ -414,7 +436,7 @@ def _entrance(res: Result, arch, env):
     else:
         lay.entrance = {"slot": ent, "level": s.level, "x": s.x + s.w / 2, "y": s.y, "kind": kind,
                         "zone": s.zone.id if s.zone else "", "side": "N"}
-    if env == "underground" and res.layout.level_names[0] == "Surface" and not any(
+    if res.layout.level_names[0] == "Surface" and res.layout.topology == "stacked" and not any(
             x["level"] == 0 and x["kind"] == "building" for x in g.filler if x.get("kind") == "building"):
         sg = res.grids[0]
         vc = next((v for v in lay.vertical if v["kind"] == "core"), None)

@@ -107,55 +107,99 @@ def _slots_box(lay, level):
 # ---------------------------------------------------------------------------
 # Stacked structure: one footprint, several levels, aligned core and shafts
 # ---------------------------------------------------------------------------
+DIRECTIONS = ("up", "down", "both")
+
+
+def stack_plan(n, direction):
+    """Level names (index 0 = top-most) for ``n`` building levels built ``direction``: "up" a tower standing on
+    its ground floor, "down" under a surface entrance, "both" floors above the ground floor and basements below.
+    Returns (names, surface index or None, entry index, deep index, first building index, underground indices)."""
+    if direction == "down":
+        names = ["Surface"] + [f"Sublevel {i + 1}" for i in range(n)]
+        return names, 0, 1, n, 1, set(range(1, n + 1))
+    if direction == "both":
+        up = max(1, (n + 1) // 2)
+        down = max(1, n - up) if n > 1 else 0
+        names = [f"Floor {up - i}" if up - i > 1 else "Ground floor" for i in range(up)]
+        names += [f"Basement {i + 1}" for i in range(down)]
+        return names, None, up - 1, up + down - 1, 0, set(range(up, up + down))
+    names = [f"Floor {n - i}" if n - i > 1 else "Ground floor" for i in range(n)]
+    return names, None, n - 1, 0, 0, set()
+
+
 def stacked(rng, p, env, need, ctx):
-    underground = env == "underground"
+    direction = ctx.get("direction") or ("down" if env == "underground" else "up")
+    fixed_levels = ctx.get("levels")
+    cargo = bool(ctx.get("cargo_lift"))
+
+    def stacked_up(q):                      # stairs and lifts only join levels: one floor needs none
+        return q["levels"] > 1 or direction == "down"
 
     def free(q):
         cells = q["cols"] * q["rows"]
-        vc = 1 if cells >= 3 else 0
+        vc = ((1 if cells >= 3 else 0) + (1 if cargo and cells >= 4 else 0)) if stacked_up(q) else 0
         return (cells - vc) * q["levels"]
-    q = _grow({"cols": p["cols"], "rows": p["rows"], "levels": p["levels"]},
-              ["cols", "rows", "levels"], free, need)
+    start_q = {"cols": p["cols"], "rows": p["rows"], "levels": int(fixed_levels or p["levels"])}
+    q = _grow(start_q, ["cols", "rows"] if fixed_levels else ["cols", "rows", "levels"], free, need)
     cols, rows, nlev = q["cols"], q["rows"], q["levels"]
-    off = 1 if underground else 0
-    lay = Layout(levels=nlev + off, level_names=_level_names(nlev, underground), slots=[], topology="stacked")
+    names, surface, entry, deep, off, below = stack_plan(nlev, direction)
+    lay = Layout(levels=len(names), level_names=names, slots=[], topology="stacked")
     x0 = y0 = PAD
     cells = [(i, j) for j in range(rows) for i in range(cols)]
-    vc = None
-    if len(cells) >= 3:
-        edge = [c for c in cells if c[0] in (0, cols - 1) or c[1] in (0, rows - 1)]
+    vc = cargo_c = None
+    edge = [c for c in cells if c[0] in (0, cols - 1) or c[1] in (0, rows - 1)]
+    joined = stacked_up(q)
+    cargo = cargo and joined
+    if len(cells) >= 3 and joined:
         vc = rng.choice(edge)
-    for lvl in range(nlev):
+    if cargo and len(cells) >= 4:            # the freight lift: its own core, away from the stairs
+        far = [c for c in edge if c != vc]
+        cargo_c = max(far, key=lambda c: (abs(c[0] - vc[0]) + abs(c[1] - vc[1]), rng.random()))
+    levels = list(range(off, off + nlev))
+    for lvl in levels:
         for (i, j) in cells:
-            s = _slot(lay, lvl + off, x0 + i * T, y0 + j * T)
+            sl = _slot(lay, lvl, x0 + i * T, y0 + j * T, entry_level=entry, deep_level=deep)
             if (i, j) == vc:
-                s.role = "vertical"
+                sl.role = "vertical"
+            elif (i, j) == cargo_c:
+                sl.role, sl.cargo = "vertical", True
     vx, vy = (x0 + vc[0] * T, y0 + vc[1] * T) if vc else (x0, y0)
     lay.vertical.append({"kind": "core", "x": vx, "y": vy, "w": T if vc else 4, "h": T if vc else 4,
-                         "levels": list(range(off, nlev + off)), "source": "tile" if vc else "filler"})
-    if not vc:                              # tiny footprint: stairs + lift as filler, aligned
-        col = [s for s in lay.slots if (s.x, s.y) == (x0, y0)]
-        col.sort(key=lambda q: q.level)
+                         "levels": list(levels), "source": "tile" if vc else "filler"})
+    if cargo_c:
+        lay.vertical.append({"kind": "cargo_lift", "x": x0 + cargo_c[0] * T, "y": y0 + cargo_c[1] * T, "w": T,
+                             "h": T, "levels": list(levels), "source": "tile"})
+    if not joined:
+        lay.vertical = []
+    elif not vc:                            # tiny footprint: stairs + lift (and a cargo lift) as filler, aligned
+        col = [s_ for s_ in lay.slots if (s_.x, s_.y) == (x0, y0)]
+        col.sort(key=lambda q_: q_.level)
         for a_, b_ in zip(col, col[1:]):
             lay.links.append(Link(a_.idx, b_.idx, "stairs"))
-        for lvl in range(off, nlev + off):
+        for lvl in levels:
             lay.filler.append(F.piece("stairs", lvl, vx + 1, vy + 1, 2, 4, label="Stairs"))
             lay.filler.append(F.piece("lift", lvl, vx + 4, vy + 1, 2, 2, label="Lift"))
-        lay.vertical[0].update({"x": vx + 1, "y": vy + 1, "w": 5, "h": 4})
+            if cargo:
+                lay.filler.append(F.piece("lift", lvl, vx + 7, vy + 1, 3, 3, label="Cargo lift"))
+        lay.vertical[0].update({"x": vx + 1, "y": vy + 1, "w": 9 if cargo else 5, "h": 4})
     # utility shafts at the same spots every level (corners of the footprint)
     shafts = ctx.get("shafts") or []
     pts = [(x0 + 1, y0 + 1), (x0 + cols * T - 3, y0 + 1), (x0 + 1, y0 + rows * T - 3),
            (x0 + cols * T - 3, y0 + rows * T - 3)]
     for k, name in enumerate(shafts[:4]):
-        lay.markers.append({"type": "shaft", "name": name, "x": pts[k][0], "y": pts[k][1],
-                            "levels": list(range(off, nlev + off))})
-    if underground:
+        lay.markers.append({"type": "shaft", "name": name, "x": pts[k][0], "y": pts[k][1], "levels": list(levels)})
+    if surface is not None:
         lay.filler.append(F.piece("ground", 0, x0 - PAD, y0 - PAD, cols * T + 2 * PAD, rows * T + 2 * PAD))
         lay.filler.append(F.piece("rock", 0, x0 - PAD, y0 - PAD, cols * T + 2 * PAD, rows * T + 2 * PAD))
         lay.notes.append("Surface level shows only the entrance structure; everything else is underground.")
-    for lvl in range(off, nlev + off):
-        lay.filler.insert(0, F.piece("rock" if underground else "ground", lvl, x0 - 2, y0 - 2,
+    for lvl in levels:
+        lay.filler.insert(0, F.piece("rock" if lvl in below else "ground", lvl, x0 - 2, y0 - 2,
                                      cols * T + 4, rows * T + 4))
+    if direction == "both":
+        lay.notes.append(f"{entry + 1} floor(s) above ground (the entrance is on the ground floor) and "
+                         f"{len(below)} basement level(s) below.")
+    elif direction == "up" and nlev > 1:
+        lay.notes.append(f"{nlev} floors; the entrance is on the ground floor.")
     return lay
 
 
@@ -184,7 +228,7 @@ def campus(rng, p, env, need, ctx):
     lo, hi = p["buildings"]
     count = max(lo, need)
     count = min(max(count, lo), max(hi, need))
-    nlev = max(1, p.get("levels", 1))
+    nlev = max(1, int(ctx.get("levels") or p.get("levels", 1)))
     n = count
     ncol, nrow = _campus_grid(n)
     lay = Layout(levels=1, level_names=["Surface"], slots=[], topology="campus")
@@ -253,11 +297,12 @@ def street(rng, p, env, need, ctx):
 # Branching tunnels / vertical shaft (mines)
 # ---------------------------------------------------------------------------
 def branching(rng, p, env, need, ctx):
-    nlev, chambers = p["levels"], p["chambers"]
+    nlev, chambers = int(ctx.get("levels") or p["levels"]), p["chambers"]
     # slots: surface head-frame (1) + per underground level 1 hub + chambers/levels
     def total(q):
         return 1 + q["levels"] * 1 + q["chambers"]
-    q = _grow({"levels": nlev, "chambers": chambers}, ["chambers", "levels"], total, need)
+    q = _grow({"levels": nlev, "chambers": chambers}, ["chambers"] if ctx.get("levels") else ["chambers", "levels"],
+              total, need)
     nlev, chambers = q["levels"], q["chambers"]
     lay = Layout(levels=nlev + 1, level_names=["Surface"] + [f"Level {i + 1}" for i in range(nlev)],
                  slots=[], topology="branching")
